@@ -1,6 +1,6 @@
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import json
+import datetime, json
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -99,6 +99,33 @@ with sync_playwright() as pw:
     ctx.close()
     ctx, pg = open_page(scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
+    ctx.close()
+
+    # ---- adding days by hand
+    ctx, pg = open_page()
+    pg.click('[data-act="new-trip"]')
+    pg.wait_for_timeout(120)
+    pg.click('#panel [data-act="add-day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#dyDate') == datetime.date.today().isoformat(), 'a first day is offered as today: ' + pg.input_value('#dyDate'))
+    pg.fill('#dyDate', '2026-11-21')
+    pg.fill('#dyCity', 'Kyoto')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(200)
+    ck('Sat 21 Nov' in pg.inner_text('#dayFace'), 'the new day opens straight away: ' + pg.inner_text('#dayFace'))
+    ck('Where you set off from is not set yet' in pg.inner_text('#panel') and '08:30' in pg.inner_text('#panel'),
+       'with sensible times, and it asks for the rest')
+    pg.click('#addDayBtn')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#dyDate') == '2026-11-22' and pg.input_value('#dyCity') == 'Kyoto', 'the next day is offered as the day after, same city')
+    pg.fill('#dyDate', '2026-11-21')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(150)
+    ck('already a day of this trip' in pg.inner_text('#sheet'), 'a date the trip already has is refused: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#dyDate', '2026-11-22')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(900)
+    ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
     ctx.close()
 
     # ---- trip settings

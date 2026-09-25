@@ -289,7 +289,7 @@ function normDay(raw, issues, now) {
     issues.push(fmtDateUK(d.date) + ': its date read "' + str(r.date, 20) + '", which is not a date, so its id was used instead');
   }
   d.city = str(r.city, 60);
-  d.start = normPoint(r.start, 'Start') || { name: 'Start', lat: null, lng: null, time: null };
+  d.start = normPoint(r.start, '') || { name: '', lat: null, lng: null, time: null };
   if (!d.start.time) d.start.time = '08:30';
   d.end = r.end === null ? null : (normPoint(r.end, '') || { name: '', lat: null, lng: null, time: null });
   if (d.end && !d.end.time) d.end.time = '21:00';

@@ -99,6 +99,7 @@ function renderHeader() {
   const t = App.trip;
   $('#tripBtn .name').textContent = t ? t.title : 'Day planner';
   const ids = t ? C.dayIds(t) : [];
+  $('#addDayBtn').hidden = !t;
   const pick = $('#dayPick');
   pick.hidden = !ids.length;
   if (!ids.length) return;
@@ -125,16 +126,18 @@ function tripHtml() {
 function noDaysHtml() {
   return '<div class="card"><span class="label">Days</span>'
     + '<p class="hint">No days yet. A day carries its date, its city, where you set off from and when you want to be back.</p>'
+    + '<div class="actions"><button type="button" class="btn primary" data-act="add-day">' + ic('plus') + 'Add a day</button></div>'
     + '</div>';
 }
 function dayHtml(day) {
   const end = day.end;
-  const endName = end ? (end.name || day.start.name || 'the start') : null;
+  const endName = end ? (end.name || day.start.name) : '';
   return '<div class="card">'
     + '<div class="card-head"><span class="label">' + esc(C.fmtDateLongUK(day.id)) + (day.city ? ' · ' + esc(day.city) : '') + '</span></div>'
-    + '<div class="day-line"><span class="t">' + esc(day.start.time) + '</span><span>Leave ' + esc(day.start.name || 'the start') + '</span></div>'
+    + '<div class="day-line"><span class="t">' + esc(day.start.time) + '</span>'
+    + (day.start.name ? '<span>Leave ' + esc(day.start.name) + '</span>' : '<span class="muted">Where you set off from is not set yet</span>') + '</div>'
     + (end
-      ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span>Back at ' + esc(endName) + '</span></div>'
+      ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span' + (endName ? '>Back at ' + esc(endName) : ' class="muted">Back where you started') + '</span></div>'
       : '<div class="day-line"><span class="t">—</span><span class="muted">Open-ended day</span></div>')
     + (day.lunch.on
       ? '<div class="day-line"><span class="t">Lunch</span><span class="muted">' + esc(C.fmtDur(day.lunch.duration)) + ', between ' + esc(day.lunch.from) + ' and ' + esc(day.lunch.to) + '</span></div>'
@@ -235,6 +238,12 @@ const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="'
 const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
 
 const SHEETS = {
+  'add-day': (s) => sheetHead('Add a day')
+    + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+    + field('dyDate', 'Date', '<input class="in" type="date" id="dyDate" value="' + esc(s.date) + '">', 'One day per date.')
+    + field('dyCity', 'City', textIn('dyCity', s.city, ' maxlength="60" placeholder="Kyoto"'), 'Where the day happens. It steers the map and place search later.')
+    + '<div class="actions"><button type="button" class="btn primary" data-act="save-day">Add</button>'
+    + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>',
   trip: () => {
     const t = App.trip;
     const s = App.ui.sheet;
@@ -268,6 +277,16 @@ function toast(msg, action, ms) {
 }
 
 // ---------- actions ----------
+const isoToday = () => { const d = new Date(); return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()); };
+// The day after the last one, since trips are usually planned forwards.
+function suggestDay() {
+  const ids = C.dayIds(App.trip);
+  if (!ids.length) return { date: isoToday(), city: '' };
+  const last = ids[ids.length - 1];
+  const d = new Date(last + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return { date: d.toISOString().slice(0, 10), city: App.trip.days[last].city };
+}
 const ACTIONS = {
   trip: () => { if (App.trip) openSheet('trip'); },
   'close-sheet': closeSheet,
@@ -293,6 +312,15 @@ const ACTIONS = {
     closeSheet();
     changed();
     toast('Started again from nothing.', { label: 'Undo', fn: () => { App.trip = before; changed('Trip brought back'); } }, 9000);
+  },
+  'add-day': () => { if (App.trip) openSheet('add-day', suggestDay()); },
+  'save-day': () => {
+    const res = C.addDay(App.trip, val('dyDate'), val('dyCity'));
+    if (!res.ok) { App.ui.sheet.error = res.text; App.ui.sheet.date = val('dyDate'); App.ui.sheet.city = val('dyCity'); render(); return; }
+    App.ui.dayId = res.id;
+    saveUi();
+    closeSheet();
+    changed(res.text);
   },
   version: (el) => {
     const day = currentDay();
