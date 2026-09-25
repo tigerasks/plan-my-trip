@@ -49,6 +49,12 @@ class Checks:
     """Collects PASS/FAIL lines and page errors, then decides the exit code."""
     def __init__(self, title):
         self.title, self.log, self.errs, self.failed = title, [], [], 0
+        self.expected = []
+
+    def expect(self, fragment):
+        """Console noise this test causes on purpose, such as a service it makes fail deliberately.
+        The browser logs a failed request itself, and that is not the app misbehaving."""
+        self.expected.append(fragment)
 
     def __call__(self, cond, msg):
         self.log.append(('PASS  ' if cond else 'FAIL  ') + msg)
@@ -60,9 +66,12 @@ class Checks:
         self.log.append('      ' + msg)
 
     def watch(self, page):
-        """Fail the run on any page error or console error."""
-        page.on('pageerror', lambda e: self.errs.append('pageerror: ' + str(e)))
-        page.on('console', lambda m: self.errs.append('console.' + m.type + ': ' + m.text) if m.type == 'error' else None)
+        """Fail the run on any page error or console error, bar the noise a test asked for."""
+        def note(text):
+            if not any(f in text for f in self.expected):
+                self.errs.append(text)
+        page.on('pageerror', lambda e: note('pageerror: ' + str(e)))
+        page.on('console', lambda m: note('console.' + m.type + ': ' + m.text) if m.type == 'error' else None)
         return page
 
     def report(self):

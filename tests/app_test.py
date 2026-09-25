@@ -142,6 +142,7 @@ with sync_playwright() as pw:
       return L.calls;
     }''')
     ck(again == 3, 'asking the same thing again is answered from the page, not the service')
+    ck.expect('status of 500')   # the browser logs the failed request; that is the point of the test
     broke = pg.evaluate('''async () => {
       const L = window.DayPlannerLive;
       let why = '';
