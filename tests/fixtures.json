@@ -1,0 +1,52 @@
+{
+  "note": "Test data shaped from the real service test (documentation/service-tests.md). `mapFeatures` and `overpassTags` are verbatim from run 3, apart from the four Overpass tags the probe did not record, which are marked. `photon` is reconstructed: the probe recorded the property names and the derived result, not the raw response.",
+  "mapFeatures": [
+    { "id": 133217066011, "sourceLayer": "poi", "properties": {
+      "name:ru": "Лучшая бургерная в Киото", "name_int": "Wagyu to Worldwide Kyoto Station",
+      "name_de": "Wagyu to Worldwide Kyoto Station", "name": "Wagyu to Worldwide Kyoto Station",
+      "subclass": "fast_food", "rank": 18, "class": "fast_food",
+      "name:latin": "Wagyu to Worldwide Kyoto Station", "name_en": "Wagyu to Worldwide Kyoto Station" } },
+    { "id": 55023134241, "sourceLayer": "poi", "properties": {
+      "name_int": "Best Breakfast Point", "name_de": "Best Breakfast Point", "name": "Best Breakfast Point",
+      "subclass": "viewpoint", "rank": 5, "class": "attraction",
+      "name:latin": "Best Breakfast Point", "name_en": "Best Breakfast Point" } },
+    { "id": 138076598781, "sourceLayer": "poi", "properties": {
+      "name_int": "Wasachi", "name_de": "Wasachi", "name": "Wasachi",
+      "subclass": "cafe", "rank": 39, "class": "cafe", "name:latin": "Wasachi", "name_en": "Wasachi" } },
+    { "id": 131242669531, "sourceLayer": "poi", "properties": {
+      "name_int": "Odashi", "name_de": "Odashi", "name": "Odashi",
+      "subclass": "restaurant", "rank": 36, "class": "restaurant", "name:latin": "Odashi", "name_en": "Odashi" } },
+    { "id": 52797288601, "sourceLayer": "poi", "properties": {
+      "name_int": "Pizza Little Party", "name:nonlatin": "ピザリトルパーティ", "name_de": "ピザリトルパーティ",
+      "name": "ピザリトルパーティ", "subclass": "fast_food", "rank": 29, "name:en": "Pizza Little Party",
+      "class": "fast_food", "name:latin": "Pizza Little Party", "name_en": "Pizza Little Party" } },
+    { "id": 3598968102, "sourceLayer": "poi", "properties": {
+      "name_int": "East Temple", "name:nonlatin": "東寺", "name:id": "Tō-ji", "name:ja-Latn": "Tō-ji",
+      "name:sl": "To-dži", "name:ja-Hira": "とうじ", "name:ca": "Tō-ji", "name:ko": "도지", "name:el": "Τό-τζι",
+      "name_de": "東寺", "name:it": "Tō-ji", "rank": 23, "name:en": "East Temple",
+      "class": "place_of_worship", "name:cs": "Tódži", "name:eu": "Tō-ji" } }
+  ],
+  "overpassTags": {
+    "cuisine": "pizza",
+    "phone": "075-672-9889",
+    "takeaway": "only",
+    "name": "ピザリトルパーティ",
+    "name:en": "Pizza Little Party",
+    "amenity": "fast_food",
+    "opening_hours": "Mo-Sa 11:00-14:00,17:00-22:00; Su off"
+  },
+  "overpassTagsNote": "The first three plus the tag count are from run 3. name, name:en and amenity are inferred from the map feature; opening_hours is invented, since the real place had none — it is here so the parser has something to chew on.",
+  "photon": {
+    "features": [
+      { "geometry": { "type": "Point", "coordinates": [135.8048, 34.8871] },
+        "properties": { "osm_type": "W", "osm_id": 263330850, "osm_key": "tourism", "osm_value": "museum",
+          "type": "house", "name": "Nintendo Museum", "street": "Ogura", "district": "Ogura-cho",
+          "city": "Uji", "state": "Kyoto Prefecture", "country": "Japan", "postcode": "611-0042",
+          "countrycode": "JP" } },
+      { "geometry": { "type": "Point", "coordinates": [135.75843, 34.98461] },
+        "properties": { "osm_type": "N", "osm_id": 1234567890, "osm_key": "railway", "osm_value": "station",
+          "name": "Kyoto", "city": "Kyoto", "state": "Kyoto Prefecture", "country": "Japan",
+          "countrycode": "JP" } }
+    ]
+  }
+}

@@ -430,6 +430,81 @@ function plansHolding(trip, placeId) {
   return PLAN_KEYS.filter((k) => d.plans[k].includes(placeId));
 }
 
+// ---------- reading the map ----------
+// A tapped vector-tile feature carries the OpenStreetMap id as id × 10 + the element type.
+// Verified live for ways (Sukiya) and nodes (Pizza Little Party); relations never came up, and
+// places are rarely relations. See documentation/service-tests.md.
+const OSM_BY_DIGIT = { 1: 'node', 2: 'way', 3: 'relation' };
+function decodeFeatureId(fid) {
+  const text = String(fid == null ? '' : fid);
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if (!isFinite(n) || n > Number.MAX_SAFE_INTEGER) return null;
+  const type = OSM_BY_DIGIT[n % 10];
+  const id = Math.floor(n / 10);
+  return type && id > 0 ? { type, id } : null;
+}
+
+// The map names a place in many languages, and not always under the keys you expect: Tō-ji came
+// back with no plain `name` at all. So both names are picked from a chain, and the local one is
+// always kept — "East Temple" is not what is written on the gate.
+const firstName = (s) => str(s, 120).split(';')[0].trim();
+function namesFrom(props) {
+  const p = obj(props);
+  const pick = (keys) => { for (const k of keys) if (str(p[k])) return firstName(p[k]); return ''; };
+  const local = pick(['name', 'name:nonlatin']);
+  const english = pick(['name:en', 'name_en', 'name_int', 'name:latin']);
+  const name = english || local;
+  return { name, localName: local && local !== name ? local : '' };
+}
+
+// class and subclass come from OpenMapTiles; subclass is the OpenStreetMap tag value, so it wins.
+const KIND_BY_TAG = {
+  restaurant: 'food', fast_food: 'food', cafe: 'food', bar: 'food', pub: 'food', biergarten: 'food',
+  ice_cream: 'food', bakery: 'food', confectionery: 'food', food_court: 'food', deli: 'food',
+  museum: 'museum', art_gallery: 'museum', gallery: 'museum',
+  place_of_worship: 'culture', shrine: 'culture', temple: 'culture', church: 'culture',
+  monastery: 'culture', castle: 'culture', monument: 'culture', memorial: 'culture',
+  ruins: 'culture', archaeological_site: 'culture', historic: 'culture',
+  park: 'nature', garden: 'nature', nature_reserve: 'nature', beach: 'nature', forest: 'nature',
+  waterfall: 'nature', spring: 'nature', picnic_site: 'nature',
+  viewpoint: 'view', tower: 'view',
+  theatre: 'experience', cinema: 'experience', onsen: 'experience', spa: 'experience',
+  swimming: 'experience', aquarium: 'experience', theme_park: 'experience', zoo: 'experience',
+  stadium: 'experience', arts_centre: 'experience',
+  shop: 'shop', supermarket: 'shop', department_store: 'shop', mall: 'shop', marketplace: 'shop',
+  clothing_store: 'shop', grocery: 'shop', convenience: 'shop', gift: 'shop', books: 'shop',
+  attraction: 'sight', lighthouse: 'sight', bridge: 'sight',
+};
+function kindFrom(props) {
+  const p = obj(props);
+  return KIND_BY_TAG[str(p.subclass)] || KIND_BY_TAG[str(p.class)] || 'other';
+}
+
+// Everything a tapped feature can tell us, before any lookup. `at` is where the finger landed;
+// the feature itself carries no position in the tile.
+function fromMapFeature(feature, at) {
+  const f = obj(feature);
+  const names = namesFrom(f.properties);
+  if (!names.name) return null;
+  const osm = decodeFeatureId(f.id);
+  const point = obj(at);
+  return {
+    name: names.name,
+    localName: names.localName,
+    kind: kindFrom(f.properties),
+    lat: toNum(point.lat),
+    lng: toNum(point.lng),
+    osm,
+    added: { by: 'you', how: 'map', at: null },
+  };
+}
+// The feature under the finger: a named point of interest if there is one.
+function bestFeature(features) {
+  const named = arr(features).filter((f) => namesFrom(obj(f).properties).name);
+  return named.find((f) => obj(f).sourceLayer === 'poi') || named[0] || null;
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -733,6 +808,7 @@ const Core = {
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
+  decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,

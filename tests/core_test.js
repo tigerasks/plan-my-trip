@@ -2,6 +2,7 @@
 /* Node tests for docs/core.js. Run: node tests/core_test.js */
 const C = require('../docs/core.js');
 const demoEnv = require('./demo-trip.json');
+const fix = require('./fixtures.json');
 let fails = 0;
 const ok = (cond, msg) => { if (!cond) { fails++; console.log('  ✗ FAIL:', msg); } else console.log('  ✓', msg); };
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -208,6 +209,31 @@ note = C.importNote(C.readBlock(C.writeBlock(demoTrip, 'package')), demoTrip);
 ok(/Merging a package/.test(note.lines.join(' ')), 'a package says merging comes later: ' + note.lines[2]);
 note = C.importNote(C.readBlock('nonsense'), demoTrip);
 ok(!note.confirm && note.lines[0] === why('nonsense').split(': ').slice(1).join(': '), 'and an unreadable block just shows its reason');
+
+console.log('\n== Reading the map ==');
+ok(JSON.stringify(C.decodeFeatureId('52797288601')) === '{"type":"node","id":5279728860}',
+  'a tapped id decodes to its OpenStreetMap node, as the service test confirmed');
+ok(JSON.stringify(C.decodeFeatureId(3598968102)) === '{"type":"way","id":359896810}', 'and to a way');
+ok(C.decodeFeatureId('359896810' + '3').type === 'relation', 'and to a relation');
+ok(C.decodeFeatureId('') === null && C.decodeFeatureId('abc') === null && C.decodeFeatureId('5') === null,
+  'and to nothing when the id is missing, not a number, or has no id left');
+
+const byName = {};
+for (const f of fix.mapFeatures) { const p = C.fromMapFeature(f, { lat: 35, lng: 135 }); byName[p.name] = p; }
+ok(byName['Pizza Little Party'].localName === 'ピザリトルパーティ', 'English name with the local one kept beside it');
+ok(byName['Pizza Little Party'].kind === 'food', 'a fast food place is food');
+ok(byName['East Temple'].localName === '東寺', 'a feature with no plain name still gives up its local one');
+ok(byName['East Temple'].kind === 'culture', 'a place of worship is culture');
+ok(byName['East Temple'].osm.type === 'way' && byName['East Temple'].osm.id === 359896810, 'and its OpenStreetMap way');
+ok(byName['Wasachi'].localName === '', 'a place whose names agree is not shown its own name twice');
+ok(byName['Best Breakfast Point'].kind === 'view', 'a viewpoint beats its attraction class');
+ok(byName['Odashi'].kind === 'food' && byName['Wagyu to Worldwide Kyoto Station'].kind === 'food', 'the rest land where they should');
+ok(C.fromMapFeature({ id: 1, properties: { class: 'park' } }, {}) === null, 'a feature with no name is not a place');
+ok(C.namesFrom({ name: 'A;B;C' }).name === 'A', 'alternative names are trimmed to the first');
+
+const feats = [{ sourceLayer: 'building', properties: { name: 'A block of flats' } }].concat(fix.mapFeatures.slice(0, 1));
+ok(C.bestFeature(feats).sourceLayer === 'poi', 'a point of interest wins over whatever else is under the finger');
+ok(C.bestFeature([{ properties: {} }]) === null, 'and nothing named means nothing tapped');
 
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
