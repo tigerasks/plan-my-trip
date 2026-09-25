@@ -938,6 +938,37 @@ function removeFromPlan(trip, id, key, now) {
   const still = plansHolding(trip, id);
   return { ok: true, still, text: p.name + ' left ' + PLAN_LABEL[key] + (still.length ? ', and is still in ' + planWords(still) : '') };
 }
+// Put a place at a position in a version, whether or not it is already in it. One operation for
+// both dragging a stop up the list and dragging one in from somewhere else.
+function placeInPlan(trip, id, key, index, now) {
+  const p = placeById(trip, id);
+  if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not on a day' };
+  const list = trip.days[p.dayId].plans[key];
+  const at = list.indexOf(id);
+  if (at >= 0) list.splice(at, 1);
+  const to = clamp(Math.round(index == null ? list.length : index), 0, list.length);
+  list.splice(to, 0, id);
+  touch(trip, now);
+  return {
+    ok: true, index: to, moved: at >= 0,
+    text: p.name + (at >= 0 ? ' moved to stop ' + (to + 1) : ' added to ' + PLAN_LABEL[key] + ' as stop ' + (to + 1)),
+  };
+}
+// The backlog keeps the order you put it in, so it can be dragged about too.
+function moveInBacklog(trip, id, index, now) {
+  const p = placeById(trip, id);
+  if (!p) return { ok: false, text: 'That place is no longer here' };
+  if (p.dayId) {
+    takeOutOfPlans(trip, id, p.dayId);
+    p.dayId = null;
+  } else {
+    takeOutOfBacklog(trip, id);
+  }
+  const to = clamp(Math.round(index == null ? trip.backlog.length : index), 0, trip.backlog.length);
+  trip.backlog.splice(to, 0, id);
+  touch(trip, now);
+  return { ok: true, index: to, text: p.name + ' moved to the backlog' };
+}
 function reorderPlan(trip, dayId, key, from, to, now) {
   const d = trip.days[dayId];
   if (!d || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That version is no longer here' };
@@ -1256,7 +1287,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  reorderPlan, placeInPlan, moveInBacklog, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };
