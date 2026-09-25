@@ -271,6 +271,47 @@ with sync_playwright() as pw:
     ck('Last saved on this device' in pg.inner_text('#sheet'), 'the sheet remembers when: ' + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Last saved' in l][0][-40:])
     ctx.close()
 
+    # ---- opening a file
+    ctx, pg = open_page()
+    pg.click('[data-act="data"]')
+    pg.wait_for_timeout(200)
+    ck(pg.is_disabled('[data-act="save-file"]'), 'with nothing to save, saving is off')
+    pg.set_input_files('#fileIn', files=[{'name': 'example-kyoto.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(DEMO).encode()}])
+    pg.wait_for_timeout(400)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'a file loads straight into an empty browser')
+    ck('2 days and 6 places' in pg.inner_text('#sheet .note.good'), 'and the sheet reports what came in: ' + pg.inner_text('#sheet .note.good'))
+    ck('Loaded 2 days and 6 places' in pg.inner_text('#toast'), 'with a toast to match')
+    pg.screenshot(path=str(SHOTS / 'app_import_desktop_light.png'))
+
+    # replacing a trip asks first
+    other = json.loads(json.dumps(DEMO))
+    other['tripId'] = other['trip']['id'] = 'italy-2027'
+    other['title'] = other['trip']['title'] = 'Italy · Apr 2027'
+    pg.set_input_files('#fileIn', files=[{'name': 'italy.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(other).encode()}])
+    pg.wait_for_timeout(400)
+    ck('Swap to another trip?' in pg.inner_text('#sheet'), 'another trip asks before it displaces this one')
+    ck('different trip' in pg.inner_text('#sheet'), 'and says what that means: ' + pg.inner_text('#sheet .reasons'))
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'nothing has changed yet')
+    pg.click('[data-act="import-cancel"]')
+    pg.wait_for_timeout(150)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'and Cancel leaves it alone')
+    pg.set_input_files('#fileIn', files=[{'name': 'italy.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(other).encode()}])
+    pg.wait_for_timeout(300)
+    pg.click('[data-act="import-go"]')
+    pg.wait_for_timeout(900)
+    ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'and Load it swaps the trip over')
+
+    # a file that is not a trip
+    pg.set_input_files('#fileIn', files=[{'name': 'notes.txt', 'mimeType': 'text/plain', 'buffer': b'just my notes'}])
+    pg.wait_for_timeout(300)
+    ck('BEGIN day-planner/2' in pg.inner_text('#sheet .note.bad'),
+       'a file that is not a trip is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
+    ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'and the trip is untouched')
+    ctx.close()
+
     # ---- a stored copy that cannot be used
     ctx, pg = open_page(held={'schema': 'day-planner/9', 'kind': 'save', 'trip': {}})
     ck('No trip yet' in pg.inner_text('#panel'), 'an unusable stored copy does not break the page')
