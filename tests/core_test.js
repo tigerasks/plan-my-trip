@@ -349,5 +349,34 @@ ok(!C.addDays(C.newTrip('x'), 'whenever', 3).ok, 'and prose is still not a date'
 ok(C.addDays(C.newTrip('x'), '2026-11-21', 999).added.length === 60, 'a silly number of days is capped at 60');
 ok(C.addDays(C.newTrip('x'), '2026-02-27', 3).added.join(' ') === '2026-02-27 2026-02-28 2026-03-01', 'and months roll over properly');
 
+console.log('\n== Where you sleep ==');
+const stayTrip = C.normalise({
+  title: 'Stays', days: {}, 
+  stays: [{ name: 'Example Ryokan', lat: 35.0, lng: 135.77, from: '2026-11-21', nights: 3 },
+          { name: 'Made-up Hotel', lat: 34.7, lng: 135.5, from: '2026-11-24', nights: 2 }],
+}).trip;
+for (const d of ['2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26']) {
+  stayTrip.days[d] = C.newDay(d, 'Kyoto');
+}
+const startAt = (d) => (C.dayStart(stayTrip, d) || {}).name || '—';
+const endAt = (d) => (C.dayEnd(stayTrip, d) || {}).name || '—';
+ok(endAt('2026-11-21') === 'Example Ryokan' && startAt('2026-11-21') === '—',
+  'the day you arrive ends at the stay, and starts nowhere in particular');
+ok(startAt('2026-11-22') === 'Example Ryokan' && endAt('2026-11-23') === 'Example Ryokan',
+  'the days in between both start and end there');
+ok(startAt('2026-11-24') === 'Example Ryokan', 'the morning you check out still starts there');
+ok(endAt('2026-11-24') === 'Made-up Hotel', 'and ends at wherever you sleep next');
+ok(startAt('2026-11-25') === 'Made-up Hotel' && endAt('2026-11-25') === 'Made-up Hotel', 'which then takes over');
+ok(startAt('2026-11-26') === 'Made-up Hotel' && endAt('2026-11-26') === '—',
+  'until you check out of that one too, after which the evening is unspoken for');
+ok(C.dayStart(stayTrip, '2026-11-22').lat === 35.0, 'a stay carries its position onto the day');
+ok(C.dayStart(stayTrip, '2026-12-01') === null, 'a day the trip does not have has no start');
+
+const demoStart = C.dayStart(demoTrip, '2026-11-21');
+ok(demoStart.name === 'Example Hotel · Kyoto Station' && demoStart.stayId === null,
+  'a trip with no stays keeps the start its days already carried');
+ok(C.dayEnd(demoTrip, '2026-11-21').name === 'Example Hotel · Kyoto Station', 'and still ends where it started');
+ok(C.normalise({ stays: [{ name: 'No dates' }] }).issues.length === 1, 'a stay with no first night is left out, with a reason');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
