@@ -786,11 +786,12 @@ function detailsHtml(s) {
 // a separate window on a laptop, the Maps app on a phone — and the preview stays put for when you
 // come back. Nothing comes the other way: no Google result is ever stored or drawn on our map.
 function gmapsHtml(place) {
-  const day = currentDay();
-  return '<div class="sh-sec"><span class="label">Check it on Google Maps</span>'
-    + '<p class="note">For reviews, photos and the hours as they are today. It opens in a window beside this one.</p>'
-    + '<div class="actions"><button type="button" class="btn" data-act="gmaps">Check on Google Maps</button></div>'
-    + '<p class="hint">Nothing comes back from Google into the planner.</p></div>';
+  return '<div class="sh-sec"><span class="label">Google Maps</span>'
+    + '<p class="note">Google Maps can show you more information like reviews, photos, opening hours, etc. '
+    + 'It opens in a window beside this one.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="gmaps">Find on Google Maps</button></div>'
+    + '<p class="hint">I <em>could</em> use Google Maps directly, but then I\'d have to pay for usage, '
+    + 'which means I would need to stop being a free planner.</p></div>';
 }
 function linksHtml(place, details) {
   const out = [];
@@ -798,7 +799,7 @@ function linksHtml(place, details) {
   if (!details && place.osm) out.push([C.osmUrl(place.osm), 'OpenStreetMap']);
   for (const l of App.trip.lookups) out.push([C.lookupUrl(l, place), l.label]);
   if (!out.length) return '';
-  return '<div class="sh-sec"><span class="label">Look it up</span><p class="links">'
+  return '<div class="sh-sec"><span class="label">Informative links</span><p class="links">'
     + out.map(([url, label]) => '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + '</a>').join(' · ')
     + '</p></div>';
 }
