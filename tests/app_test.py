@@ -13,11 +13,17 @@ ck = Checks('Day planner — the skeleton')
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
-    def open_page(w=1280, h=800, scheme='light', held=None):
+    def no_maplibre(r):
+        if 'maplibre-gl.js' in r.request.url:
+            r.fulfill(status=200, body='', headers={'Content-Type': 'application/javascript'})
+            return True
+        return False
+
+    def open_page(w=1280, h=800, scheme='light', held=None, extra=None):
         phone = w < 500
         ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
                              is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
-        ctx.route('**/*', harness.offline(BASE))
+        ctx.route('**/*', harness.offline(BASE, extra))
         pg = ctx.new_page()
         ck.watch(pg)
         if held is not None:
@@ -99,6 +105,19 @@ with sync_playwright() as pw:
     ctx.close()
     ctx, pg = open_page(scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
+    ctx.close()
+
+    # ---- the map
+    ctx, pg = open_page(held=DEMO)
+    ck(pg.evaluate('window.__lastMap.__opts.style') == 'https://tiles.openfreemap.org/styles/liberty',
+       'the map opens on the Liberty style, the only one that shows places')
+    ck(pg.evaluate('window.DayPlannerMap.ready') is True, 'and reports itself ready')
+    ck(pg.locator('#mapEmpty').is_hidden(), 'with no apology over it')
+    ctx.close()
+
+    ctx, pg = open_page(held=DEMO, extra=no_maplibre)
+    ck('could not be loaded' in pg.inner_text('#mapEmpty'), 'a map that will not load says so: ' + pg.inner_text('#mapEmpty'))
+    ck('Example Temple' in pg.inner_text('#panel'), 'and the planner carries on without it')
     ctx.close()
 
     # ---- adding days by hand

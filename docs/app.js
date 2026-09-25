@@ -3,6 +3,7 @@
 (() => {
 'use strict';
 const C = window.DayPlannerCore;
+const M = window.DayPlannerMap;
 const $ = (s, el) => (el || document).querySelector(s);
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -444,6 +445,10 @@ function onClick(e) {
 
 // ---------- boot ----------
 function boot() {
+  if (!M.init('map', render)) {
+    $('#mapEmpty').hidden = false;
+    $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
+  }
   document.addEventListener('click', onClick);
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });

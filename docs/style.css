@@ -73,6 +73,8 @@ a { color: var(--ink-2); }
   padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--line); min-height: 52px;
 }
 .mapwrap { position: relative; background: var(--map-bg); min-width: 0; }
+#map { position: absolute; inset: 0; }
+.maplibregl-ctrl-attrib { font-size: 11px; }
 .panel {
   grid-column: 2; overflow-y: auto; overscroll-behavior: contain;
   border-left: 1px solid var(--line); background: var(--bg);

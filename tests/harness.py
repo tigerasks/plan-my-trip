@@ -28,18 +28,18 @@ def serve(directory=DOCS):
 
 
 def offline(base, extra=None):
-    """A route handler: the app is served from `base`, MapLibre comes from the stub,
-    `extra` may answer anything else (returning True when it has), and the rest is blocked."""
+    """A route handler: the app is served from `base`, `extra` gets first refusal (returning True
+    when it has answered), MapLibre comes from the stub, and everything else is blocked."""
     def route(r):
         u = r.request.url
         if u.startswith(base):
             return r.continue_()
+        if extra and extra(r):
+            return None
         if 'maplibre-gl.js' in u:
             return r.fulfill(status=200, body=STUB, headers=JS)
         if 'maplibre-gl.css' in u:
             return r.fulfill(status=200, body='', headers=CSS)
-        if extra and extra(r):
-            return None
         return r.abort()
     return route
 
