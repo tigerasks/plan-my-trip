@@ -634,6 +634,15 @@ function overpassUrl(osm) {
 }
 const parseOverpass = (json) => { const el = arr(obj(json).elements)[0]; return el ? obj(el.tags) : null; };
 
+// Your own look-up links, such as Tabelog for restaurants in Japan. {name} and {local} are filled
+// in from the place; a link without either just opens.
+function lookupUrl(lookup, place) {
+  const l = obj(lookup), p = obj(place);
+  const local = str(p.localName) || str(p.name);
+  return str(l.url, 300)
+    .replace(/\{name\}/g, encodeURIComponent(str(p.name)))
+    .replace(/\{local\}/g, encodeURIComponent(local));
+}
 const osmUrl = (osm) => { const o = normOsm(osm); return o ? OSM_PAGE + o.type + '/' + o.id : ''; };
 // Google Maps is for reviews, photos and today's hours. It opens beside the planner and nothing
 // comes back: no Google result is ever stored or drawn on our map.
@@ -1003,7 +1012,7 @@ const Core = {
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   osmDays, osmSpans, parseOsmHours, hoursFromOsm,
   PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,
-  osmUrl, gmapsUrl, kindFromTags, whereOf,
+  osmUrl, gmapsUrl, lookupUrl, kindFromTags, whereOf,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,

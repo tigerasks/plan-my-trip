@@ -350,6 +350,14 @@ function addButtonsHtml(act) {
       : '<button type="button" class="btn primary" data-act="' + act + '" data-to="backlog">Add to the backlog</button>')
     + '</div></div>';
 }
+function lookupRowsHtml(list) {
+  const rows = list.concat([{ label: '', url: '' }]).slice(0, 6);
+  return rows.map((l, i) =>
+    '<div class="pair lookup-row">'
+    + '<input class="in" id="lkLabel' + i + '" maxlength="40" placeholder="Tabelog" value="' + esc(l.label) + '" aria-label="Link name">'
+    + '<input class="in" id="lkUrl' + i + '" maxlength="300" placeholder="https://tabelog.com/rstLst/?sk={local}" value="' + esc(l.url) + '" aria-label="Link address">'
+    + '</div>').join('');
+}
 const sheetHead = (title, sub) =>
   '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
   + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
@@ -460,6 +468,11 @@ const SHEETS = {
         'Used for travel estimates until real routes arrive.')
       + field('trCur', 'Preferred currency', textIn('trCur', t.currency || '', ' maxlength="3" placeholder="none"'),
         'Prices always show in their own currency. Name one here and a conversion appears beside them.')
+      + '<div class="sh-sec"><span class="label">Your own look-up links</span>'
+      + '<p class="note">Shown on every place you preview, so you can check it where you normally would. '
+      + 'Put <code>{name}</code> or <code>{local}</code> where the place\'s name belongs.</p>'
+      + lookupRowsHtml(t.lookups)
+      + '</div>'
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-trip">Save</button>'
       + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
       + '<div class="sh-sec"><span class="label">Start again</span>'
@@ -603,6 +616,12 @@ const ACTIONS = {
     App.trip.tzLabel = val('trTz');
     App.trip.transit = val('trTransit');
     App.trip.currency = cur || null;
+    const lookups = [];
+    for (let i = 0; i < 6; i++) {
+      const url = val('lkUrl' + i);
+      if (url) lookups.push({ label: val('lkLabel' + i), url: url });
+    }
+    App.trip.lookups = lookups;
     App.trip = C.normalise(App.trip).trip;
     closeSheet();
     changed('Trip settings saved');

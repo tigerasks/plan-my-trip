@@ -388,6 +388,18 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(150)
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'Escape closes a sheet')
 
+    # your own look-up links
+    pg.click('#tripBtn')
+    pg.wait_for_timeout(150)
+    ck(pg.input_value('#lkLabel0') == 'Example look-up', 'the trip keeps your own look-up links')
+    pg.fill('#lkLabel1', 'Tabelog')
+    pg.fill('#lkUrl1', 'https://tabelog.com/rstLst/?sk={local}')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(900)
+    links = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['lookups']
+    ck(len(links) == 2 and links[1]['label'] == 'Tabelog', 'and takes another')
+    ck('{local}' in links[1]['url'], 'with the place\'s name left as a placeholder')
+
     # ---- starting again, with a way back
     pg.click('#tripBtn')
     pg.wait_for_timeout(120)

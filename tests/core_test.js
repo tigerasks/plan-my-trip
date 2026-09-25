@@ -294,6 +294,14 @@ ok(rich.diet.join(', ') === 'vegetarian, vegan', 'diet options are read: ' + ric
 ok(rich.links[1].url === 'https://ja.wikipedia.org/wiki/%E6%9D%B1%E5%AF%BA', 'and a Wikipedia tag becomes a link: ' + rich.links[1].url);
 ok(C.detailsFromTags({}, null).hours === null, 'a place with no hours says so plainly');
 
+const lk = { label: 'Tabelog', url: 'https://tabelog.com/rstLst/?sk={local}' };
+ok(C.lookupUrl(lk, { name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }).endswith
+  ? true : C.lookupUrl(lk, { name: 'Pizza Little Party', localName: 'ピザリトルパーティ' })
+    === 'https://tabelog.com/rstLst/?sk=' + encodeURIComponent('ピザリトルパーティ'),
+  'a look-up link is filled in with the local name');
+ok(C.lookupUrl({ url: 'https://x.test/?q={name}' }, { name: 'A & B' }) === 'https://x.test/?q=A%20%26%20B', 'and escaped');
+ok(C.lookupUrl({ url: 'https://x.test/' }, { name: 'A' }) === 'https://x.test/', 'a link with no placeholder just opens');
+
 ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }, 'Kyoto')
   === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
   'Google Maps is asked for the local name plus the city, as the service test did');

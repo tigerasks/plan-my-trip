@@ -210,6 +210,9 @@ button.item:hover { background: var(--hover); }
 .in:focus { border-color: var(--faint); }
 textarea.in { min-height: 90px; resize: vertical; }
 .pair { display: flex; gap: 8px; }
+.lookup-row { margin-bottom: 8px; }
+.lookup-row .in:first-child { flex: 0 0 110px; }
+code { font: 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--stone-bg); padding: 1px 4px; border-radius: 5px; }
 .pair > * { flex: 1 1 0; min-width: 0; }
 .tick { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; font-size: 13px; }
 .tick input { width: 16px; height: 16px; accent-color: var(--ink); }
