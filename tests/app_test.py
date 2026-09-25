@@ -474,6 +474,16 @@ with sync_playwright() as pw:
     pg.click('#findResults .item')
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
+    where = pg.evaluate('window.__lastMap.getCenter()')
+    ck(round(where['lat'], 4) == 34.8871 and round(where['lng'], 4) == 135.8048,
+       'and the map goes there, so you can see where it is: %.4f, %.4f' % (where['lat'], where['lng']))
+    ck(pg.evaluate('window.__lastMap.getZoom()') >= 16, 'close enough to make it out')
+    ck(pg.locator('.mk-looking').count() == 1, 'with the spot marked while you look at it')
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-looking').count() == 0, 'and the mark goes when you close the preview')
+    pg.click('#findResults .item')
+    pg.wait_for_timeout(300)
     ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
     ck('km from' in pg.inner_text('#sheet'), 'and how far it is from the day: '
        + [l for l in pg.inner_text('#sheet').split(chr(10)) if ' from ' in l][0])

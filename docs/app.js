@@ -477,6 +477,7 @@ function openSheet(kind, data) {
 function closeSheet() {
   if (!App.ui.sheet) return;
   App.ui.sheet = null;
+  M.stopLooking();
   render();
 }
 function renderSheet() {
@@ -730,8 +731,9 @@ function openPlace(id) {
 // The map's own information is on screen at once; OpenStreetMap fills in behind it, and the
 // preview works perfectly well if that never arrives.
 let previewSeq = 0;
-function openPreview(place) {
+function openPreview(place, lookAt) {
   const mine = ++previewSeq;
+  if (lookAt) M.lookAt(place);
   openSheet('preview', { place: place, details: null, detailsBusy: !!C.overpassUrl(place.osm), detailsError: '' });
   const url = C.overpassUrl(place.osm);
   if (!url) return;
@@ -743,7 +745,11 @@ function openPreview(place) {
       s.detailsBusy = false;
       if (!got) { s.detailsError = 'OpenStreetMap has nothing filed under this place.'; render(); return; }
       s.details = C.detailsFromTags(got.tags, place.osm);
-      if (got.at) { place.lat = got.at.lat; place.lng = got.at.lng; }   // the finger lands near, not on
+      if (got.at) {
+        place.lat = got.at.lat;                 // the finger lands near a place, not on it
+        place.lng = got.at.lng;
+        if (M.looking) M.lookAt(place);         // so the mark moves to where it really is
+      }
       if (s.details.hours) place.hours = s.details.hours.hours;
       render();
     },
@@ -999,7 +1005,7 @@ const ACTIONS = {
   },
   'preview-found': (el) => {
     const found = (App.ui.find.results || [])[+el.dataset.i];
-    if (found) openPreview(found);
+    if (found) openPreview(found, true);
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => openPlace(el.dataset.id),

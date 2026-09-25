@@ -25,6 +25,7 @@ const MapView = {
   shownAs: '',
   tap: null,
   pick: null,
+  looking: null,
 
   // Returns false when MapLibre did not load; the rest of the planner carries on regardless.
   init(id, onReady) {
@@ -42,6 +43,25 @@ const MapView = {
     this.map.on('error', () => { /* a missing tile must never stop the planner */ });
     root.addEventListener('resize', () => { try { this.map.resize(); } catch (e) { /* not up yet */ } });
     return true;
+  },
+
+  // Move the map to a place and mark it while you are looking at it. Used when you pick a search
+  // result: the point of finding somewhere is to see where it is.
+  lookAt(place) {
+    if (!this.ready || !this.map || !C.hasPos(place)) return;
+    this.stopLooking();
+    const gl = root.maplibregl;
+    let zoom = 16;
+    try { zoom = Math.max(this.map.getZoom() || 0, 16); } catch (e) { /* the default will do */ }
+    this.map.easeTo({ center: [place.lng, place.lat], zoom: zoom, duration: 600 });
+    try {
+      this.looking = new gl.Marker({ element: pin('mk-looking', '', place.name), anchor: 'center' })
+        .setLngLat([place.lng, place.lat]).addTo(this.map);
+    } catch (e) { this.looking = null; }
+  },
+  stopLooking() {
+    if (this.looking) { try { this.looking.remove(); } catch (e) { /* already gone */ } }
+    this.looking = null;
   },
 
   // Tapping the map. A named point of interest becomes a place to look at; bare ground is left to
