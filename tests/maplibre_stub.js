@@ -25,7 +25,9 @@ window.maplibregl = { version: 'stub',
     this.fitBounds = (b) => { window.__fitted = b && b.points ? b.points.slice() : []; };
     this.resize = () => {};
     this.remove = () => {};
-    this.easeTo = (o) => { if (o && o.center) center = lngLat(o.center); };
+    let zoom = opts.zoom;
+    this.getZoom = () => zoom;
+    this.easeTo = (o) => { if (o && o.center) center = lngLat(o.center); if (o && o.zoom != null) zoom = o.zoom; };
     const fire = (ev, a) => (h[ev] || []).forEach((f) => f(a));
     this.__opts = opts;
     this.__fire = fire; window.__lastMap = this;
