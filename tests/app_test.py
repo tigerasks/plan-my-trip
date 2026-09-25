@@ -318,6 +318,26 @@ with sync_playwright() as pw:
     ck('Nothing found' in pg.inner_text('#findResults'), 'an empty answer says so: ' + pg.inner_text('#findResults'))
     ctx.close()
 
+    # ---- tapping the map
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][5]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.74771, lat: 34.98061}})")
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('East Temple'), 'tapping a place on the map opens its preview')
+    ck('東寺' in pg.inner_text('#sheet'), 'with the local name kept: ' + pg.inner_text('.sh-title').replace(chr(10), ' / '))
+    ck('Temple / culture' in pg.inner_text('#sheet'), 'and what kind of place it is')
+    pg.click('[data-act="add-place"][data-to="backlog"]')
+    pg.wait_for_timeout(900)
+    added = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']['east-temple']
+    ck(added['osm'] == {'type': 'way', 'id': 359896810}, 'and it carries the OpenStreetMap way the map gave it')
+    ck(added['added']['how'] == 'map' and added['lat'] == 34.98061, 'noted as tapped, where the finger landed')
+
+    pg.evaluate('window.__features = [{sourceLayer: "building", properties: {}}]')
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.7, lat: 35.0}})")
+    pg.wait_for_timeout(200)
+    ck('Nothing named there' in pg.inner_text('#toast'), 'tapping bare building says so: ' + pg.inner_text('#toast'))
+    ctx.close()
+
     # ---- trip settings
     ctx, pg = open_page(held=DEMO)
     pg.click('#tripBtn')

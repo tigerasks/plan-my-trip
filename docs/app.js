@@ -453,6 +453,14 @@ const SHEETS = {
   },
 };
 
+function onMapTap(place, at, featureCount) {
+  if (!App.trip) { toast('Start a trip first, then tap the map to add places to it.'); return; }
+  if (place) { openPreview(place); return; }
+  toast(featureCount
+    ? 'Nothing named there. Tap right on a label or an icon.'
+    : 'Nothing on the map there.');
+}
+
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
 function openPreview(place) {
   openSheet('preview', { place: place });
@@ -711,6 +719,7 @@ function onClick(e) {
 
 // ---------- boot ----------
 function boot() {
+  M.onTap(onMapTap);
   if (!M.init('map', render)) {
     $('#mapEmpty').hidden = false;
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';

@@ -22,6 +22,7 @@ const MapView = {
   failed: false,
   marks: [],
   shownAs: '',
+  tap: null,
 
   // Returns false when MapLibre did not load; the rest of the planner carries on regardless.
   init(id, onReady) {
@@ -35,9 +36,22 @@ const MapView = {
     }
     try { this.map.addControl(new gl.NavigationControl({ showCompass: false }), 'top-right'); } catch (e) { /* optional */ }
     this.map.on('style.load', () => { this.ready = true; if (onReady) onReady(); });
+    this.map.on('click', (e) => this.onClick(e));
     this.map.on('error', () => { /* a missing tile must never stop the planner */ });
     root.addEventListener('resize', () => { try { this.map.resize(); } catch (e) { /* not up yet */ } });
     return true;
+  },
+
+  // Tapping the map. A named point of interest becomes a place to look at; bare ground is left to
+  // the caller, which is where dropping a pin comes in.
+  onTap(fn) { this.tap = fn; },
+  onClick(e) {
+    if (!this.tap) return;
+    let feats = [];
+    try { feats = this.map.queryRenderedFeatures(e.point) || []; } catch (err) { feats = []; }
+    const at = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+    const best = C.bestFeature(feats);
+    this.tap(best ? C.fromMapFeature(best, at) : null, at, feats.length);
   },
 
   // Where the map is looking, so search can favour places near it.
