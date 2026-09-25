@@ -149,6 +149,44 @@ function kmBetween(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 const hasPos = (p) => isNum(obj(p).lat) && isNum(obj(p).lng);
+// The planner's own walking estimate, carried over from v1: straight-line distance with a detour
+// allowance, at a normal pace. Marked ≈ wherever it shows, and replaced by a real route later.
+const WALK_SPEED = 4.6;          // km/h
+const WALK_DETOUR = 1.3;
+const walkMinutes = (km) => (km * WALK_DETOUR / WALK_SPEED) * 60;
+
+// How far a place is from the day on screen: the nearest thing already in it, and the walk to it.
+// "≈ 5 min walk from Example Temple (stop 3)" is the point of the preview saying it.
+function nearestInDay(trip, dayId, place, planKey) {
+  if (!hasPos(place)) return null;
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return null;
+  const key = PLAN_KEYS.includes(planKey) ? planKey : d.shown;
+  const marks = [];
+  if (hasPos(d.start)) marks.push({ name: d.start.name || 'where the day starts', where: 'the start' });
+  d.plans[key].forEach((id, i) => {
+    const p = trip.places[id];
+    if (hasPos(p)) marks.push({ name: p.name, where: 'stop ' + (i + 1), lat: p.lat, lng: p.lng });
+  });
+  if (hasPos(d.start)) { marks[0].lat = d.start.lat; marks[0].lng = d.start.lng; }
+  if (d.end && hasPos(d.end)) marks.push({ name: d.end.name || d.start.name || 'where the day ends', where: 'the end', lat: d.end.lat, lng: d.end.lng });
+  let best = null;
+  for (const m of marks) {
+    const km = kmBetween(m, place);
+    if (!best || km < best.km) best = { km, name: m.name, where: m.where };
+  }
+  if (!best) return null;
+  best.minutes = Math.max(1, Math.round(walkMinutes(best.km)));
+  return best;
+}
+// "≈ 5 min walk from Example Temple (stop 3)", or a plain distance when it is too far to walk.
+function nearText(near) {
+  if (!near) return '';
+  const from = near.name + (near.where.indexOf('stop') === 0 ? ' (' + near.where + ')' : '');
+  return near.minutes <= 45
+    ? '≈ ' + fmtDur(near.minutes) + ' walk from ' + from
+    : '≈ ' + (near.km < 10 ? near.km.toFixed(1) : String(Math.round(near.km))) + ' km from ' + from;
+}
 
 // ---------- normalising ----------
 // Every load, every import and every save goes through normalise(), so the rest of the app can
@@ -503,6 +541,29 @@ function hoursFromOsm(text) {
   };
 }
 
+// Opening hours in a line: consecutive days that agree are grouped, unknown days left out.
+const WEEK_SHORT = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+const spansText = (spans) => (spans.length ? spans.map(([a, b]) => a + '–' + b).join(', ') : 'closed');
+function hoursText(hours) {
+  const h = obj(hours);
+  const week = obj(h.week);
+  const known = WEEK.filter((d) => Array.isArray(week[d]));
+  if (!known.length) return '';
+  const same = known.every((d) => JSON.stringify(week[d]) === JSON.stringify(week[known[0]]));
+  if (same && known.length === 7) return spansText(week.mon);
+  const out = [];
+  let run = null;
+  for (const d of WEEK) {
+    const spans = week[d];
+    const text = Array.isArray(spans) ? spansText(spans) : null;
+    if (run && text === run.text) { run.to = d; continue; }
+    if (run) out.push(run);
+    run = text == null ? null : { from: d, to: d, text };
+  }
+  if (run) out.push(run);
+  return out.map((r) => (r.from === r.to ? WEEK_SHORT[r.from] : WEEK_SHORT[r.from] + '–' + WEEK_SHORT[r.to]) + ' ' + r.text).join(' · ');
+}
+
 // ---------- reading the map ----------
 // A tapped vector-tile feature carries the OpenStreetMap id as id × 10 + the element type.
 // Verified live for ways (Sukiya) and nodes (Pizza Little Party); relations never came up, and
@@ -630,10 +691,27 @@ function parsePhoton(json, now) {
 function overpassUrl(osm) {
   const o = normOsm(osm);
   if (!o) return null;
-  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags;');
+  // `center` as well as tags: the finger lands near a place, not on it, so this corrects the position.
+  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags center;');
 }
-const parseOverpass = (json) => { const el = arr(obj(json).elements)[0]; return el ? obj(el.tags) : null; };
+function parseOverpass(json) {
+  const el = arr(obj(json).elements)[0];
+  if (!el) return null;
+  const c = obj(el.center);
+  const lat = toNum(el.lat != null ? el.lat : c.lat);
+  const lng = toNum(el.lon != null ? el.lon : c.lon);
+  return { tags: obj(el.tags), at: lat != null && lng != null ? { lat, lng } : null };
+}
 
+// Your own look-up links, such as Tabelog for restaurants in Japan. {name} and {local} are filled
+// in from the place; a link without either just opens.
+function lookupUrl(lookup, place) {
+  const l = obj(lookup), p = obj(place);
+  const local = str(p.localName) || str(p.name);
+  return str(l.url, 300)
+    .replace(/\{name\}/g, encodeURIComponent(str(p.name)))
+    .replace(/\{local\}/g, encodeURIComponent(local));
+}
 const osmUrl = (osm) => { const o = normOsm(osm); return o ? OSM_PAGE + o.type + '/' + o.id : ''; };
 // Google Maps is for reviews, photos and today's hours. It opens beside the planner and nothing
 // comes back: no Google result is ever stored or drawn on our map.
@@ -998,12 +1076,12 @@ const Core = {
   WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION, DEFAULT_LUNCH,
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
-  fmtMoney, kmBetween, hasPos,
+  fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
-  osmDays, osmSpans, parseOsmHours, hoursFromOsm,
+  osmDays, osmSpans, parseOsmHours, hoursFromOsm, hoursText,
   PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,
-  osmUrl, gmapsUrl, kindFromTags, whereOf,
+  osmUrl, gmapsUrl, lookupUrl, kindFromTags, whereOf,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,

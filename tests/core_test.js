@@ -279,11 +279,21 @@ ok(found[0].where === 'Ogura · Ogura-cho · Uji', 'said where they are, nearest
 ok(found[0].added.how === 'search' && found[0].added.by === 'you', 'and remember how they were found');
 ok(C.parsePhoton({ features: [{ properties: { name: 'No position' } }] }).length === 0, 'a result with no position is dropped');
 
-ok(C.overpassUrl({ type: 'node', id: 5279728860 }).indexOf('node(5279728860)%3Bout%20tags%3B') > 0,
+ok(C.overpassUrl({ type: 'node', id: 5279728860 }).indexOf('node(5279728860)%3B') > 0,
   'an Overpass lookup goes straight at the id, never a search');
 ok(C.overpassUrl(null) === null, 'and there is none to make without one');
-ok(C.parseOverpass({ elements: [{ type: 'node', id: 1, tags: { a: 'b' } }] }).a === 'b', 'tags come back');
+ok(/out%20tags%20center/.test(C.overpassUrl({ type: 'way', id: 1 })), 'and asks for the position too, since a finger lands near a place');
+ok(C.parseOverpass({ elements: [{ type: 'node', id: 1, lat: 34.9, lon: 135.7, tags: { a: 'b' } }] }).tags.a === 'b', 'tags come back');
+ok(JSON.stringify(C.parseOverpass({ elements: [{ type: 'way', center: { lat: 34.9, lon: 135.7 } }] }).at) === '{"lat":34.9,"lng":135.7}',
+  'and a way gives up its centre');
 ok(C.parseOverpass({ elements: [] }) === null, 'and nothing when the place is not there');
+
+ok(C.hoursText(C.hoursFromOsm('Mo-Sa 11:00-14:00,17:00-22:00; Su off').hours)
+  === 'Mon–Sat 11:00–14:00, 17:00–22:00 · Sun closed', 'hours read back as a line: ' + C.hoursText(C.hoursFromOsm('Mo-Sa 11:00-14:00,17:00-22:00; Su off').hours));
+ok(C.hoursText(C.hoursFromOsm('09:00-17:00').hours) === '09:00–17:00', 'the same every day needs no days');
+ok(C.hoursText(C.hoursFromOsm('Mo,We 10:00-18:00').hours) === 'Mon 10:00–18:00 · Wed 10:00–18:00',
+  'and days it does not know are left out: ' + C.hoursText(C.hoursFromOsm('Mo,We 10:00-18:00').hours));
+ok(C.hoursText(null) === '' && C.hoursText({ week: {} }) === '', 'unknown hours say nothing');
 
 const det = C.detailsFromTags(fix.overpassTags, { type: 'node', id: 5279728860 });
 ok(det.cuisine === 'pizza' && det.phone === '075-672-9889' && det.takeaway === 'only', 'the useful tags are picked out');
@@ -294,9 +304,30 @@ ok(rich.diet.join(', ') === 'vegetarian, vegan', 'diet options are read: ' + ric
 ok(rich.links[1].url === 'https://ja.wikipedia.org/wiki/%E6%9D%B1%E5%AF%BA', 'and a Wikipedia tag becomes a link: ' + rich.links[1].url);
 ok(C.detailsFromTags({}, null).hours === null, 'a place with no hours says so plainly');
 
+const lk = { label: 'Tabelog', url: 'https://tabelog.com/rstLst/?sk={local}' };
+ok(C.lookupUrl(lk, { name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }).endswith
+  ? true : C.lookupUrl(lk, { name: 'Pizza Little Party', localName: 'ピザリトルパーティ' })
+    === 'https://tabelog.com/rstLst/?sk=' + encodeURIComponent('ピザリトルパーティ'),
+  'a look-up link is filled in with the local name');
+ok(C.lookupUrl({ url: 'https://x.test/?q={name}' }, { name: 'A & B' }) === 'https://x.test/?q=A%20%26%20B', 'and escaped');
+ok(C.lookupUrl({ url: 'https://x.test/' }, { name: 'A' }) === 'https://x.test/', 'a link with no placeholder just opens');
+
 ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }, 'Kyoto')
   === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
   'Google Maps is asked for the local name plus the city, as the service test did');
+
+console.log('\n== How far a place is from the day ==');
+const near = (lat, lng, key) => C.nearestInDay(demoTrip, '2026-11-21', { lat, lng }, key);
+let n = near(34.9950, 135.7855);                       // a few steps from Example Temple
+ok(n.name === 'Example Temple' && n.where === 'stop 1', 'the nearest thing on the day is found: ' + C.nearText(n));
+ok(n.minutes >= 1 && n.minutes <= 3, 'with a walking estimate: ' + n.minutes + ' min');
+n = near(34.9860, 135.7590);                           // outside the hotel
+ok(n.where === 'the start' && n.name === 'Example Hotel · Kyoto Station', 'the start counts too: ' + C.nearText(n));
+n = near(35.0052, 135.7650, 'packed');
+ok(n.where === 'stop 3', 'stop numbers follow the version on screen: ' + C.nearText(n));
+ok(C.nearText(near(35.5, 136.5)).indexOf('km from') > 0, 'too far to walk is given as a distance: ' + C.nearText(near(35.5, 136.5)));
+ok(C.nearestInDay(demoTrip, '2026-11-21', {}) === null, 'a place with no position has no distance');
+ok(C.nearText(null) === '', 'and nothing to say about it');
 
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

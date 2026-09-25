@@ -350,6 +350,14 @@ function addButtonsHtml(act) {
       : '<button type="button" class="btn primary" data-act="' + act + '" data-to="backlog">Add to the backlog</button>')
     + '</div></div>';
 }
+function lookupRowsHtml(list) {
+  const rows = list.concat([{ label: '', url: '' }]).slice(0, 6);
+  return rows.map((l, i) =>
+    '<div class="pair lookup-row">'
+    + '<input class="in" id="lkLabel' + i + '" maxlength="40" placeholder="Tabelog" value="' + esc(l.label) + '" aria-label="Link name">'
+    + '<input class="in" id="lkUrl' + i + '" maxlength="300" placeholder="https://tabelog.com/rstLst/?sk={local}" value="' + esc(l.url) + '" aria-label="Link address">'
+    + '</div>').join('');
+}
 const sheetHead = (title, sub) =>
   '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
   + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
@@ -374,8 +382,13 @@ const SHEETS = {
     const p = s.place;
     const day = currentDay();
     const where = [C.KIND_LABEL[p.kind], p.where || p.area].filter(Boolean).join(' · ');
+    const near = day ? C.nearText(C.nearestInDay(App.trip, day.id, p, day.shown)) : '';
     return sheetHead(p.name, p.localName || '')
       + (where ? '<p class="note">' + esc(where) + '</p>' : '')
+      + (near ? '<p class="note">' + esc(near) + '</p>' : '')
+      + detailsHtml(s)
+      + linksHtml(p, s.details)
+      + gmapsHtml(p)
       + addButtonsHtml('add-place');
   },
 
@@ -460,6 +473,11 @@ const SHEETS = {
         'Used for travel estimates until real routes arrive.')
       + field('trCur', 'Preferred currency', textIn('trCur', t.currency || '', ' maxlength="3" placeholder="none"'),
         'Prices always show in their own currency. Name one here and a conversion appears beside them.')
+      + '<div class="sh-sec"><span class="label">Your own look-up links</span>'
+      + '<p class="note">Shown on every place you preview, so you can check it where you normally would. '
+      + 'Put <code>{name}</code> or <code>{local}</code> where the place\'s name belongs.</p>'
+      + lookupRowsHtml(t.lookups)
+      + '</div>'
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-trip">Save</button>'
       + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
       + '<div class="sh-sec"><span class="label">Start again</span>'
@@ -497,8 +515,83 @@ function addPlaceTo(place, to) {
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
+// The map's own information is on screen at once; OpenStreetMap fills in behind it, and the
+// preview works perfectly well if that never arrives.
+let previewSeq = 0;
 function openPreview(place) {
-  openSheet('preview', { place: place });
+  const mine = ++previewSeq;
+  openSheet('preview', { place: place, details: null, detailsBusy: !!C.overpassUrl(place.osm), detailsError: '' });
+  const url = C.overpassUrl(place.osm);
+  if (!url) return;
+  Live.fetchJson(url).then(
+    (json) => {
+      if (mine !== previewSeq || !App.ui.sheet) return;
+      const got = C.parseOverpass(json);
+      const s = App.ui.sheet;
+      s.detailsBusy = false;
+      if (!got) { s.detailsError = 'OpenStreetMap has nothing filed under this place.'; render(); return; }
+      s.details = C.detailsFromTags(got.tags, place.osm);
+      if (got.at) { place.lat = got.at.lat; place.lng = got.at.lng; }   // the finger lands near, not on
+      if (s.details.hours) place.hours = s.details.hours.hours;
+      render();
+    },
+    (err) => {
+      if (mine !== previewSeq || !App.ui.sheet) return;
+      App.ui.sheet.detailsBusy = false;
+      App.ui.sheet.detailsError = 'OpenStreetMap ' + Live.why(err) + '. Everything else here still holds.';
+      render();
+    });
+}
+
+// What OpenStreetMap knows, once it has answered. Coverage varies: a well-known sight carries
+// plenty, a small restaurant often nothing but a name.
+function detailsHtml(s) {
+  if (s.detailsBusy) return '<div class="sh-sec"><span class="label">OpenStreetMap</span><p class="note">Looking…</p></div>';
+  if (s.detailsError) return '<div class="sh-sec"><span class="label">OpenStreetMap</span><p class="note">' + esc(s.detailsError) + '</p></div>';
+  if (!s.details) return '';
+  const d = s.details;
+  const rows = [];
+  const add = (k, v) => { if (v) rows.push([k, v]); };
+  if (d.hours) {
+    const line = C.hoursText(d.hours.hours);
+    add('Hours', line || d.hours.hours.raw);
+  }
+  add('Cuisine', d.cuisine);
+  add('Diet', d.diet.join(', '));
+  add('Takeaway', d.takeaway === 'only' ? 'takeaway only' : d.takeaway === 'yes' ? 'yes' : '');
+  add('Booking', d.reservation);
+  add('Step-free', d.wheelchair);
+  add('Entry', d.fee === 'yes' ? 'there is a charge' : d.fee === 'no' ? 'free' : '');
+  add('Phone', d.phone);
+  return '<div class="sh-sec"><span class="label">What OpenStreetMap knows</span>'
+    + (d.hours
+      ? '<p class="note amber">These hours are unverified — check them before you rely on them.</p>'
+      : '<p class="note amber">Hours unknown — check.</p>')
+    + (rows.length ? '<dl class="facts">' + rows.map(([k, v]) =>
+      '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '')
+    + (d.hours && d.hours.partial ? '<p class="hint">Part of what it says could not be read: <code>' + esc(d.hours.hours.raw) + '</code></p>' : '')
+    + (d.description ? '<p class="hint">' + esc(d.description) + '</p>' : '')
+    + (!rows.length && !d.description ? '<p class="note">Nothing but a name, which is usual for small places.</p>' : '')
+    + '</div>';
+}
+// Google Maps is where reviews, photos and today's real hours live. It opens beside the planner —
+// a separate window on a laptop, the Maps app on a phone — and the preview stays put for when you
+// come back. Nothing comes the other way: no Google result is ever stored or drawn on our map.
+function gmapsHtml(place) {
+  const day = currentDay();
+  return '<div class="sh-sec"><span class="label">Check it on Google Maps</span>'
+    + '<p class="note">For reviews, photos and the hours as they are today. It opens in a window beside this one.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="gmaps">Check on Google Maps</button></div>'
+    + '<p class="hint">Nothing comes back from Google into the planner.</p></div>';
+}
+function linksHtml(place, details) {
+  const out = [];
+  for (const l of (details ? details.links : [])) out.push([l.url, l.label]);
+  for (const l of App.trip.lookups) out.push([C.lookupUrl(l, place), l.label]);
+  if (!out.length) return '';
+  return '<div class="sh-sec"><span class="label">Look it up</span><p class="links">'
+    + out.map(([url, label]) => '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + '</a>').join(' · ')
+    + '</p></div>';
 }
 
 // ---------- toast ----------
@@ -603,6 +696,12 @@ const ACTIONS = {
     App.trip.tzLabel = val('trTz');
     App.trip.transit = val('trTransit');
     App.trip.currency = cur || null;
+    const lookups = [];
+    for (let i = 0; i < 6; i++) {
+      const url = val('lkUrl' + i);
+      if (url) lookups.push({ label: val('lkLabel' + i), url: url });
+    }
+    App.trip.lookups = lookups;
     App.trip = C.normalise(App.trip).trip;
     closeSheet();
     changed('Trip settings saved');
@@ -682,6 +781,16 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   'pin-mode': () => setPinning(!App.ui.pinning),
+  gmaps: () => {
+    const s = App.ui.sheet;
+    if (!s || !s.place) return;
+    const day = currentDay();
+    const url = C.gmapsUrl(s.place, day ? day.city : '');
+    // A named window with a size asks for a separate window rather than a tab, which is what the
+    // service test saw. A phone ignores the hint and opens the Maps app.
+    const win = window.open(url, 'day-planner-gmaps', 'popup=yes,width=560,height=900,noopener');
+    if (!win) toast('Your browser blocked the window. Allow pop-ups for this page, or open the link yourself.', null, 8000);
+  },
   'add-pin': (el) => {
     const s = App.ui.sheet;
     const name = val('pinName');

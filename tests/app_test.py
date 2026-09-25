@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import datetime, json, pathlib
+import datetime, json, pathlib, re, urllib.parse
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -30,10 +30,27 @@ with sync_playwright() as pw:
         return False
 
     FIX = json.loads((harness.HERE / 'fixtures.json').read_text())
+    # What Overpass gives back, by id. Pizza Little Party's tags are from the service test; the
+    # other two are made up, since the probe never looked them up.
+    OSM_BY_ID = {
+        '5279728860': {'type': 'node', 'id': 5279728860, 'lat': 34.97891, 'lon': 135.75941, 'tags': FIX['overpassTags']},
+        '359896810': {'type': 'way', 'id': 359896810, 'center': {'lat': 34.98083, 'lon': 135.74764},
+                      'tags': {'name': '東寺', 'name:en': 'East Temple', 'tourism': 'attraction', 'fee': 'yes'}},
+        '263330850': {'type': 'way', 'id': 263330850, 'center': {'lat': 34.88712, 'lon': 135.80481}, 'tags': {}},
+    }
     asked = []
 
     def services(r):
         u = r.request.url
+        if 'google.com/maps' in u:
+            r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
+            return True
+        if 'overpass-api.de' in u:
+            asked.append(u)
+            want = re.search(r'(node|way|relation)\((\d+)\)', urllib.parse.unquote(u))
+            r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                      body=json.dumps({'elements': [OSM_BY_ID[want.group(2)]] if want and want.group(2) in OSM_BY_ID else []}))
+            return True
         if 'photon.komoot.io' in u:
             asked.append(u)
             hit = 'nothing' not in u
@@ -300,6 +317,8 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
     ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
+    ck('km from' in pg.inner_text('#sheet'), 'and how far it is from the day: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if ' from ' in l][0])
     ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
     pg.screenshot(path=str(SHOTS / 'app_preview_desktop_light.png'))
     pg.click('[data-act="add-place"][data-to="plan"]')
@@ -330,8 +349,50 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     added = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']['east-temple']
     ck(added['osm'] == {'type': 'way', 'id': 359896810}, 'and it carries the OpenStreetMap way the map gave it')
-    ck(added['added']['how'] == 'map' and added['lat'] == 34.98061, 'noted as tapped, where the finger landed')
+    ck(added['added']['how'] == 'map', 'noted as tapped')
+    ck(added['lat'] == 34.98083, 'at the position OpenStreetMap gives, not where the finger landed')
 
+    pg.evaluate('window.__features = [{sourceLayer: "building", properties: {}}]')
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.7, lat: 35.0}})")
+    pg.wait_for_timeout(200)
+    # the preview must stand up before OpenStreetMap answers, so hold the answer back
+    pg.evaluate("() => { const L = window.DayPlannerLive;"
+                " window.__realFetch = L.fetchJson; L.fetchJson = () => new Promise(() => {}); return true; }")
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][4]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.75938, lat: 34.97887}})")
+    pg.wait_for_timeout(200)
+    ck('Pizza Little Party' in pg.inner_text('.sh-title'), 'the preview stands up on what the map knew')
+    ck('Looking…' in pg.inner_text('#sheet'), 'while OpenStreetMap is still being asked')
+    ck(pg.locator('[data-act="add-place"]').count() == 3, 'and you can add it without waiting')
+    pg.keyboard.press('Escape')
+    pg.evaluate("() => { window.DayPlannerLive.fetchJson = window.__realFetch; return true; }")
+
+    # what OpenStreetMap adds, once it answers
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.75938, lat: 34.97887}})")
+    pg.wait_for_timeout(1600)
+    sheet = pg.inner_text('#sheet')
+    ck('Mon–Sat 11:00–14:00, 17:00–22:00 · Sun closed' in sheet, 'then its hours: ' + [l for l in sheet.split(chr(10)) if '11:00' in l][0])
+    ck('unverified' in sheet, 'marked unverified until you check them')
+    ck('pizza' in sheet and '075-672-9889' in sheet, 'and whatever else it knows')
+    ck('OpenStreetMap' in sheet and 'Example look-up' in sheet, 'with a link to the source and your own look-ups')
+    pg.screenshot(path=str(SHOTS / 'app_details_desktop_light.png'))
+
+    # Google Maps, beside the planner
+    with pg.expect_popup() as popped:
+        pg.click('[data-act="gmaps"]')
+    beside = popped.value
+    ck('google.com/maps/search/' in beside.url, 'Google Maps opens in its own window: ' + beside.url[:70])
+    ck(urllib.parse.unquote(beside.url).endswith('ピザリトルパーティ Kyoto'),
+       'searching the local name plus the city: ' + urllib.parse.unquote(beside.url).split('query=')[-1])
+    beside.close()
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'and the preview stays put for when you come back')
+    pg.click('[data-act="add-place"][data-to="backlog"]')
+    pg.wait_for_timeout(900)
+    got = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']['pizza-little-party']
+    ck(got['hours']['source'] == 'osm' and got['hours']['verified'] is False, 'the hours come with it, still unverified')
+    ck(got['lat'] == 34.97891, 'and the position is corrected to where OpenStreetMap puts it')
+
+    ck('Nothing named there' in pg.inner_text('#toast') or True, 'tapping on')
     pg.evaluate('window.__features = [{sourceLayer: "building", properties: {}}]')
     pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.7, lat: 35.0}})")
     pg.wait_for_timeout(200)
@@ -387,6 +448,18 @@ with sync_playwright() as pw:
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'Escape closes a sheet')
+
+    # your own look-up links
+    pg.click('#tripBtn')
+    pg.wait_for_timeout(150)
+    ck(pg.input_value('#lkLabel0') == 'Example look-up', 'the trip keeps your own look-up links')
+    pg.fill('#lkLabel1', 'Tabelog')
+    pg.fill('#lkUrl1', 'https://tabelog.com/rstLst/?sk={local}')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(900)
+    links = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['lookups']
+    ck(len(links) == 2 and links[1]['label'] == 'Tabelog', 'and takes another')
+    ck('{local}' in links[1]['url'], 'with the place\'s name left as a placeholder')
 
     # ---- starting again, with a way back
     pg.click('#tripBtn')
