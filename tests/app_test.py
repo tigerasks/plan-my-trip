@@ -13,13 +13,15 @@ ck = Checks('Day planner — the skeleton')
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
-    def open_page(w=1280, h=800, scheme='light'):
+    def open_page(w=1280, h=800, scheme='light', held=None):
         phone = w < 500
         ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
                              is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
         ctx.route('**/*', harness.offline(BASE))
         pg = ctx.new_page()
         ck.watch(pg)
+        if held is not None:
+            pg.add_init_script("localStorage.setItem('plan-my-trip/trip', %s)" % json.dumps(json.dumps(held)))
         pg.goto(BASE + '/index.html')
         pg.wait_for_timeout(200)
         return ctx, pg
@@ -39,6 +41,35 @@ with sync_playwright() as pw:
     ck('Add its days next' in pg.inner_text('#toast'), 'with a nudge: ' + pg.inner_text('#toast'))
     ck(pg.evaluate('window.DayPlannerApp.trip.id') == 'my-trip', 'the trip is in the page, normalised')
     pg.screenshot(path=str(SHOTS / 'app_new_desktop_light.png'))
+    # ---- saving in the browser
+    pg.wait_for_timeout(800)
+    held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
+    ck(held['schema'] == 'day-planner/2' and held['kind'] == 'save' and held['trip']['title'] == 'My trip',
+       'the trip is auto-saved as a day-planner/2 envelope')
+    ck(pg.inner_text('#saved').startswith('Saved '), 'and the header says when: ' + pg.inner_text('#saved'))
+    pg.reload()
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('#tripBtn') == 'My trip', 'and it is still there after a reload')
+    ctx.close()
+
+    # ---- opening a browser that already holds a trip
+    ctx, pg = open_page(held=DEMO)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'a stored trip opens straight away')
+    ck(pg.locator('#dayPick').is_visible() and 'Sat 21 Nov' in pg.inner_text('#dayFace'), 'on its first day: ' + pg.inner_text('#dayFace'))
+    ck('Example Hotel · Kyoto Station' in pg.inner_text('#panel'), 'with the day it knows about')
+    pg.select_option('#daySel', '2026-11-22')
+    pg.wait_for_timeout(150)
+    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'and you can switch day: ' + pg.inner_text('#dayFace'))
+    pg.reload()
+    pg.wait_for_timeout(250)
+    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which is remembered for this browser')
+    pg.screenshot(path=str(SHOTS / 'app_day_desktop_light.png'))
+    ctx.close()
+
+    # ---- a stored copy that cannot be used
+    ctx, pg = open_page(held={'schema': 'day-planner/9', 'kind': 'save', 'trip': {}})
+    ck('No trip yet' in pg.inner_text('#panel'), 'an unusable stored copy does not break the page')
+    ck(pg.inner_text('.note.bad').startswith('The trip saved in this browser could not be opened.'), 'and says why: ' + pg.inner_text('.note.bad'))
     ctx.close()
 
     # ---- the two sizes, light and dark
