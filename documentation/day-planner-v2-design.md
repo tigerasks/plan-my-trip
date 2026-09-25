@@ -20,6 +20,8 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Updated Fri 25 Sep 2026, Transitous:** building the planner sends Transitous too little traffic to be worth telling them about. The heads-up is the owner's to send, once other people are actually using the planner; while it isn't being advertised it may never be needed.
+
 **Updated Fri 25 Sep 2026, milestone 1:** the exchange format is settled and written down below: fixed marker lines, one envelope, and the same envelope again as a `.json` file. Opening hours are kept as a weekly table with the original OpenStreetMap text beside them, so a place can carry its hours before it has a day. A place belongs to exactly one day through its own `dayId`; the three versions hold order only.
 
 ## Why a v2
@@ -276,7 +278,13 @@ That covers a day's hand-back and the whole trip alike, and the importer accepts
 ## Before going live
 
 A few duties come with the outside services:
-- tell Transitous about the planner in their Matrix channel before it routes routinely, since their policy asks for a heads-up on routing use;
+- tell Transitous about the planner in their Matrix channel (`#transitous:matrix.spline.de`) once other
+  people are using it. Their API page asks to be contacted "before using any potentially
+  resource-intensive API endpoints (such as routing, isochrones) or doing many requests (also from
+  different users)". That is about capacity, and building the planner does not trouble it: a few dozen
+  requests made by hand, cached, spaced a second apart. So while the planner stays a personal tool
+  that isn't being advertised, the message may never be needed at all. It is the owner's to send, not
+  something the planner or the chat does;
 - show contact details on the site, such as a link to your GitHub profile;
 - keep the credits visible: OpenFreeMap and OpenMapTiles, © OpenStreetMap contributors, Photon, Overpass, OSRM with a "fix the map" link, and Transitous with a link to its data sources;
 - publish the code with the AGPL-3.0 licence file.
@@ -300,6 +308,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 11 | Draw real walking paths on the map? | Yes. |
 | 12 | How to check places before adding them? | A preview with OpenStreetMap details and an hours editor; Google Maps opens beside the planner. |
 | 13 | Public transport without timetables? | A stop-based estimate. It uses all stops within 10 minutes' walk of each end, widening to 20 minutes where an end has none, with no public transport estimate if there are still none. The line is named where OpenStreetMap has it, and it's suggested only when it clearly beats walking. |
+| 14 | When does Transitous need telling about the planner? | Once other people use it. Development traffic is too small to require it, and while the planner isn't being advertised it may not be needed at all. The owner sends the message, not the planner and not the chat. |
 
 ## Open questions
 
