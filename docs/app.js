@@ -287,7 +287,11 @@ const SHEETS = {
       + '<p class="note">The same trip, as a block to paste into the chat. It starts and ends with a fixed line, so the chat can find it whatever you paste it into.</p>'
       + '<div class="actions"><button type="button" class="btn" data-act="copy-text"' + (t ? '' : ' disabled') + '>Copy as text</button></div>'
       + (s.text ? '<textarea class="in copybox" id="outBox" readonly aria-label="The trip as text">' + esc(s.text) + '</textarea>' : '')
-      + '</div>';
+      + '</div>'
+      + '<div class="sh-sec"><span class="label">Paste a block</span>'
+      + '<p class="note">Paste what the chat gave you, from its first line to its last. Anything around it is ignored.</p>'
+      + '<textarea class="in copybox" id="inBox" aria-label="A block to load" placeholder="--- BEGIN day-planner/2 ---">' + esc(s.paste || '') + '</textarea>'
+      + '<div class="actions"><button type="button" class="btn" data-act="paste-in">Load the text</button></div></div>';
   },
   day: (s) => {
     const day = currentDay();
@@ -401,6 +405,8 @@ function applyImport(res) {
   App.ui.dayId = null;
   App.storageProblem = null;
   s.pending = null;
+  s.paste = '';
+  s.text = '';
   s.report = { bad: false, title: res.title + ' — ' + res.summary, lines: res.issues };
   saveUi();
   changed();
@@ -522,6 +528,10 @@ const ACTIONS = {
     toast('Saved ' + C.fileName(App.trip, now));
   },
   'open-file': () => $('#fileIn').click(),
+  'paste-in': () => {
+    App.ui.sheet.paste = $('#inBox') ? $('#inBox').value : '';
+    takeIn(App.ui.sheet.paste);
+  },
   'copy-text': () => {
     if (!App.trip) return;
     saveNow();

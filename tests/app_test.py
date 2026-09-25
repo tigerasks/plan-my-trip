@@ -327,6 +327,26 @@ with sync_playwright() as pw:
     ck('Copied' in pg.inner_text('#toast'), 'the clipboard gets it too: ' + pg.inner_text('#toast'))
     ck(pg.evaluate('navigator.clipboard.readText()') == block, 'the same text, byte for byte')
     pg.screenshot(path=str(SHOTS / 'app_text_desktop_light.png'))
+
+    # ---- loading a block back in
+    pg.fill('#inBox', 'Here you go!\n\n' + block + '\nAnything else?')
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(400)
+    ck('Replace this trip?' in pg.inner_text('#sheet'), 'the same trip again asks before it overwrites what is open')
+    pg.click('[data-act="import-go"]')
+    pg.wait_for_timeout(400)
+    ck('2 days and 6 places' in pg.inner_text('#sheet .note.good'), 'a pasted block loads, chat chatter and all')
+    ck(pg.input_value('#inBox') == '', 'and the box is emptied once it has')
+    cut = block.strip().rsplit(chr(10), 1)[0][:400]
+    pg.fill('#inBox', cut)
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(300)
+    ck('cut off' in pg.inner_text('#sheet .note.bad'), 'a block that got clipped says so: ' + pg.inner_text('#sheet .note.bad')[:70] + '…')
+    ck(pg.input_value('#inBox') == cut, 'and what you pasted stays in the box')
+    pg.fill('#inBox', block.replace('day-planner/2', 'day-planner/1'))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(300)
+    ck('first planner' in pg.inner_text('#sheet .note.bad'), 'a block from the old planner is turned away: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
     ctx.close()
 
     # ---- a stored copy that cannot be used
