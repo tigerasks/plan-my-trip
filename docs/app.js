@@ -10,13 +10,14 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c])
 const ICON = {
   chev: '<path d="m6 9 6 6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
 const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
 
 // ---------- state ----------
 const App = {
   trip: null,            // the one trip this browser holds, already normalised
-  ui: { dayId: null },   // what is on screen; never part of what gets exported
+  ui: { dayId: null, sheet: null },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
   storageProblem: null,  // why the browser copy could not be used, in plain words
 };
@@ -77,6 +78,7 @@ const fmtClock = (d) => two(d.getHours()) + ':' + two(d.getMinutes());
 function render() {
   renderHeader();
   renderPanel();
+  renderSheet();
   renderSaved();
 }
 function renderSaved() {
@@ -202,6 +204,58 @@ function creditsHtml() {
     + '</p>';
 }
 
+// ---------- sheets ----------
+// One panel at a time, sliding in from the right on a laptop and up from the bottom on a phone.
+function openSheet(kind, data) {
+  App.ui.sheet = Object.assign({ kind: kind }, data);
+  render();
+  const first = $('#sheet .in');
+  if (first) { first.focus(); if (first.select) first.select(); }
+}
+function closeSheet() {
+  if (!App.ui.sheet) return;
+  App.ui.sheet = null;
+  render();
+}
+function renderSheet() {
+  const el = $('#sheet');
+  const s = App.ui.sheet;
+  const build = s && SHEETS[s.kind];
+  el.innerHTML = build ? build(s) : '';
+  el.classList.toggle('open', !!build);
+  el.setAttribute('aria-hidden', build ? 'false' : 'true');
+}
+const sheetHead = (title, sub) =>
+  '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
+  + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
+const field = (id, label, html, hint) =>
+  '<label class="field" for="' + id + '"><span class="label">' + esc(label) + '</span>' + html
+  + (hint ? '<span class="hint">' + esc(hint) + '</span>' : '') + '</label>';
+const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="' + esc(value) + '"' + (extra || '') + '>';
+const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
+
+const SHEETS = {
+  trip: () => {
+    const t = App.trip;
+    const s = App.ui.sheet;
+    return sheetHead('Trip settings', t.title)
+      + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+      + field('trTitle', 'Title', textIn('trTitle', t.title, ' maxlength="80"'), 'Shown at the top, and in what you hand back to the chat.')
+      + field('trTz', 'Time zone label', textIn('trTz', t.tzLabel, ' maxlength="12" placeholder="JST"'), 'Just a label next to the times. Every time in the planner is local to where you are going.')
+      + field('trTransit', 'Getting around, by default',
+        '<select class="in" id="trTransit">' + C.TRANSIT_TYPES.map((k) =>
+          '<option value="' + k + '"' + (k === t.transit ? ' selected' : '') + '>' + esc(C.TRANSIT_LABEL[k]) + '</option>').join('') + '</select>',
+        'Used for travel estimates until real routes arrive.')
+      + field('trCur', 'Preferred currency', textIn('trCur', t.currency || '', ' maxlength="3" placeholder="none"'),
+        'Prices always show in their own currency. Name one here and a conversion appears beside them.')
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-trip">Save</button>'
+      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
+      + '<div class="sh-sec"><span class="label">Start again</span>'
+      + '<p class="note">Clears this trip from the browser and starts an empty one. You can undo it straight afterwards.</p>'
+      + '<button type="button" class="btn danger" data-act="clear-trip">Start a new trip</button></div>';
+  },
+};
+
 // ---------- toast ----------
 let toastTimer = 0;
 function toast(msg, action, ms) {
@@ -215,6 +269,31 @@ function toast(msg, action, ms) {
 
 // ---------- actions ----------
 const ACTIONS = {
+  trip: () => { if (App.trip) openSheet('trip'); },
+  'close-sheet': closeSheet,
+  'save-trip': () => {
+    const cur = val('trCur').toUpperCase();
+    if (cur && !/^[A-Z]{3}$/.test(cur)) {
+      App.ui.sheet.error = 'A currency is three letters, like CHF or JPY. Leave it empty to show every price as it is.';
+      render();
+      return;
+    }
+    App.trip.title = val('trTitle') || App.trip.title;
+    App.trip.tzLabel = val('trTz');
+    App.trip.transit = val('trTransit');
+    App.trip.currency = cur || null;
+    App.trip = C.normalise(App.trip).trip;
+    closeSheet();
+    changed('Trip settings saved');
+  },
+  'clear-trip': () => {
+    const before = C.clone(App.trip);
+    App.trip = C.newTrip('My trip');
+    App.ui.dayId = null;
+    closeSheet();
+    changed();
+    toast('Started again from nothing.', { label: 'Undo', fn: () => { App.trip = before; changed('Trip brought back'); } }, 9000);
+  },
   version: (el) => {
     const day = currentDay();
     if (!day || day.shown === el.dataset.v) return;
@@ -241,6 +320,7 @@ function onClick(e) {
 function boot() {
   document.addEventListener('click', onClick);
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
   window.addEventListener('pagehide', saveNow);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   restore();

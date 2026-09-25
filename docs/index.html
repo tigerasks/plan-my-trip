@@ -13,7 +13,7 @@
 <body>
 <div class="app">
   <header class="top">
-    <button type="button" class="trip-btn" id="tripBtn"><span class="name">Day planner</span></button>
+    <button type="button" class="trip-btn" id="tripBtn" data-act="trip"><span class="name">Day planner</span></button>
     <label class="daypick" id="dayPick" hidden>
       <span class="sr">Choose a day</span>
       <select id="daySel"></select>
@@ -28,6 +28,7 @@
   </section>
   <main class="panel" id="panel"></main>
 </div>
+<aside class="sheet" id="sheet" role="dialog" aria-label="Settings" aria-hidden="true"></aside>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="core.js"></script>
 <script src="app.js"></script>
