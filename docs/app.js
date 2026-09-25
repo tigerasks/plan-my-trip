@@ -132,7 +132,8 @@ function renderHeader() {
   const day = currentDay();
   $('#daySel').innerHTML = ids.map((id) =>
     '<option value="' + esc(id) + '"' + (id === day.id ? ' selected' : '') + '>' + esc(C.fmtDateUK(id)) + (App.trip.days[id].city ? ' · ' + esc(App.trip.days[id].city) : '') + '</option>').join('');
-  $('#dayFace').textContent = C.fmtDateUK(day.id) + (day.city ? ' · ' + day.city : '');
+  $('#dayFace').innerHTML = '<span class="when">' + esc(C.fmtDateUK(day.id)) + '</span>'
+    + (day.city ? '<span class="city"> · ' + esc(day.city) + '</span>' : '');
 }
 function renderPanel() {
   $('#panel').innerHTML = App.trip ? tripHtml() : emptyHtml();
