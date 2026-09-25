@@ -42,6 +42,9 @@ with sync_playwright() as pw:
 
     def services(r):
         u = r.request.url
+        if 'google.com/maps' in u:
+            r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
+            return True
         if 'overpass-api.de' in u:
             asked.append(u)
             want = re.search(r'(node|way|relation)\((\d+)\)', urllib.parse.unquote(u))
@@ -373,6 +376,16 @@ with sync_playwright() as pw:
     ck('pizza' in sheet and '075-672-9889' in sheet, 'and whatever else it knows')
     ck('OpenStreetMap' in sheet and 'Example look-up' in sheet, 'with a link to the source and your own look-ups')
     pg.screenshot(path=str(SHOTS / 'app_details_desktop_light.png'))
+
+    # Google Maps, beside the planner
+    with pg.expect_popup() as popped:
+        pg.click('[data-act="gmaps"]')
+    beside = popped.value
+    ck('google.com/maps/search/' in beside.url, 'Google Maps opens in its own window: ' + beside.url[:70])
+    ck(urllib.parse.unquote(beside.url).endswith('ピザリトルパーティ Kyoto'),
+       'searching the local name plus the city: ' + urllib.parse.unquote(beside.url).split('query=')[-1])
+    beside.close()
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'and the preview stays put for when you come back')
     pg.click('[data-act="add-place"][data-to="backlog"]')
     pg.wait_for_timeout(900)
     got = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']['pizza-little-party']

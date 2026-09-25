@@ -388,6 +388,7 @@ const SHEETS = {
       + (near ? '<p class="note">' + esc(near) + '</p>' : '')
       + detailsHtml(s)
       + linksHtml(p, s.details)
+      + gmapsHtml(p)
       + addButtonsHtml('add-place');
   },
 
@@ -572,6 +573,16 @@ function detailsHtml(s) {
     + (d.description ? '<p class="hint">' + esc(d.description) + '</p>' : '')
     + (!rows.length && !d.description ? '<p class="note">Nothing but a name, which is usual for small places.</p>' : '')
     + '</div>';
+}
+// Google Maps is where reviews, photos and today's real hours live. It opens beside the planner —
+// a separate window on a laptop, the Maps app on a phone — and the preview stays put for when you
+// come back. Nothing comes the other way: no Google result is ever stored or drawn on our map.
+function gmapsHtml(place) {
+  const day = currentDay();
+  return '<div class="sh-sec"><span class="label">Check it on Google Maps</span>'
+    + '<p class="note">For reviews, photos and the hours as they are today. It opens in a window beside this one.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="gmaps">Check on Google Maps</button></div>'
+    + '<p class="hint">Nothing comes back from Google into the planner.</p></div>';
 }
 function linksHtml(place, details) {
   const out = [];
@@ -770,6 +781,16 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   'pin-mode': () => setPinning(!App.ui.pinning),
+  gmaps: () => {
+    const s = App.ui.sheet;
+    if (!s || !s.place) return;
+    const day = currentDay();
+    const url = C.gmapsUrl(s.place, day ? day.city : '');
+    // A named window with a size asks for a separate window rather than a tab, which is what the
+    // service test saw. A phone ignores the hint and opens the Maps app.
+    const win = window.open(url, 'day-planner-gmaps', 'popup=yes,width=560,height=900,noopener');
+    if (!win) toast('Your browser blocked the window. Allow pop-ups for this page, or open the link yourself.', null, 8000);
+  },
   'add-pin': (el) => {
     const s = App.ui.sheet;
     const name = val('pinName');
