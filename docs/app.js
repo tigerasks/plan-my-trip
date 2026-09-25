@@ -361,6 +361,31 @@ function timeWheels(id, hhmm) {
 }
 const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
 
+// Moving a place about. Remove takes it out of one version only; Remove to the backlog takes it off
+// the day altogether, which means it leaves every version, and the planner says so.
+function movesHtml(p, holds) {
+  const day = currentDay();
+  const here = day && p.dayId === day.id;
+  const elsewhere = C.dayIds(App.trip).filter((id) => id !== p.dayId);
+  const btn = (act, label, cls) => '<button type="button" class="btn' + (cls ? ' ' + cls : '') + '" data-act="' + act + '">' + esc(label) + '</button>';
+  const out = [];
+  if (here && holds.includes(day.shown)) out.push(btn('move-remove', 'Remove from ' + C.PLAN_LABEL[day.shown]));
+  if (here && !holds.includes(day.shown)) out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
+  if (!p.dayId && day) {
+    out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
+    out.push(btn('move-today', 'Add to ' + C.fmtDateUK(day.id)));
+  }
+  if (p.dayId) out.push(btn('move-backlog', holds.length ? 'Remove to the backlog' : 'Move to the backlog'));
+  let picker = '';
+  if (elsewhere.length) {
+    picker = '<div class="span-row" style="margin-top:10px"><span class="label">' + (p.dayId ? 'Or move to' : 'Put it on') + '</span>'
+      + '<select class="in" id="moveDay">' + elsewhere.map((id) =>
+        '<option value="' + esc(id) + '">' + esc(C.fmtDateUK(id) + (App.trip.days[id].city ? ' · ' + App.trip.days[id].city : '')) + '</option>').join('')
+      + '</select>' + btn('move-to-day', 'Move') + '</div>';
+  }
+  return (out.length ? '<div class="actions">' + out.join('') + '</div>' : '') + picker;
+}
+
 // ---------- opening hours ----------
 // Filled in from OpenStreetMap where it had them, always marked unverified until you say otherwise.
 // Confirming or correcting them is the point: from then on they are what the timeline believes.
@@ -532,7 +557,8 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">Where it sits</span><p class="note">'
       + esc(p.dayId
         ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
-        : 'In the backlog, with no day yet') + '</p></div>'
+        : 'In the backlog, with no day yet') + '</p>'
+      + movesHtml(p, holds) + '</div>'
       + '<div class="sh-sec"><span class="label">How long it takes</span>'
       + durationWheels('dur', p.duration)
       + '<div class="actions"><button type="button" class="btn" data-act="save-duration">Save</button></div></div>'
@@ -953,6 +979,26 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => openPlace(el.dataset.id),
+  'move-remove': () => {
+    const day = currentDay();
+    const res = C.removeFromPlan(App.trip, App.ui.sheet.id, day.shown);
+    changed(res.text);
+  },
+  'move-add': () => {
+    const day = currentDay();
+    const id = App.ui.sheet.id;
+    if (C.placeById(App.trip, id).dayId !== day.id) C.moveToDay(App.trip, id, day.id);
+    const res = C.addToPlan(App.trip, id, day.shown, C.bestSlot(App.trip, day.id, day.shown, id));
+    changed(res.text);
+  },
+  'move-today': () => { changed(C.moveToDay(App.trip, App.ui.sheet.id, currentDay().id).text); },
+  'move-backlog': () => { changed(C.moveToBacklog(App.trip, App.ui.sheet.id).text); },
+  'move-to-day': () => {
+    const to = val('moveDay');
+    const res = C.moveToDay(App.trip, App.ui.sheet.id, to);
+    if (res.ok) { App.ui.dayId = to; saveUi(); }
+    changed(res.text);
+  },
   'edit-hours': () => {
     const p = C.placeById(App.trip, App.ui.sheet.id);
     App.ui.sheet.hours = hoursDraft(p);

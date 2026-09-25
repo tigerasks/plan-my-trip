@@ -321,16 +321,42 @@ with sync_playwright() as pw:
     ck(len(hours['week']['wed']) == 2 and hours['lastEntry']['wed'] == '17:30', 'and the split day with its last entry')
     ck('Tue closed' in pg.inner_text('#sheet'), 'which the card reads back: '
        + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'closed' in l][0])
+    # ---- moving a place about
+    ck('Remove from Balanced' in pg.inner_text('#sheet'), 'a stop in the version on screen can be taken out of it')
+    pg.click('[data-act="move-remove"]')
+    pg.wait_for_timeout(500)
+    ck('is still in Do less and Packed' in pg.inner_text('#toast'), 'and the planner says where it still is: ' + pg.inner_text('#toast'))
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-21', 'it stays on its day')
+    ck('Add to Balanced' in pg.inner_text('#sheet'), 'and can go back in')
+    pg.click('[data-act="move-add"]')
+    pg.wait_for_timeout(500)
+    ck('example-temple' in pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced"), 'back in the version')
+
+    pg.click('[data-act="move-backlog"]')
+    pg.wait_for_timeout(900)
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(trip['places']['example-temple']['dayId'] is None, 'Remove to the backlog takes it off the day')
+    ck('example-temple' not in trip['days']['2026-11-21']['plans']['packed'], 'which means out of every version')
+    pg.select_option('#moveDay', '2026-11-22')
+    pg.click('[data-act="move-to-day"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-22',
+       'and it can be put on another day from the same card')
+    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which follows it there: ' + pg.inner_text('#dayFace'))
     pg.keyboard.press('Escape')
+    pg.select_option('#daySel', '2026-11-21')
+    pg.wait_for_timeout(200)
 
     pg.click('.list .item >> nth=3')
     pg.wait_for_timeout(250)
     ck('In the backlog, with no day yet' in pg.inner_text('#sheet'), 'a backlog place says so')
     pg.keyboard.press('Escape')
 
+    marked = pg.locator('.mk-plan').first.get_attribute('data-place')
     pg.click('.mk-plan >> nth=0')
     pg.wait_for_timeout(250)
-    ck(pg.inner_text('.sh-title').startswith('Example Temple'), 'and a marker on the map opens the same card')
+    ck(pg.inner_text('.sh-title').startswith(pg.evaluate('id => window.DayPlannerApp.trip.places[id].name', marked)),
+       'and a marker on the map opens that place\'s card')
     ctx.close()
 
     # ---- a day's shape
