@@ -230,9 +230,65 @@ function dayHtml(day) {
     + versionsHtml(day)
     + '</div>';
 }
+// The name of a place to sleep is also an address, so typing looks it up. You can leave it as
+// plain text — an apartment with no entry on the map still needs a name — but picking a result
+// pins it to the map, which is what the day's travel times will want.
 function stayNameHtml(s, stay) {
   const name = s.name != null ? s.name : (stay ? stay.name : '');
-  return field('stName', 'Where', textIn('stName', name, ' maxlength="120" placeholder="Example Ryokan"'));
+  const at = s.pick || (stay && C.hasPos(stay) ? stay : null);
+  return field('stName', 'Where', textIn('stName', name, ' maxlength="120" placeholder="Example Ryokan, Kyoto" autocomplete="off"'))
+    + '<div id="stResults">' + stayResultsHtml(s) + '</div>'
+    + '<p class="hint">' + (at
+      ? esc('On the map at ' + (at.area || at.where || (at.lat.toFixed(4) + ', ' + at.lng.toFixed(4))) + '.')
+      : 'Type an address or a hotel name and pick it from the list, so the planner knows where it is.')
+    + '</p>';
+}
+function stayResultsHtml(s) {
+  if (s.findError) return '<p class="hint bad">' + esc(s.findError) + '</p>';
+  if (s.busy) return '<p class="hint">Looking…</p>';
+  if (!s.results || !s.results.length) return '';
+  return '<ul class="list">' + s.results.map((p, i) =>
+    '<li><button type="button" class="item" data-act="pick-stay" data-i="' + i + '">'
+    + '<span class="dot"></span><span class="body"><span class="nm">' + esc(p.name) + '</span>'
+    + '<span class="meta">' + esc(p.where) + '</span></span></button></li>').join('') + '</ul>';
+}
+let stayFindSeq = 0;
+let stayFindTimer = 0;
+function onStayInput(e) {
+  const s = App.ui.sheet;
+  if (!s) return;
+  s.name = e.target.value;
+  s.pick = null;                       // a typed name is no longer the one that was picked
+  clearTimeout(stayFindTimer);
+  stayFindTimer = setTimeout(runStayFind, 400);
+}
+function runStayFind() {
+  const s = App.ui.sheet;
+  if (!s || s.kind !== 'stay') return;
+  const q = C.str(s.name);
+  const mine = ++stayFindSeq;
+  if (q.length < 3) { s.busy = false; s.results = null; s.findError = ''; renderStayResults(); return; }
+  s.busy = true;
+  s.findError = '';
+  renderStayResults();
+  Live.fetchJson(C.photonUrl(q, M.centre())).then(
+    (json) => {
+      if (mine !== stayFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = C.parsePhoton(json, new Date().toISOString()).slice(0, 5);
+      renderStayResults();
+    },
+    (err) => {
+      if (mine !== stayFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = null;
+      App.ui.sheet.findError = 'Address search ' + Live.why(err) + '. You can still type the name yourself.';
+      renderStayResults();
+    });
+}
+function renderStayResults() {
+  const el = $('#stResults');
+  if (el) el.innerHTML = stayResultsHtml(App.ui.sheet);
 }
 // Spelling out what a number of nights means, since that is where this sort of thing goes wrong.
 function nightsNote(from, nights) {
@@ -511,6 +567,7 @@ function openSheet(kind, data) {
 }
 function closeSheet() {
   if (!App.ui.sheet) return;
+  clearTimeout(stayFindTimer);
   App.ui.sheet = null;
   M.stopLooking();
   render();
@@ -988,13 +1045,28 @@ const ACTIONS = {
   'add-day': () => { if (App.trip) openSheet('add-day', suggestDay()); },
   'add-stay': () => openSheet('stay', { from: App.ui.dayId || isoToday(), nights: 1 }),
   'edit-stay': (el) => openSheet('stay', { id: el.dataset.id }),
+  'pick-stay': (el) => {
+    const s = App.ui.sheet;
+    const hit = (s.results || [])[+el.dataset.i];
+    if (!hit) return;
+    s.pick = hit;
+    s.name = hit.name;
+    s.results = null;
+    s.from = val('stFrom');
+    s.nights = val('stNights');
+    render();
+    M.lookAt(hit);
+  },
   'save-stay': () => {
     const s = App.ui.sheet;
-    const patch = {
-      name: val('stName'), from: val('stFrom'), nights: val('stNights'),
-      lat: s.pick ? s.pick.lat : undefined, lng: s.pick ? s.pick.lng : undefined,
-      area: s.pick ? s.pick.area : undefined, osm: s.pick ? s.pick.osm : undefined,
-    };
+    // Only what was actually chosen goes in the patch: an undefined key would wipe a known position.
+    const patch = { name: val('stName'), from: val('stFrom'), nights: val('stNights') };
+    if (s.pick) {
+      patch.lat = s.pick.lat;
+      patch.lng = s.pick.lng;
+      patch.area = s.pick.area;
+      patch.osm = s.pick.osm;
+    }
     const res = s.id ? C.updateStay(App.trip, s.id, patch) : C.addStay(App.trip, patch);
     if (!res.ok) {
       s.error = res.text;
@@ -1252,7 +1324,10 @@ function boot() {
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
   }
   document.addEventListener('click', onClick);
-  document.addEventListener('input', (e) => { if (e.target.id === 'findBox') onFindInput(e); });
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'findBox') onFindInput(e);
+    if (e.target.id === 'stName') onStayInput(e);
+  });
   document.addEventListener('click', (e) => {
     const item = e.target.closest('.wheel-item');
     if (!item) return;
