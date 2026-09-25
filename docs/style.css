@@ -216,6 +216,10 @@ textarea.in { min-height: 90px; resize: vertical; }
 .lookup-row .in:first-child { flex: 0 0 110px; }
 code { font: 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--stone-bg); padding: 1px 4px; border-radius: 5px; }
 .pair > * { flex: 1 1 0; min-width: 0; }
+.span-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.span-row > .label { flex: 0 0 60px; text-align: right; }
+.span-row .wheels { flex: 1 1 0; min-width: 0; }
+.span-row .mini { flex: none; }
 .wheels { display: flex; gap: 8px; margin: 8px 0 4px; }
 .wheel {
   flex: 1 1 0; min-width: 0; height: 132px; overflow-y: auto; overscroll-behavior: contain;

@@ -361,6 +361,78 @@ function timeWheels(id, hhmm) {
 }
 const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
 
+// ---------- opening hours ----------
+// Filled in from OpenStreetMap where it had them, always marked unverified until you say otherwise.
+// Confirming or correcting them is the point: from then on they are what the timeline believes.
+const HOURS_FROM = { osm: 'OpenStreetMap', chat: 'the chat', you: 'you' };
+function hoursSectionHtml(s, p, line) {
+  if (s.hours) return hoursEditorHtml(s, p);
+  return '<div class="sh-sec"><span class="label">Opening hours</span>'
+    + (p.hours
+      ? '<p class="note' + (p.hours.verified ? ' good' : ' amber') + '">' + esc(line || p.hours.raw || 'Nothing readable')
+        + '</p><p class="hint">' + esc(p.hours.verified
+          ? 'Checked by you.'
+          : 'From ' + HOURS_FROM[p.hours.source] + ', unverified.') + '</p>'
+      : '<p class="note amber">Hours unknown — check.</p>')
+    + '<div class="actions">'
+    + '<button type="button" class="btn" data-act="edit-hours">' + (p.hours ? 'Correct them' : 'Set the hours') + '</button>'
+    + (p.hours && !p.hours.verified ? '<button type="button" class="btn" data-act="confirm-hours">These are right</button>' : '')
+    + '</div></div>';
+}
+function hoursEditorHtml(s, p) {
+  const d = s.hours;
+  const day = d.same ? 'mon' : d.day;
+  const spans = d.week[day];
+  const closed = Array.isArray(spans) && spans.length === 0;
+  const first = (Array.isArray(spans) && spans[0]) || ['09:00', '18:00'];
+  const second = Array.isArray(spans) && spans[1];
+  const last = d.last[day] || '';
+  return '<div class="sh-sec"><span class="label">Opening hours</span>'
+    + '<label class="tick"><input type="checkbox" id="hSame" data-act="hours-same"' + (d.same ? ' checked' : '') + '>'
+    + '<span>Same every day</span></label>'
+    + (d.same ? '' : '<div class="seg" role="group" aria-label="Which day">' + C.WEEK.map((k) =>
+      '<button type="button" data-act="hours-day" data-d="' + k + '" aria-pressed="' + (k === day) + '">'
+      + esc(C.WEEK_LABEL[k].slice(0, 3)) + '</button>').join('') + '</div>')
+    + '<label class="tick" style="margin-top:10px"><input type="checkbox" id="hClosed" data-act="hours-closed"' + (closed ? ' checked' : '') + '>'
+    + '<span>Closed' + (d.same ? ' every day' : ' on ' + esc(C.WEEK_LABEL[day])) + '</span></label>'
+    + (closed ? '' :
+      '<div class="span-row"><span class="label">Open</span>' + timeWheels('h0o', first[0])
+      + '<span class="label">until</span>' + timeWheels('h0c', first[1]) + '</div>'
+      + (second
+        ? '<div class="span-row"><span class="label">Open again</span>' + timeWheels('h1o', second[0])
+          + '<span class="label">until</span>' + timeWheels('h1c', second[1])
+          + '<button type="button" class="mini" data-act="hours-one-span">Drop the second opening</button></div>'
+        : '<div class="actions"><button type="button" class="mini" data-act="hours-two-spans">Add a second opening, for an afternoon closing</button></div>')
+      + '<label class="tick" style="margin-top:10px"><input type="checkbox" id="hLastOn" data-act="hours-last"' + (last ? ' checked' : '') + '>'
+      + '<span>There is a last entry</span></label>'
+      + (last ? '<div class="span-row"><span class="label">Last entry</span>' + timeWheels('hl', last) + '</div>' : ''))
+    + (p.hours && p.hours.raw ? '<p class="hint">OpenStreetMap said: <code>' + esc(p.hours.raw) + '</code></p>' : '')
+    + '<div class="actions"><button type="button" class="btn primary" data-act="save-hours">Save the hours</button>'
+    + '<button type="button" class="btn" data-act="cancel-hours">Cancel</button></div></div>';
+}
+// A working copy, so switching between days keeps what you have entered.
+function hoursDraft(p) {
+  const week = {}, last = {};
+  const h = p.hours;
+  for (const k of C.WEEK) {
+    week[k] = h && Array.isArray(h.week[k]) ? h.week[k].map((x) => x.slice()) : null;
+    last[k] = h && h.lastEntry ? (h.lastEntry[k] || '') : '';
+  }
+  const known = C.WEEK.filter((k) => Array.isArray(week[k]));
+  const same = known.length !== 7 || known.every((k) => JSON.stringify(week[k]) === JSON.stringify(week[known[0]]));
+  if (!known.length) for (const k of C.WEEK) week[k] = [['09:00', '18:00']];
+  return { same, day: 'mon', week, last };
+}
+// Pull what the wheels hold into the draft before anything redraws them.
+function readHours() {
+  const d = App.ui.sheet.hours;
+  if (!d || !$('#hClosed')) return;
+  const spans = $('#hClosed').checked ? [] : [[timeOf('h0o'), timeOf('h0c')]];
+  if (!$('#hClosed').checked && $('#h1oH')) spans.push([timeOf('h1o'), timeOf('h1c')]);
+  const entry = !$('#hClosed').checked && $('#hlH') ? timeOf('hl') : '';
+  for (const k of (d.same ? C.WEEK : [d.day])) { d.week[k] = spans.map((x) => x.slice()); d.last[k] = entry; }
+}
+
 // ---------- sheets ----------
 // One panel at a time, sliding in from the right on a laptop and up from the bottom on a phone.
 function openSheet(kind, data) {
@@ -464,13 +536,7 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">How long it takes</span>'
       + durationWheels('dur', p.duration)
       + '<div class="actions"><button type="button" class="btn" data-act="save-duration">Save</button></div></div>'
-      + '<div class="sh-sec"><span class="label">Opening hours</span>'
-      + (p.hours
-        ? '<p class="note' + (p.hours.verified ? ' good' : ' amber') + '">' + esc(line || p.hours.raw || 'Nothing readable')
-          + '</p><p class="hint">' + esc(p.hours.verified ? 'Checked by you.'
-            : 'From ' + (p.hours.source === 'osm' ? 'OpenStreetMap' : p.hours.source === 'chat' ? 'the chat' : 'you') + ', unverified.') + '</p>'
-        : '<p class="note amber">Hours unknown — check.</p>')
-      + '</div>'
+      + hoursSectionHtml(s, p, line)
       + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
       + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
       + linksHtml(p, null)
@@ -887,6 +953,53 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => openPlace(el.dataset.id),
+  'edit-hours': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    App.ui.sheet.hours = hoursDraft(p);
+    render();
+  },
+  'cancel-hours': () => { App.ui.sheet.hours = null; render(); },
+  'confirm-hours': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    p.hours.verified = true;
+    changed(p.name + ': hours confirmed');
+  },
+  'hours-same': () => { readHours(); App.ui.sheet.hours.same = $('#hSame').checked; render(); },
+  'hours-day': (el) => { readHours(); App.ui.sheet.hours.day = el.dataset.d; render(); },
+  'hours-closed': () => { readHours(); render(); },
+  'hours-last': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    const on = $('#hLastOn').checked;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.last[k] = on ? (d.last[k] || '17:30') : '';
+    render();
+  },
+  'hours-two-spans': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.week[k] = (d.week[k] || []).concat([['17:00', '22:00']]);
+    render();
+  },
+  'hours-one-span': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.week[k] = (d.week[k] || []).slice(0, 1);
+    render();
+  },
+  'save-hours': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    const lastEntry = {};
+    for (const k of C.WEEK) if (d.last[k]) lastEntry[k] = d.last[k];
+    p.hours = {
+      source: 'you', verified: true, raw: p.hours ? p.hours.raw : '',
+      week: d.week, lastEntry: lastEntry,
+    };
+    App.trip = C.normalise(App.trip).trip;
+    App.ui.sheet.hours = null;
+    changed(p.name + ': hours saved');
+  },
   'save-duration': () => {
     const p = C.placeById(App.trip, App.ui.sheet.id);
     if (!p) return;
@@ -968,7 +1081,7 @@ function onClick(e) {
   if (!el) return;
   const fn = ACTIONS[el.dataset.act];
   if (!fn) return;
-  e.preventDefault();
+  if (el.tagName !== 'INPUT') e.preventDefault();   // a tickbox must be left to tick itself
   fn(el);
 }
 
