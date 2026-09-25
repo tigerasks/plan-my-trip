@@ -82,6 +82,7 @@ function render() {
   renderPanel();
   renderSheet();
   renderSaved();
+  M.show(App.trip, App.trip ? App.ui.dayId : null);
 }
 function renderSaved() {
   const el = $('#saved');

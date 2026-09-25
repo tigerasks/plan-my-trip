@@ -113,6 +113,17 @@ with sync_playwright() as pw:
        'the map opens on the Liberty style, the only one that shows places')
     ck(pg.evaluate('window.DayPlannerMap.ready') is True, 'and reports itself ready')
     ck(pg.locator('#mapEmpty').is_hidden(), 'with no apology over it')
+    ck(pg.locator('.mk-plan').count() == 2 and pg.locator('.mk-idea').count() == 1,
+       'the version on screen is numbered on the map, the day\'s other ideas are hollow')
+    ck([t for t in pg.locator('.mk-plan').all_text_contents()] == ['1', '2'], 'stops carry their order')
+    ck(pg.locator('.mk-anchor').count() == 1, 'and where the day starts is marked')
+    ck(pg.evaluate('window.__fitted.length') == 4, 'the view is fitted around everything on the day')
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-plan').count() == 3 and pg.locator('.mk-idea').count() == 0, 'switching version renumbers the map')
+    pg.select_option('#daySel', '2026-11-22')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-plan').count() == 1, 'and switching day redraws it')
     ctx.close()
 
     ctx, pg = open_page(held=DEMO, extra=no_maplibre)

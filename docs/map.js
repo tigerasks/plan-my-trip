@@ -4,13 +4,24 @@
 (function (root) {
 'use strict';
 
+const C = root.DayPlannerCore;
 const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const WORLD = { center: [8, 47], zoom: 3 };
+
+function pin(cls, label, title) {
+  const d = document.createElement('div');
+  d.className = 'mk ' + cls;
+  if (label) d.textContent = label;
+  if (title) d.title = title;
+  return d;
+}
 
 const MapView = {
   map: null,
   ready: false,
   failed: false,
+  marks: [],
+  shownAs: '',
 
   // Returns false when MapLibre did not load; the rest of the planner carries on regardless.
   init(id, onReady) {
@@ -27,6 +38,44 @@ const MapView = {
     this.map.on('error', () => { /* a missing tile must never stop the planner */ });
     root.addEventListener('resize', () => { try { this.map.resize(); } catch (e) { /* not up yet */ } });
     return true;
+  },
+
+  clear() {
+    for (const m of this.marks) { try { m.remove(); } catch (e) { /* already gone */ } }
+    this.marks = [];
+  },
+
+  // Numbered stops for the version on screen, hollow markers for the day's other ideas.
+  show(trip, dayId) {
+    if (!this.ready || !this.map) return;
+    this.clear();
+    const day = trip && dayId ? trip.days[dayId] : null;
+    if (!day) { this.shownAs = ''; return; }
+    const gl = root.maplibregl;
+    const pts = [];
+    const put = (p, cls, label, title) => {
+      if (!C.hasPos(p)) return;
+      const mk = new gl.Marker({ element: pin(cls, label, title), anchor: 'center' })
+        .setLngLat([p.lng, p.lat]).addTo(this.map);
+      this.marks.push(mk);
+      pts.push(p);
+    };
+    put(day.start, 'mk-anchor', '', day.start.name || 'Where the day starts');
+    if (day.end && (day.end.lat != null)) put(day.end, 'mk-anchor', '', day.end.name || 'Where the day ends');
+    C.planPlaces(trip, dayId, day.shown).forEach((p, i) => put(p, 'mk-plan', String(i + 1), p.name));
+    C.ideasFor(trip, dayId, day.shown).forEach((p) => put(p, 'mk-idea', '', p.name));
+
+    // Only move the view when the day or its places change, so panning is never yanked back.
+    const as = dayId + '|' + day.shown + '|' + this.marks.length;
+    if (as === this.shownAs) return;
+    this.shownAs = as;
+    if (pts.length) {
+      const b = new gl.LngLatBounds();
+      for (const p of pts) b.extend([p.lng, p.lat]);
+      this.map.fitBounds(b, { padding: 70, maxZoom: 15, duration: 0 });
+    } else if (day.centre) {
+      this.map.easeTo({ center: [day.centre.lng, day.centre.lat], zoom: day.centre.zoom, duration: 0 });
+    }
   },
 };
 
