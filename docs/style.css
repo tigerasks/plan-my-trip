@@ -152,6 +152,15 @@ a { color: var(--ink-2); }
 .amber { color: var(--amber-text); }
 .count { color: var(--faint); font-weight: 400; }
 .hint { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+.stay-line {
+  display: flex; align-items: center; gap: 8px; margin: -12px -13px 10px; padding: 9px 13px;
+  background: var(--stone-bg); border-radius: 12px 12px 0 0; font-size: 13px;
+}
+.stay-line .body { flex: 1 1 auto; min-width: 0; }
+.stay-line .nm { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.stay-line .nm .i { width: 15px; height: 15px; flex: none; color: var(--muted); }
+.stay-line .meta { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.stay-line.none { color: var(--muted); justify-content: space-between; }
 .day-line { display: flex; gap: 8px; align-items: baseline; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
 .day-line .t { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 42px; }
 
