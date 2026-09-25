@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
 import datetime, json, pathlib

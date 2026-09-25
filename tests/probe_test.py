@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright test of docs/probe.html with every outside service mocked (no network needed).
 Run: python3 tests/probe_test.py   (or set PROBE_URL to test a copy that is already served)"""
 import json, os

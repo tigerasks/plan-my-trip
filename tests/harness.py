@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Shared pieces for the Playwright tests: a local server for docs/, the MapLibre stub,
 and routing that keeps a page off the network. Import this, don't run it."""
 import functools, http.server, pathlib, sys, threading
