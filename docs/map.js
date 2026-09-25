@@ -8,11 +8,12 @@ const C = root.DayPlannerCore;
 const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const WORLD = { center: [8, 47], zoom: 3 };
 
-function pin(cls, label, title) {
+function pin(cls, label, title, id) {
   const d = document.createElement('div');
   d.className = 'mk ' + cls;
   if (label) d.textContent = label;
   if (title) d.title = title;
+  if (id) { d.dataset.place = id; d.setAttribute('role', 'button'); d.tabIndex = 0; }
   return d;
 }
 
@@ -23,6 +24,7 @@ const MapView = {
   marks: [],
   shownAs: '',
   tap: null,
+  pick: null,
 
   // Returns false when MapLibre did not load; the rest of the planner carries on regardless.
   init(id, onReady) {
@@ -45,6 +47,7 @@ const MapView = {
   // Tapping the map. A named point of interest becomes a place to look at; bare ground is left to
   // the caller, which is where dropping a pin comes in.
   onTap(fn) { this.tap = fn; },
+  onPick(fn) { this.pick = fn; },
   onClick(e) {
     if (!this.tap) return;
     let feats = [];
@@ -75,7 +78,13 @@ const MapView = {
     const pts = [];
     const put = (p, cls, label, title, fit) => {
       if (!C.hasPos(p)) return;
-      const mk = new gl.Marker({ element: pin(cls, label, title), anchor: 'center' })
+      const el = pin(cls, label, title, p.id);
+      if (p.id) {
+        const open = (e) => { e.stopPropagation(); if (this.pick) this.pick(p.id); };
+        el.addEventListener('click', open);
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+      }
+      const mk = new gl.Marker({ element: el, anchor: 'center' })
         .setLngLat([p.lng, p.lat]).addTo(this.map);
       this.marks.push(mk);
       if (fit !== false) pts.push(p);

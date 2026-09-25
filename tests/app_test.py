@@ -246,6 +246,32 @@ with sync_playwright() as pw:
     ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
     ctx.close()
 
+    # ---- opening a place already in the trip
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.click('.list .item >> nth=0')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Example Temple'), 'a place in the plan opens its card')
+    sheet = pg.inner_text('#sheet')
+    ck('Sat 21 Nov, in Do less, Balanced and Packed' in sheet, 'saying where it sits: '
+       + [l for l in sheet.split(chr(10)) if 'Sat 21 Nov' in l][0])
+    ck('1h 30' in sheet, 'how long it takes')
+    ck('Mon–Fri 06:00–18:00 · Sat–Sun 06:00–21:00' in sheet, 'and when it is open: '
+       + [l for l in sheet.split(chr(10)) if '06:00' in l][0])
+    ck('unverified' in sheet, 'flagged unverified, since OpenStreetMap supplied them')
+    ck('Made-up hours — check' in sheet, 'with whatever is still to be checked')
+    pg.screenshot(path=str(SHOTS / 'app_place_desktop_light.png'))
+    pg.keyboard.press('Escape')
+
+    pg.click('.list .item >> nth=3')
+    pg.wait_for_timeout(250)
+    ck('In the backlog, with no day yet' in pg.inner_text('#sheet'), 'a backlog place says so')
+    pg.keyboard.press('Escape')
+
+    pg.click('.mk-plan >> nth=0')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Example Temple'), 'and a marker on the map opens the same card')
+    ctx.close()
+
     # ---- a day's shape
     ctx, pg = open_page(held=DEMO)
     pg.click('[data-act="day"]')

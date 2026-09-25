@@ -7,6 +7,7 @@ const M = window.DayPlannerMap;
 const Live = window.DayPlannerLive;
 const $ = (s, el) => (el || document).querySelector(s);
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const arr = (x) => (Array.isArray(x) ? x : []);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
 
 const ICON = {
@@ -247,9 +248,9 @@ function chipsHtml(p) {
 }
 function itemHtml(p, lead) {
   const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
-  return '<li><div class="item" data-place="' + esc(p.id) + '">' + lead
+  return '<li><button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
     + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
-    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></div></li>';
+    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button></li>';
 }
 function listHtml(places, lead, empty) {
   if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
@@ -377,6 +378,33 @@ const SHEETS = {
     + field('pinKind', 'What is it?', '<select class="in" id="pinKind">' + C.KINDS.map((k) =>
       '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
     + addButtonsHtml('add-pin'),
+
+  // A place already in the trip: what it is, how long it takes, when it is open, where it sits.
+  place: (s) => {
+    const p = C.placeById(App.trip, s.id);
+    if (!p) return sheetHead('That place has gone');
+    const where = [C.KIND_LABEL[p.kind], p.area].filter(Boolean).join(' · ');
+    const holds = C.plansHolding(App.trip, p.id);
+    const line = p.hours ? C.hoursText(p.hours) : '';
+    return sheetHead(p.name, p.localName || '')
+      + '<p class="note">' + esc(where) + chipsHtml(p) + '</p>'
+      + '<div class="sh-sec"><span class="label">Where it sits</span><p class="note">'
+      + esc(p.dayId
+        ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
+        : 'In the backlog, with no day yet') + '</p></div>'
+      + '<div class="sh-sec"><span class="label">How long</span><p class="note">' + esc(C.fmtDur(p.duration)) + '</p></div>'
+      + '<div class="sh-sec"><span class="label">Opening hours</span>'
+      + (p.hours
+        ? '<p class="note' + (p.hours.verified ? ' good' : ' amber') + '">' + esc(line || p.hours.raw || 'Nothing readable')
+          + '</p><p class="hint">' + esc(p.hours.verified ? 'Checked by you.'
+            : 'From ' + (p.hours.source === 'osm' ? 'OpenStreetMap' : p.hours.source === 'chat' ? 'the chat' : 'you') + ', unverified.') + '</p>'
+        : '<p class="note amber">Hours unknown — check.</p>')
+      + '</div>'
+      + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
+      + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
+      + linksHtml(p, null)
+      + gmapsHtml(p);
+  },
 
   preview: (s) => {
     const p = s.place;
@@ -514,6 +542,12 @@ function addPlaceTo(place, to) {
     : to === 'plan' ? C.PLAN_LABEL[day.shown] : C.fmtDateUK(day.id)));
 }
 
+// A place that is already in the trip.
+function openPlace(id) {
+  if (!C.placeById(App.trip, id)) return;
+  openSheet('place', { id: id });
+}
+
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
 // The map's own information is on screen at once; OpenStreetMap fills in behind it, and the
 // preview works perfectly well if that never arrives.
@@ -586,7 +620,8 @@ function gmapsHtml(place) {
 }
 function linksHtml(place, details) {
   const out = [];
-  for (const l of (details ? details.links : [])) out.push([l.url, l.label]);
+  for (const l of (details ? details.links : arr(place.links))) out.push([l.url, l.label]);
+  if (!details && place.osm) out.push([C.osmUrl(place.osm), 'OpenStreetMap']);
   for (const l of App.trip.lookups) out.push([C.lookupUrl(l, place), l.label]);
   if (!out.length) return '';
   return '<div class="sh-sec"><span class="label">Look it up</span><p class="links">'
@@ -780,6 +815,7 @@ const ACTIONS = {
     if (found) openPreview(found);
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
+  place: (el) => openPlace(el.dataset.id),
   'pin-mode': () => setPinning(!App.ui.pinning),
   gmaps: () => {
     const s = App.ui.sheet;
@@ -862,6 +898,7 @@ function onClick(e) {
 // ---------- boot ----------
 function boot() {
   M.onTap(onMapTap);
+  M.onPick(openPlace);
   if (!M.init('map', render)) {
     $('#mapEmpty').hidden = false;
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
