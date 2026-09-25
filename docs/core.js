@@ -625,18 +625,33 @@ function findPayload(text) {
 }
 
 // Read a pasted block or the contents of a saved file. Always returns an object; check `ok`.
+// When it can't, `message` says why in the words someone pasting from a chat would use.
 function readBlock(text, now) {
   const found = findPayload(text);
-  if (found.cut || !found.body) return fail('unreadable', found, null);
+  if (found.version && found.version !== '2') return fail(found.version === '1' ? 'old-version' : 'newer-version', found);
+  if (found.cut) return fail('cut-off', found);
+  if (!found.body) return fail('no-block', found);
   let env;
-  try { env = JSON.parse(found.body); } catch (e) { return fail('unreadable', found, null); }
-  if (!env || typeof env !== 'object' || Array.isArray(env)) return fail('unreadable', found, null);
-  if (str(env.schema) !== SCHEMA) return fail('unreadable', found, env);
-  if (!KINDS_INOUT.includes(str(env.kind))) return fail('unreadable', found, env);
+  try {
+    env = JSON.parse(found.body);
+  } catch (e) {
+    return fail(found.form === 'block' ? 'damaged' : 'no-block', found, null, e);
+  }
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return fail('not-ours', found);
+  const schema = str(env.schema);
+  if (schema !== SCHEMA) {
+    const m = /^day-planner\/(\d+)$/.exec(schema);
+    if (!m) return fail('not-ours', found, env);
+    return fail(m[1] === '1' ? 'old-version' : 'newer-version', found, env);
+  }
+  const kind = str(env.kind);
+  if (kind === 'handback') return fail('handback', found, env);
+  if (!KINDS_INOUT.includes(kind)) return fail('unknown-kind', found, env);
+  if (!env.trip || typeof env.trip !== 'object' || Array.isArray(env.trip)) return fail('no-trip', found, env);
   const { trip, issues } = normTrip(env.trip, now);
   return {
     ok: true,
-    kind: str(env.kind),
+    kind,
     tripId: cleanId(env.tripId) || trip.id,
     title: str(env.title, 80) || trip.title,
     at: str(env.at, 32),
@@ -645,8 +660,61 @@ function readBlock(text, now) {
     summary: summarise(trip),
   };
 }
-function fail(problem, found, env) {
-  return { ok: false, problem, message: 'I could not read a day-planner block in that text.', env: env || null, found };
+function fail(problem, found, env, err) {
+  const size = found && found.body ? found.body.length : 0;
+  const spot = err && /position (\d+)/.exec(String(err.message || ''));
+  const at = spot ? Math.min(+spot[1], size) : null;
+  let message;
+  switch (problem) {
+    case 'no-block':
+      message = size || (found && found.form === 'block')
+        ? 'I can\'t find a day-planner block in that text. Copy everything from the "' + BEGIN_LINE + '" line to the "' + END_LINE + '" line, including both lines.'
+        : 'There is nothing to import yet. Paste a block from the chat, or open a trip you saved to a file.';
+      break;
+    case 'cut-off':
+      message = 'This block is cut off: the closing "' + END_LINE + '" line is missing. Copy it again from the chat, from its first line to its last.';
+      break;
+    case 'damaged':
+      message = 'The block is damaged, so I could not read it'
+        + (at == null ? '' : at >= size ? ' (it stops after ' + size + ' characters)' : ' (it stops making sense ' + at + ' characters in, of ' + size + ')')
+        + '. Copy it again, or ask the chat for the trip as a file instead.';
+      break;
+    case 'old-version':
+      message = 'This comes from the first planner (day-planner/1). It uses a different format, so it cannot be loaded here.';
+      break;
+    case 'newer-version':
+      message = 'This block was written by a newer planner than this page. Reload the page to pick up the latest version; if that does not help, ask the chat for a ' + SCHEMA + ' block.';
+      break;
+    case 'handback':
+      message = 'That is a hand-back: what the planner sends to the chat, not something it reads back. Ask the chat for a package, or open a trip you saved to a file.';
+      break;
+    case 'unknown-kind':
+      message = 'This block does not say what it holds' + (env && str(env.kind) ? ' (it says "' + str(env.kind, 30) + '")' : '')
+        + '. The planner reads a saved trip or a package from the chat.';
+      break;
+    case 'no-trip':
+      message = 'This block has the right shape but no trip inside it.';
+      break;
+    default:
+      message = 'That is valid JSON, but not the planner\'s: nothing in it says "schema": "' + SCHEMA + '".';
+  }
+  return { ok: false, problem, message, env: env || null, found: found || null };
+}
+
+// What loading a block would do to the trip that is open. Merging a package into a trip you have
+// already changed comes later; until then every import replaces, so it always asks first.
+function importNote(result, current) {
+  if (!result.ok) return { confirm: false, title: 'Nothing loaded', lines: [result.message] };
+  const from = result.title + ' — ' + result.summary + (result.at ? ', written ' + result.at.slice(0, 10) : '');
+  if (!current) {
+    return { mode: 'fresh', confirm: false, title: 'Load ' + result.title + '?', lines: [from] };
+  }
+  const same = current.id === result.tripId;
+  const lines = [from, 'This replaces ' + (same ? 'the copy you have open' : '"' + current.title + '"') + ' — ' + summarise(current) + '.'];
+  if (!same) lines.push('That is a different trip. Everything in it is about to leave this browser.');
+  if (result.kind === 'package') lines.push('Merging a package into a trip you have changed comes at a later milestone; for now it replaces.');
+  lines.push('You can undo this straight afterwards.');
+  return { mode: same ? 'replace-same' : 'replace-other', confirm: true, title: same ? 'Replace this trip?' : 'Swap to another trip?', lines };
 }
 // "6 days and 43 places" — for confirmations and for the import report.
 function summarise(trip) {
@@ -670,7 +738,7 @@ const Core = {
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
   reorderPlan, deletePlace, addDay, deleteDay, setDayDate,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
-  findPayload, readBlock, summarise,
+  findPayload, readBlock, summarise, importNote,
 };
 root.DayPlannerCore = Core;
 if (typeof module !== 'undefined' && module.exports) module.exports = Core;

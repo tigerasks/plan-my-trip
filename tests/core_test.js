@@ -173,5 +173,41 @@ ok(C.readBlock(wrapped.join('\n')).ok, 'a block the chat has re-wrapped still re
 
 ok(C.readBlock(C.writeBlock(demoTrip, 'package')).kind === 'package', 'a package is recognised as one');
 
+console.log('\n== When a block cannot be read ==');
+const why = (text) => { const r = C.readBlock(text); return r.ok ? 'ok' : r.problem + ': ' + r.message; };
+let bad = C.readBlock('just some chat text');
+ok(bad.problem === 'no-block' && /BEGIN day-planner\/2/.test(bad.message), 'no block at all: ' + bad.message);
+bad = C.readBlock('');
+ok(bad.problem === 'no-block' && /nothing to import/.test(bad.message), 'nothing pasted: ' + bad.message);
+bad = C.readBlock(block.split('\n').slice(0, 2).join('\n'));
+ok(bad.problem === 'cut-off' && /cut off/.test(bad.message), 'cut off: ' + bad.message);
+bad = C.readBlock(block.slice(0, 900) + '\n--- END day-planner/2 ---');
+ok(bad.problem === 'damaged' && /it stops after 872 characters/.test(bad.message), 'damaged, and where: ' + bad.message);
+bad = C.readBlock('--- BEGIN day-planner/1 ---\n{"schema":"day-planner/1"}\n--- END day-planner/1 ---');
+ok(bad.problem === 'old-version' && /first planner/.test(bad.message), 'a version 1 block: ' + bad.message);
+bad = C.readBlock(block.replace(/day-planner\/2/g, 'day-planner/3'));
+ok(bad.problem === 'newer-version' && /newer planner/.test(bad.message), 'a newer block: ' + bad.message);
+bad = C.readBlock('{"some":"other json"}');
+ok(bad.problem === 'not-ours' && /not the planner/.test(bad.message), 'somebody else\'s JSON: ' + bad.message);
+bad = C.readBlock(C.writeBlock(demoTrip, 'handback'));
+ok(bad.problem === 'handback' && /sends to the chat/.test(bad.message), 'a hand-back: ' + bad.message);
+bad = C.readBlock(block.replace('"kind":"save"', '"kind":"leftovers"'));
+ok(bad.problem === 'unknown-kind' && /leftovers/.test(bad.message), 'an unknown kind, quoted back: ' + bad.message);
+bad = C.readBlock(block.replace(/"trip":\{.*\}\}$/m, '"trip":null}'));
+ok(bad.problem === 'no-trip', 'no trip inside: ' + bad.message);
+
+console.log('\n== What an import would do ==');
+let note = C.importNote(C.readBlock(block), null);
+ok(!note.confirm && note.title === 'Load Example · Kyoto (made up)?', 'into an empty browser it just loads: ' + note.title);
+note = C.importNote(C.readBlock(block), demoTrip);
+ok(note.mode === 'replace-same' && note.confirm && /replaces the copy you have open/.test(note.lines.join(' ')), 'the same trip again asks first: ' + note.lines[1]);
+const other = C.newTrip('Italy · Apr 2027', '2026-09-25T10:00:00Z');
+note = C.importNote(C.readBlock(block), other);
+ok(note.mode === 'replace-other' && /different trip/.test(note.lines.join(' ')), 'another trip says what it displaces: ' + note.lines.join(' '));
+note = C.importNote(C.readBlock(C.writeBlock(demoTrip, 'package')), demoTrip);
+ok(/Merging a package/.test(note.lines.join(' ')), 'a package says merging comes later: ' + note.lines[2]);
+note = C.importNote(C.readBlock('nonsense'), demoTrip);
+ok(!note.confirm && note.lines[0] === why('nonsense').split(': ').slice(1).join(': '), 'and an unreadable block just shows its reason');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
