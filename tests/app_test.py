@@ -29,6 +29,19 @@ with sync_playwright() as pw:
             return True
         return False
 
+    FIX = json.loads((harness.HERE / 'fixtures.json').read_text())
+    asked = []
+
+    def services(r):
+        u = r.request.url
+        if 'photon.komoot.io' in u:
+            asked.append(u)
+            hit = 'nothing' not in u
+            r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                      body=json.dumps(FIX['photon'] if hit else {'features': []}))
+            return True
+        return fake_service(r)
+
     def no_maplibre(r):
         if 'maplibre-gl.js' in r.request.url:
             r.fulfill(status=200, body='', headers={'Content-Type': 'application/javascript'})
@@ -233,7 +246,7 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     panel = pg.inner_text('#panel')
     ck('07:45' in panel and 'Leave Example Ryokan' in panel, 'the times and the start place follow')
-    card = pg.inner_text('#panel .card')
+    card = pg.inner_text('#panel .day-card')
     ck('Open-ended day' in card and 'Lunch' not in card, 'an empty back-by time makes the day open-ended, and lunch can be dropped')
     ck('Made-up day, made-up note.' in panel, 'and the note shows under the day')
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['days']['2026-11-21']
@@ -265,6 +278,92 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'and Undo brings the day back: ' + pg.inner_text('#dayFace'))
     ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
+    ctx.close()
+
+    # ---- searching for a place
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.fill('#findBox', 'n')
+    pg.wait_for_timeout(600)
+    ck(len(asked) == 0, 'one letter is not a search')
+    pg.fill('#findBox', 'nintendo museum')
+    pg.wait_for_timeout(1500)
+    ck(len(asked) == 1 and 'q=nintendo+museum' in asked[0], 'typing a name asks Photon once, after a pause')
+    ck('lat=' in asked[0], 'biased to where the map is looking')
+    ck(pg.locator('#findResults .item').count() == 2, 'the results are listed')
+    ck('Nintendo Museum' in pg.locator('#findResults .nm').first.inner_text(), 'by name')
+    ck('Museum · Ogura · Ogura-cho · Uji' in pg.locator('#findResults .meta').first.inner_text(),
+       'with what they are and where: ' + pg.locator('#findResults .meta').first.inner_text())
+    pg.screenshot(path=str(SHOTS / 'app_search_desktop_light.png'))
+
+    # nothing is added until you say so
+    pg.click('#findResults .item')
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
+    ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
+    pg.screenshot(path=str(SHOTS / 'app_preview_desktop_light.png'))
+    pg.click('[data-act="add-place"][data-to="plan"]')
+    pg.wait_for_timeout(900)
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(len(trip['places']) == 7, 'choosing Add puts it in the trip')
+    ck(trip['places']['nintendo-museum']['kind'] == 'museum', 'with the kind worked out for it')
+    ck(trip['places']['nintendo-museum']['added'] == {'by': 'you', 'how': 'search', 'at': trip['places']['nintendo-museum']['added']['at']},
+       'and a note of how it was found')
+    ck(trip['days']['2026-11-21']['plans']['balanced'].index('nintendo-museum') >= 0, 'in the version that was on screen')
+    ck(trip['days']['2026-11-21']['plans']['packed'].count('nintendo-museum') == 0, 'and in no other')
+
+    # a search that finds nothing, and one that fails
+    pg.fill('#findBox', 'nothing at all here')
+    pg.wait_for_timeout(1600)
+    ck('Nothing found' in pg.inner_text('#findResults'), 'an empty answer says so: ' + pg.inner_text('#findResults'))
+    ctx.close()
+
+    # ---- tapping the map
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][5]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.74771, lat: 34.98061}})")
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('East Temple'), 'tapping a place on the map opens its preview')
+    ck('東寺' in pg.inner_text('#sheet'), 'with the local name kept: ' + pg.inner_text('.sh-title').replace(chr(10), ' / '))
+    ck('Temple / culture' in pg.inner_text('#sheet'), 'and what kind of place it is')
+    pg.click('[data-act="add-place"][data-to="backlog"]')
+    pg.wait_for_timeout(900)
+    added = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']['east-temple']
+    ck(added['osm'] == {'type': 'way', 'id': 359896810}, 'and it carries the OpenStreetMap way the map gave it')
+    ck(added['added']['how'] == 'map' and added['lat'] == 34.98061, 'noted as tapped, where the finger landed')
+
+    pg.evaluate('window.__features = [{sourceLayer: "building", properties: {}}]')
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.7, lat: 35.0}})")
+    pg.wait_for_timeout(200)
+    ck('Nothing named there' in pg.inner_text('#toast'), 'tapping bare building says so: ' + pg.inner_text('#toast'))
+
+    # ---- dropping a pin
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Drop a pin'), 'the toast offers to drop a pin there instead')
+    ck('35.00000, 135.70000' in pg.inner_text('#sheet'), 'at the spot that was tapped')
+    pg.click('[data-act="add-pin"][data-to="backlog"]')
+    pg.wait_for_timeout(200)
+    ck('name first' in pg.inner_text('#sheet .note.bad'), 'a pin with no name is refused: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#pinName', 'Where we said we would meet')
+    pg.select_option('#pinKind', 'other')
+    pg.click('[data-act="add-pin"][data-to="backlog"]')
+    pg.wait_for_timeout(900)
+    pinned = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']
+    key = [k for k in pinned if pinned[k]['added']['how'] == 'pin' and pinned[k]['name'].startswith('Where we')]
+    ck(len(key) == 1, 'a named pin joins the trip, noted as a pin')
+    ck(pinned[key[0]]['lat'] == 35.0 and pinned[key[0]]['osm'] is None, 'at its spot, with no OpenStreetMap entry behind it')
+
+    # the map control arms the next tap
+    pg.click('[data-act="pin-mode"]')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('[data-act="pin-mode"]').get_attribute('aria-pressed') == 'true', 'the pin button arms the next tap')
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][2]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 5, y: 5}, lngLat: {lng: 135.8, lat: 34.9}})")
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Drop a pin'), 'and armed, a tap pins even where the map knows a place')
+    ck(pg.locator('[data-act="pin-mode"]').get_attribute('aria-pressed') == 'false', 'then disarms itself')
+    pg.screenshot(path=str(SHOTS / 'app_pin_desktop_light.png'))
     ctx.close()
 
     # ---- trip settings

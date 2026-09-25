@@ -34,7 +34,9 @@ window.maplibregl = { version: 'stub',
     this.setStyle = () => { for (const k in src) delete src[k]; setTimeout(() => { fire('style.load'); fire('idle'); }, 20); };
     this.jumpTo = (o) => { center = { lng: o.center[0], lat: o.center[1] }; };
     this.getCenter = () => center;
-    this.queryRenderedFeatures = () => [{ sourceLayer: 'poi', layer: { id: 'poi_r1' }, id: 31415921, properties: { name: '清水寺', 'name:en': 'Kiyomizu-dera', class: 'place_of_worship', subclass: 'buddhist', rank: 1 } }];
+    // A test can put its own features under the finger with window.__features.
+    this.queryRenderedFeatures = () => window.__features
+      || [{ sourceLayer: 'poi', layer: { id: 'poi_r1' }, id: 31415921, properties: { name: '清水寺', 'name:en': 'Kiyomizu-dera', class: 'place_of_worship', subclass: 'buddhist', rank: 1 } }];
     this.getSource = (id) => src[id]; this.addSource = (id) => { src[id] = { setData: () => {} }; }; this.addLayer = () => {};
     this.areTilesLoaded = () => true;
     setTimeout(() => { fire('style.load'); fire('idle'); }, 30);

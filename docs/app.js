@@ -4,6 +4,7 @@
 'use strict';
 const C = window.DayPlannerCore;
 const M = window.DayPlannerMap;
+const Live = window.DayPlannerLive;
 const $ = (s, el) => (el || document).querySelector(s);
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -12,6 +13,8 @@ const ICON = {
   chev: '<path d="m6 9 6 6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   down: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
   up: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
@@ -21,7 +24,11 @@ const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICO
 // ---------- state ----------
 const App = {
   trip: null,            // the one trip this browser holds, already normalised
-  ui: { dayId: null, sheet: null, backlogDots: true },   // what is on screen; never part of what gets exported
+  ui: {
+    dayId: null, sheet: null, backlogDots: true,
+    find: { q: '', busy: false, results: null, error: '' },   // the search box
+    pinning: false,                                           // the next tap drops a pin
+  },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
   fileAt: null,          // when this device last saved a file, as an ISO stamp
   undo: null,            // the trip the last import displaced, kept until it is used
@@ -117,6 +124,7 @@ function renderHeader() {
   $('#tripBtn .name').textContent = t ? t.title : 'Day planner';
   const ids = t ? C.dayIds(t) : [];
   $('#addDayBtn').hidden = !t;
+  $('#mapCtl').hidden = !t || M.failed;
   const pick = $('#dayPick');
   pick.hidden = !ids.length;
   if (!ids.length) return;
@@ -139,7 +147,60 @@ function emptyHtml() {
 }
 function tripHtml() {
   const day = currentDay();
-  return (day ? dayHtml(day) + planHtml(day) + ideasHtml(day) : noDaysHtml()) + backlogHtml() + creditsHtml();
+  return findHtml() + (day ? dayHtml(day) + planHtml(day) + ideasHtml(day) : noDaysHtml()) + backlogHtml() + creditsHtml();
+}
+
+// ---------- finding a place ----------
+function findHtml() {
+  return '<div class="card find">'
+    + '<div class="find-row">' + ic('search')
+    + '<input class="in" id="findBox" type="search" autocomplete="off" aria-label="Search for a place"'
+    + ' placeholder="Search for a place" value="' + esc(App.ui.find.q) + '">'
+    + '</div><div id="findResults">' + findResultsHtml() + '</div></div>';
+}
+function findResultsHtml() {
+  const f = App.ui.find;
+  if (f.error) return '<p class="hint bad">' + esc(f.error) + '</p>';
+  if (f.busy) return '<p class="hint">Looking…</p>';
+  if (!f.results) return '';
+  if (!f.results.length) return '<p class="hint">Nothing found. Try a different spelling, or the name as it is written locally.</p>';
+  return '<ul class="list">' + f.results.map((p, i) =>
+    '<li><button type="button" class="item" data-act="preview-found" data-i="' + i + '">'
+    + '<span class="dot"></span><span class="body"><span class="nm">' + esc(p.name) + '</span>'
+    + '<span class="meta">' + esc([C.KIND_LABEL[p.kind], p.where].filter(Boolean).join(' · ')) + '</span></span></button></li>').join('')
+    + '</ul>';
+}
+function renderResults() {
+  const el = $('#findResults');
+  if (el) el.innerHTML = findResultsHtml();
+}
+let findSeq = 0;
+let findTimer = 0;
+function onFindInput(e) {
+  App.ui.find.q = e.target.value;
+  clearTimeout(findTimer);
+  findTimer = setTimeout(runFind, 350);
+}
+function runFind() {
+  const f = App.ui.find;
+  const q = f.q.trim();
+  const mine = ++findSeq;
+  if (q.length < 2) { f.busy = false; f.results = null; f.error = ''; renderResults(); return; }
+  f.busy = true; f.error = ''; renderResults();
+  Live.fetchJson(C.photonUrl(q, M.centre())).then(
+    (json) => {
+      if (mine !== findSeq) return;                 // a later keystroke has overtaken this one
+      f.busy = false;
+      f.results = C.parsePhoton(json, new Date().toISOString());
+      renderResults();
+    },
+    (err) => {
+      if (mine !== findSeq) return;
+      f.busy = false;
+      f.results = null;
+      f.error = 'Place search ' + Live.why(err) + '. The rest of the planner still works.';
+      renderResults();
+    });
 }
 function noDaysHtml() {
   return '<div class="card"><span class="label">Days</span>'
@@ -150,7 +211,7 @@ function noDaysHtml() {
 function dayHtml(day) {
   const end = day.end;
   const endName = end ? (end.name || day.start.name) : '';
-  return '<div class="card">'
+  return '<div class="card day-card">'
     + '<div class="card-head"><span class="label">' + esc(C.fmtDateLongUK(day.id)) + (day.city ? ' · ' + esc(day.city) : '') + '</span>'
     + '<button type="button" class="icon-btn" data-act="day" aria-label="Day settings">' + ic('sliders') + '</button></div>'
     + '<div class="day-line"><span class="t">' + esc(day.start.time) + '</span>'
@@ -274,6 +335,21 @@ function reportHtml(r) {
     + (r.lines.length ? '<ul class="reasons">' + r.lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>' : '')
     + '</div>';
 }
+// The three ways in, or the one when there is no day yet.
+function addButtonsHtml(act) {
+  const day = currentDay();
+  return '<div class="sh-sec"><span class="label">Add it</span>'
+    + '<p class="note">' + esc(day
+      ? 'To the plan you are looking at, to the day without putting it in a version, or to the backlog for later.'
+      : 'There are no days yet, so it waits in the backlog until there is one.') + '</p>'
+    + '<div class="actions">'
+    + (day
+      ? '<button type="button" class="btn primary" data-act="' + act + '" data-to="plan">Add to ' + esc(C.PLAN_LABEL[day.shown]) + '</button>'
+        + '<button type="button" class="btn" data-act="' + act + '" data-to="day">Add to today</button>'
+        + '<button type="button" class="btn" data-act="' + act + '" data-to="backlog">Add to the backlog</button>'
+      : '<button type="button" class="btn primary" data-act="' + act + '" data-to="backlog">Add to the backlog</button>')
+    + '</div></div>';
+}
 const sheetHead = (title, sub) =>
   '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
   + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
@@ -284,6 +360,25 @@ const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="'
 const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
 
 const SHEETS = {
+  // Look before you add: nothing joins the trip until you choose. What the map already knows is
+  // here at once; the rest fills in as it arrives.
+  pin: (s) => sheetHead('Drop a pin', s.at.lat.toFixed(5) + ', ' + s.at.lng.toFixed(5))
+    + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+    + '<p class="note">The map has nothing named here, so give this spot a name of your own.</p>'
+    + field('pinName', 'Name', textIn('pinName', s.name || '', ' maxlength="120" placeholder="Meeting point"'))
+    + field('pinKind', 'What is it?', '<select class="in" id="pinKind">' + C.KINDS.map((k) =>
+      '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
+    + addButtonsHtml('add-pin'),
+
+  preview: (s) => {
+    const p = s.place;
+    const day = currentDay();
+    const where = [C.KIND_LABEL[p.kind], p.where || p.area].filter(Boolean).join(' · ');
+    return sheetHead(p.name, p.localName || '')
+      + (where ? '<p class="note">' + esc(where) + '</p>' : '')
+      + addButtonsHtml('add-place');
+  },
+
   // A trip travels two ways with the same content: as a .json file, or as a block of text.
   data: (s) => {
     const t = App.trip;
@@ -372,6 +467,39 @@ const SHEETS = {
       + '<button type="button" class="btn danger" data-act="clear-trip">Start a new trip</button></div>';
   },
 };
+
+function onMapTap(place, at, featureCount) {
+  if (!App.trip) { toast('Start a trip first, then tap the map to add places to it.'); return; }
+  if (App.ui.pinning) { setPinning(false); openPin(at); return; }
+  if (place) { openPreview(place); return; }
+  toast(featureCount ? 'Nothing named there. Tap right on a label or an icon.' : 'Nothing on the map there.',
+    { label: 'Drop a pin here', fn: () => openPin(at) }, 9000);
+}
+function setPinning(on) {
+  App.ui.pinning = !!on;
+  const btn = $('#mapCtl button');
+  if (btn) btn.setAttribute('aria-pressed', String(App.ui.pinning));
+  $('#map').classList.toggle('pinning', App.ui.pinning);
+  if (App.ui.pinning) toast('Tap the map where you want the pin.', null, 6000);
+}
+// A pin is a place the map does not know about: a meeting point, a shop with no label, a view.
+function openPin(at) {
+  openSheet('pin', { at: at });
+}
+
+function addPlaceTo(place, to) {
+  const day = currentDay();
+  const res = C.addPlace(App.trip, place, to === 'backlog' || !day ? null : day.id);
+  if (to === 'plan' && day) C.addToPlan(App.trip, res.id, day.shown, C.bestSlot(App.trip, day.id, day.shown, res.id));
+  closeSheet();
+  changed(res.place.name + ' added to ' + (to === 'backlog' || !day ? 'the backlog'
+    : to === 'plan' ? C.PLAN_LABEL[day.shown] : C.fmtDateUK(day.id)));
+}
+
+// A place found anywhere — search, the map, a dropped pin — is shown before it is added.
+function openPreview(place) {
+  openSheet('preview', { place: place });
+}
 
 // ---------- toast ----------
 let toastTimer = 0;
@@ -548,6 +676,21 @@ const ACTIONS = {
       changed('Day brought back');
     } }, 9000);
   },
+  'preview-found': (el) => {
+    const found = (App.ui.find.results || [])[+el.dataset.i];
+    if (found) openPreview(found);
+  },
+  'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
+  'pin-mode': () => setPinning(!App.ui.pinning),
+  'add-pin': (el) => {
+    const s = App.ui.sheet;
+    const name = val('pinName');
+    if (!name) { s.error = 'Give the pin a name first.'; s.name = ''; render(); $('#pinName').focus(); return; }
+    addPlaceTo({
+      name: name, kind: val('pinKind'), lat: s.at.lat, lng: s.at.lng,
+      added: { by: 'you', how: 'pin', at: null },
+    }, el.dataset.to);
+  },
   'backlog-dots': () => {
     App.ui.backlogDots = !App.ui.backlogDots;
     saveUi();
@@ -609,11 +752,13 @@ function onClick(e) {
 
 // ---------- boot ----------
 function boot() {
+  M.onTap(onMapTap);
   if (!M.init('map', render)) {
     $('#mapEmpty').hidden = false;
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
   }
   document.addEventListener('click', onClick);
+  document.addEventListener('input', (e) => { if (e.target.id === 'findBox') onFindInput(e); });
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
   $('#fileIn').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];

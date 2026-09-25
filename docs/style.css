@@ -74,6 +74,10 @@ a { color: var(--ink-2); }
 }
 .mapwrap { position: relative; background: var(--map-bg); min-width: 0; }
 #map { position: absolute; inset: 0; }
+#map.pinning, #map.pinning canvas { cursor: crosshair; }
+.map-ctl { position: absolute; left: 10px; bottom: 10px; z-index: 2; }
+.map-ctl .btn { box-shadow: var(--shadow); }
+.map-ctl .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .maplibregl-ctrl-attrib { font-size: 11px; }
 .mk {
   display: flex; align-items: center; justify-content: center; box-sizing: border-box;
@@ -123,6 +127,13 @@ a { color: var(--ink-2); }
 .label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 13px; margin-bottom: 12px; }
 .card > .label { margin-bottom: 8px; }
+.find { padding: 8px 10px; }
+.find-row { display: flex; align-items: center; gap: 8px; }
+.find-row .i { color: var(--faint); flex: none; }
+.find-row .in { border: 0; padding: 4px 0; background: none; }
+.find-row .in:focus { outline: none; }
+.find .list { margin-top: 6px; border-top: 1px solid var(--line-2); }
+.hint.bad { color: var(--rose-strong); }
 .card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .card-head .label { flex: 1 1 auto; }
 .muted { color: var(--muted); }
