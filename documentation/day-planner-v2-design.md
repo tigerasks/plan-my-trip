@@ -20,6 +20,11 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Changed Sat 26 Sep 2026, accommodation:** where you sleep is now a **stay** of its own — a place, a
+first night and a number of nights — rather than a start and end place typed onto every day. The days
+a stay covers take their start and end from it, and are created if the trip does not have them yet.
+Days can also be added several at a time.
+
 **Updated Fri 25 Sep 2026, milestone 2:** places are built. Two things worth recording. Adding to a
 plan puts a stop where it adds the least straight-line distance, not yet where it causes the fewest
 problems — that waits for the scheduler in milestone 3. And the hours editor is two wheels for every
@@ -134,8 +139,9 @@ A trip has a backlog and days. Every place lives in exactly one spot: the backlo
 
 | Thing | Holds |
 |---|---|
-| Trip | Title, time zone label, default transit type, optional preferred currency, backlog, days |
-| Day | Date, city, start and end place with times, lunch window, ideas for today, three plan versions |
+| Trip | Title, time zone label, default transit type, optional preferred currency, backlog, stays, days |
+| Stay | Where you sleep: a place with its position, the date of the first night, and how many nights |
+| Day | Date, city, the times it starts and ends, lunch window, ideas for today, three plan versions |
 | Plan version | Do less, Balanced or Packed: which places, in which order |
 | Place | Name, position, type, area, duration, fixed time or time window, opening hours with their source (OpenStreetMap, you or the chat), the OpenStreetMap id where known, check flag, notes, links, who added it (chat or you) and how (search, map, pin), and a priority label only if the chat's import gave it one |
 
@@ -212,12 +218,28 @@ At the bottom are the three buttons: Add to plan, Add to today, Add to backlog. 
 - **Selecting** a place shows estimated travel minutes from there to everything else, backlog included.
 - *Proposal:* tone Liberty's colours down towards the house style, keeping its places.
 
-## Days and trip settings
+## Days, stays and trip settings
 
 A day gets:
 - a date and a city;
-- a start and end place (found by search, usually the hotel);
-- times and a lunch window.
+- the time you set off and the time you want to be back, or no time back for an open-ended day;
+- a lunch window.
+
+Days are added one at a time or as a run of them, which is how a trip is usually laid out. Dates the
+trip already has are never touched.
+
+**Where a day starts and ends comes from the accommodation**, not from the day. A stay is one
+booking: a place, found by typing an address or a hotel name, the date of the first night, and how
+many nights. Three nights from the 21st means you sleep on the 21st, 22nd and 23rd and check out on
+the morning of the 24th, so the stay is where those first three days *end* and where the 22nd, 23rd
+and 24th *start*. All four days are created if the trip does not have them. The stay shows at the top
+of every day it starts, and the morning you check out says so.
+
+Where two stays overlap, the later check-in wins. A day no stay covers falls back to whatever start
+and end it carries itself, which is how a trip imported from the chat still works. On the morning you
+check out with nothing booked for that night, the evening is left unspoken for rather than pretending
+you are going back to the hotel you have just left. Removing a stay leaves its days in the trip,
+since by then they may have places on them.
 
 Deleting a day sends its ideas back to the backlog.
 
@@ -260,8 +282,9 @@ date:
 
 | Key | Holds |
 |---|---|
-| `trip` | `id`, `title`, `tzLabel`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `days{}`, `createdAt`, `updatedAt` |
-| `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `lunch`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs` |
+| `trip` | `id`, `title`, `tzLabel`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt` |
+| `stay` | `id`, `name`, `localName`, `lat`, `lng`, `area`, `from` (the first night), `nights`, `note`, `osm` |
+| `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `lunch`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs`. `start` and `end` carry the day's times; their place is only a fallback for when no stay covers the day |
 | `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `meal`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |
 | `hours` | `source` (`osm`, `you` or `chat`), `verified`, `raw` (the text it came from), `week` (seven days, each a list of open–close pairs, `[]` for closed, absent for unknown), `lastEntry` |
 | `added` | `by` (`you` or `chat`), `how` (`search`, `map`, `pin` or `package`), `at` |
@@ -345,6 +368,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 13 | Public transport without timetables? | A stop-based estimate. It uses all stops within 10 minutes' walk of each end, widening to 20 minutes where an end has none, with no public transport estimate if there are still none. The line is named where OpenStreetMap has it, and it's suggested only when it clearly beats walking. Since the third service test, this is understood to cover the gaps in a region's coverage — Kyoto's buses — rather than whole regions. |
 | 14 | When does Transitous need telling about the planner? | Once other people use it. Development traffic is too small to require it, and while the planner isn't being advertised it may not be needed at all. The owner sends the message, not the planner and not the chat. |
 | 15 | What if the hosted router stops being an option? | Fall back on the dataset. Transitous publishes the timetable data it collects, and says outright that there is no need to scrape the API for it. See "If the hosted router is ever not an option". |
+| 16 | How is accommodation entered? | Once per booking, as a stay: a place, a first night and a number of nights. The days it covers take their start and end from it and are created with it. Not on each day. |
 
 ## Open questions
 
