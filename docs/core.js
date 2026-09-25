@@ -994,6 +994,65 @@ function addDays(trip, date, count, city, now) {
   };
 }
 
+// Putting a stay in also puts in the days it covers: the nights plus the morning you check out.
+// Days the trip already has are left exactly as they are, places and all.
+function fillStayDays(trip, stay, now) {
+  const span = stayDays(stay);
+  return addDays(trip, span.first, stay.nights + 1, nearestCity(trip, span.first), now);
+}
+// New days take the city of whichever day of the trip sits closest to them.
+function nearestCity(trip, date) {
+  const day = new Date(date + 'T00:00:00Z').getTime();
+  let best = null, gap = Infinity;
+  for (const id of dayIds(trip)) {
+    const city = str(trip.days[id].city);
+    if (!city) continue;
+    const away = Math.abs(new Date(id + 'T00:00:00Z').getTime() - day);
+    if (away < gap) { gap = away; best = city; }
+  }
+  return best || '';
+}
+function addStay(trip, raw, now) {
+  const stay = normStay(raw);
+  if (!stay.from) return { ok: false, text: 'A stay needs the date of its first night', added: [] };
+  if (!str(raw && raw.name)) return { ok: false, text: 'Give the place you are staying a name first', added: [] };
+  let id = stay.id, k = 2;
+  while (trip.stays.some((s) => s.id === id)) { id = stay.id + '-' + k; k++; }
+  stay.id = id;
+  trip.stays.push(stay);
+  trip.stays.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const days = fillStayDays(trip, stay, now);
+  touch(trip, now);
+  return {
+    ok: true, id: stay.id, stay, added: days.added,
+    text: stay.name + ', ' + stay.nights + (stay.nights === 1 ? ' night' : ' nights') + ' from ' + fmtDateUK(stay.from)
+      + (days.added.length ? ' · ' + days.added.length + (days.added.length === 1 ? ' day' : ' days') + ' added' : ''),
+  };
+}
+const stayById = (trip, id) => arr(obj(trip).stays).find((s) => s.id === id) || null;
+function updateStay(trip, id, patch, now) {
+  const stay = stayById(trip, id);
+  if (!stay) return { ok: false, text: 'That stay is no longer here', added: [] };
+  const next = normStay(Object.assign({}, stay, obj(patch), { id: stay.id }));
+  if (!next.from) return { ok: false, text: 'A stay needs the date of its first night', added: [] };
+  Object.assign(stay, next);
+  trip.stays.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const days = fillStayDays(trip, stay, now);
+  touch(trip, now);
+  return {
+    ok: true, id: stay.id, stay, added: days.added,
+    text: stay.name + ' saved' + (days.added.length ? ' · ' + days.added.length + (days.added.length === 1 ? ' day' : ' days') + ' added' : ''),
+  };
+}
+// Removing a stay leaves the days alone: they may well have places on them by now.
+function deleteStay(trip, id, now) {
+  const at = arr(obj(trip).stays).findIndex((s) => s.id === id);
+  if (at < 0) return { ok: false, text: 'That stay is no longer here' };
+  const [gone] = trip.stays.splice(at, 1);
+  touch(trip, now);
+  return { ok: true, stay: gone, text: gone.name + ' removed. Its days are still in the trip.' };
+}
+
 // Deleting a day sends its ideas back to the backlog.
 function deleteDay(trip, dayId, now) {
   const d = trip.days[dayId];
@@ -1189,6 +1248,7 @@ const Core = {
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
+  addStay, updateStay, deleteStay, stayById,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   osmDays, osmSpans, parseOsmHours, hoursFromOsm, hoursText,
   PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,

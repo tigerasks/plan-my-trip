@@ -378,5 +378,30 @@ ok(demoStart.name === 'Example Hotel · Kyoto Station' && demoStart.stayId === n
 ok(C.dayEnd(demoTrip, '2026-11-21').name === 'Example Hotel · Kyoto Station', 'and still ends where it started');
 ok(C.normalise({ stays: [{ name: 'No dates' }] }).issues.length === 1, 'a stay with no first night is left out, with a reason');
 
+console.log('\n== Booking a stay fills its days ==');
+let st = withDemo((t) => C.addStay(t, { name: 'Example Ryokan', lat: 35.0, lng: 135.77, from: '2026-11-23', nights: 3 }));
+ok(st.out.ok && C.dayIds(st.t).join(' ') === '2026-11-21 2026-11-22 2026-11-23 2026-11-24 2026-11-25 2026-11-26',
+  'three nights from the 23rd creates the nights and the morning you leave: ' + C.dayIds(st.t).join(' '));
+ok(st.out.text === 'Example Ryokan, 3 nights from Mon 23 Nov · 4 days added', 'and says what it did: ' + st.out.text);
+ok(C.dayStart(st.t, '2026-11-26').name === 'Example Ryokan', 'the check-out morning starts there');
+ok((C.dayEnd(st.t, '2026-11-26') || {}).name === '', 'and its evening is left open');
+ok(st.t.days['2026-11-24'].city === 'Kyoto', 'new days inherit the city of the days around them');
+ok(st.t.days['2026-11-21'].plans.balanced.length === 2, 'and a day that was already there is untouched');
+
+st = withDemo((t) => { C.addStay(t, { name: 'A', lat: 1, lng: 1, from: '2026-11-21', nights: 1 }); return C.addStay(t, { name: 'A', lat: 2, lng: 2, from: '2026-11-25', nights: 1 }); });
+ok(st.out.id === 'a-2', 'two stays with the same name get their own ids: ' + st.out.id);
+ok(!C.addStay(st.t, { name: 'No date' }).ok && !C.addStay(st.t, { from: '2026-11-21' }).ok, 'a stay needs both a name and a first night');
+
+st = withDemo((t) => { const a = C.addStay(t, { name: 'Example Ryokan', lat: 1, lng: 1, from: '2026-11-21', nights: 1 });
+  return C.updateStay(t, a.id, { nights: 3 }); });
+ok(st.out.ok && C.dayIds(st.t).indexOf('2026-11-24') >= 0, 'lengthening a stay fills the extra days');
+ok(C.dayEnd(st.t, '2026-11-23').name === 'Example Ryokan', 'and the new nights take their end from it');
+
+st = withDemo((t) => { const a = C.addStay(t, { name: 'Example Ryokan', lat: 1, lng: 1, from: '2026-11-21', nights: 2 });
+  return C.deleteStay(t, a.id); });
+ok(st.out.ok && st.t.stays.length === 0 && C.dayIds(st.t).length === 3, 'removing a stay leaves its days behind');
+ok(/days are still in the trip/.test(st.out.text), 'and says so: ' + st.out.text);
+ok(C.normalise(st.t).issues.length === 0, 'with the trip still consistent');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
