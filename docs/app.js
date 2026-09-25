@@ -11,6 +11,7 @@ const ICON = {
   chev: '<path d="m6 9 6 6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
 };
 const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
 
@@ -133,7 +134,8 @@ function dayHtml(day) {
   const end = day.end;
   const endName = end ? (end.name || day.start.name) : '';
   return '<div class="card">'
-    + '<div class="card-head"><span class="label">' + esc(C.fmtDateLongUK(day.id)) + (day.city ? ' · ' + esc(day.city) : '') + '</span></div>'
+    + '<div class="card-head"><span class="label">' + esc(C.fmtDateLongUK(day.id)) + (day.city ? ' · ' + esc(day.city) : '') + '</span>'
+    + '<button type="button" class="icon-btn" data-act="day" aria-label="Day settings">' + ic('sliders') + '</button></div>'
     + '<div class="day-line"><span class="t">' + esc(day.start.time) + '</span>'
     + (day.start.name ? '<span>Leave ' + esc(day.start.name) + '</span>' : '<span class="muted">Where you set off from is not set yet</span>') + '</div>'
     + (end
@@ -238,6 +240,40 @@ const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="'
 const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
 
 const SHEETS = {
+  day: (s) => {
+    const day = currentDay();
+    const end = day.end;
+    const timeIn = (id, v) => '<input class="in" type="time" id="' + id + '" value="' + esc(v || '') + '">';
+    return sheetHead('Day settings', C.fmtDateLongUK(day.id))
+      + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+      + '<div class="pair">'
+      + field('edDate', 'Date', '<input class="in" type="date" id="edDate" value="' + esc(day.id) + '">')
+      + field('edCity', 'City', textIn('edCity', day.city, ' maxlength="60"'))
+      + '</div>'
+      + '<div class="sh-sec"><span class="label">Setting off</span>'
+      + '<div class="pair" style="margin-top:6px">'
+      + field('edStartName', 'From', textIn('edStartName', day.start.name, ' maxlength="80" placeholder="Hotel"'))
+      + field('edStartTime', 'At', timeIn('edStartTime', day.start.time))
+      + '</div>'
+      + '<p class="hint">Finding the hotel on the map, so its position is known, comes with place search at the next step.</p></div>'
+      + '<div class="sh-sec"><span class="label">Back</span>'
+      + '<div class="pair" style="margin-top:6px">'
+      + field('edEndName', 'At', textIn('edEndName', end ? end.name : '', ' maxlength="80" placeholder="Where you started"'))
+      + field('edEndTime', 'By', timeIn('edEndTime', end ? end.time : ''))
+      + '</div>'
+      + '<p class="hint">Leave the time empty for an open-ended day. An empty place means back where you started.</p></div>'
+      + '<div class="sh-sec"><span class="label">Lunch</span>'
+      + '<label class="tick" style="margin-top:8px"><input type="checkbox" id="edLunchOn"' + (day.lunch.on ? ' checked' : '') + '><span>Keep a lunch break</span></label>'
+      + '<div class="pair">'
+      + field('edLunchFrom', 'Between', timeIn('edLunchFrom', day.lunch.from))
+      + field('edLunchTo', 'And', timeIn('edLunchTo', day.lunch.to))
+      + field('edLunchFor', 'For', '<select class="in" id="edLunchFor">' + [30, 45, 60, 75, 90, 120].map((n) =>
+        '<option value="' + n + '"' + (n === day.lunch.duration ? ' selected' : '') + '>' + esc(C.fmtDur(n)) + '</option>').join('') + '</select>')
+      + '</div></div>'
+      + field('edNote', 'Note', '<textarea class="in" id="edNote" maxlength="2000" placeholder="Anything about this day worth remembering">' + esc(day.note) + '</textarea>')
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-day-shape">Save</button>'
+      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>';
+  },
   'add-day': (s) => sheetHead('Add a day')
     + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
     + field('dyDate', 'Date', '<input class="in" type="date" id="dyDate" value="' + esc(s.date) + '">', 'One day per date.')
@@ -321,6 +357,41 @@ const ACTIONS = {
     saveUi();
     closeSheet();
     changed(res.text);
+  },
+  day: () => { if (currentDay()) openSheet('day'); },
+  'save-day-shape': () => {
+    let day = currentDay();
+    if (!day) return;
+    const wanted = val('edDate');
+    if (wanted && wanted !== day.id) {
+      const moved = C.setDayDate(App.trip, day.id, wanted);
+      if (!moved.ok) { App.ui.sheet.error = moved.text; render(); return; }
+      App.ui.dayId = moved.id;
+      day = currentDay();
+    }
+    day.city = val('edCity');
+    const startName = val('edStartName');
+    if (startName !== day.start.name) { day.start.lat = null; day.start.lng = null; }
+    day.start.name = startName;
+    day.start.time = val('edStartTime') || day.start.time;
+    const backBy = val('edEndTime');
+    if (!backBy) day.end = null;
+    else {
+      const endName = val('edEndName');
+      const kept = day.end && day.end.name === endName ? day.end : { lat: null, lng: null };
+      day.end = { name: endName, lat: kept.lat, lng: kept.lng, time: backBy };
+    }
+    day.lunch = {
+      on: $('#edLunchOn').checked,
+      from: val('edLunchFrom') || day.lunch.from,
+      to: val('edLunchTo') || day.lunch.to,
+      duration: +val('edLunchFor'),
+    };
+    day.note = val('edNote');
+    App.trip = C.normalise(App.trip).trip;
+    saveUi();
+    closeSheet();
+    changed('Day saved');
   },
   version: (el) => {
     const day = currentDay();

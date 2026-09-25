@@ -128,6 +128,44 @@ with sync_playwright() as pw:
     ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
     ctx.close()
 
+    # ---- a day's shape
+    ctx, pg = open_page(held=DEMO)
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edStartName') == 'Example Hotel · Kyoto Station',
+       'the day sheet opens on what the day holds')
+    ck(pg.input_value('#edLunchFrom') == '11:30' and pg.input_value('#edLunchFor') == '60', 'lunch included')
+    pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
+    pg.fill('#edStartName', 'Example Ryokan')
+    pg.fill('#edStartTime', '07:45')
+    pg.fill('#edEndTime', '')
+    pg.uncheck('#edLunchOn')
+    pg.fill('#edNote', 'Made-up day, made-up note.')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(900)
+    panel = pg.inner_text('#panel')
+    ck('07:45' in panel and 'Leave Example Ryokan' in panel, 'the times and the start place follow')
+    card = pg.inner_text('#panel .card')
+    ck('Open-ended day' in card and 'Lunch' not in card, 'an empty back-by time makes the day open-ended, and lunch can be dropped')
+    ck('Made-up day, made-up note.' in panel, 'and the note shows under the day')
+    held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['days']['2026-11-21']
+    ck(held['end'] is None and held['start']['lat'] is None, 'a renamed start place drops the position it had, ready for search')
+
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(150)
+    pg.fill('#edDate', '2026-11-22')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(150)
+    ck('already a day of this trip' in pg.inner_text('#sheet'), 'moving a day onto another day is refused')
+    pg.fill('#edDate', '2026-11-19')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(900)
+    ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'a day can be given another date: ' + pg.inner_text('#dayFace'))
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(trip['places']['example-temple']['dayId'] == '2026-11-19', 'and its places move with it')
+    ck(sorted(trip['days'].keys()) == ['2026-11-19', '2026-11-22'], 'leaving nothing behind')
+    ctx.close()
+
     # ---- trip settings
     ctx, pg = open_page(held=DEMO)
     pg.click('#tripBtn')
