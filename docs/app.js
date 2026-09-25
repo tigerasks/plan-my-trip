@@ -272,7 +272,10 @@ const SHEETS = {
       + '</div></div>'
       + field('edNote', 'Note', '<textarea class="in" id="edNote" maxlength="2000" placeholder="Anything about this day worth remembering">' + esc(day.note) + '</textarea>')
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-day-shape">Save</button>'
-      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>';
+      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
+      + '<div class="sh-sec"><span class="label">Delete</span>'
+      + '<p class="note">' + esc(dayPlacesNote(day)) + ' You can undo it straight afterwards.</p>'
+      + '<button type="button" class="btn danger" data-act="delete-day">Delete this day</button></div>';
   },
   'add-day': (s) => sheetHead('Add a day')
     + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
@@ -310,6 +313,13 @@ function toast(msg, action, ms) {
   if (action) $('#toastBtn').onclick = () => { el.classList.remove('show'); action.fn(); };
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), ms || 4200);
+}
+
+function dayPlacesNote(day) {
+  const n = C.dayPlaces(App.trip, day.id).length;
+  return n
+    ? 'Deleting this day sends its ' + n + ' place' + (n > 1 ? 's' : '') + ' back to the backlog.'
+    : 'Deleting this day takes it off the trip.';
 }
 
 // ---------- actions ----------
@@ -392,6 +402,23 @@ const ACTIONS = {
     saveUi();
     closeSheet();
     changed('Day saved');
+  },
+  'delete-day': () => {
+    const day = currentDay();
+    if (!day) return;
+    const before = C.clone(App.trip);
+    const wasId = day.id;
+    const res = C.deleteDay(App.trip, day.id);
+    App.ui.dayId = null;
+    saveUi();
+    closeSheet();
+    changed();
+    toast(res.text, { label: 'Undo', fn: () => {
+      App.trip = before;
+      App.ui.dayId = wasId;
+      saveUi();
+      changed('Day brought back');
+    } }, 9000);
   },
   version: (el) => {
     const day = currentDay();

@@ -164,6 +164,19 @@ with sync_playwright() as pw:
     trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
     ck(trip['places']['example-temple']['dayId'] == '2026-11-19', 'and its places move with it')
     ck(sorted(trip['days'].keys()) == ['2026-11-19', '2026-11-22'], 'leaving nothing behind')
+
+    # ---- deleting a day
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(150)
+    ck('sends its 3 places back to the backlog' in pg.inner_text('#sheet'), 'deleting says what happens to the places on the day')
+    pg.click('[data-act="delete-day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 5', 'the day goes, and its places land in the backlog')
+    ck('back to the backlog' in pg.inner_text('#toast'), 'with a plain account of it: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'and Undo brings the day back: ' + pg.inner_text('#dayFace'))
+    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
     ctx.close()
 
     # ---- trip settings
