@@ -156,5 +156,22 @@ ok(file.indexOf('\n  "schema"') > 0 && file.endsWith('\n'), 'laid out to be read
 ok(/^example-kyoto \d{4}-\d{2}-\d{2} \d{4}\.json$/.test(C.fileName(demoTrip)), 'the file is named after the trip and the moment: ' + C.fileName(demoTrip));
 ok(C.sizeText(block).indexOf('KB') > 0, 'and the planner can say how big a block is: ' + C.sizeText(block));
 
+console.log('\n== Reading a block back ==');
+let got = C.readBlock(block);
+ok(got.ok && got.kind === 'save' && got.tripId === 'example-kyoto', 'a block the planner wrote comes back');
+ok(JSON.stringify(got.trip) === JSON.stringify(demoTrip), 'with the trip exactly as it went out');
+ok(got.issues.length === 0 && got.summary === '2 days and 6 places', 'and a summary to show: ' + got.summary);
+
+ok(C.readBlock(file).ok, 'a saved .json file reads without the two lines');
+ok(C.readBlock('Here you go!\n\n' + block + '\nAnything else?').ok, 'text around the block is ignored');
+ok(C.readBlock('```\n' + block + '```').ok, 'so are code fences around it');
+ok(C.readBlock(block.replace(/\n/g, '\r\n')).ok, 'so are Windows line endings');
+
+const wrapped = block.split('\n');
+wrapped[1] = wrapped[1].replace(/,/g, ',\n');
+ok(C.readBlock(wrapped.join('\n')).ok, 'a block the chat has re-wrapped still reads');
+
+ok(C.readBlock(C.writeBlock(demoTrip, 'package')).kind === 'package', 'a package is recognised as one');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

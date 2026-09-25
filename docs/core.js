@@ -600,6 +600,62 @@ function sizeText(text) {
   return bytes < 1024 ? bytes + ' bytes' : Math.round(bytes / 1024) + ' KB';
 }
 
+const BEGIN_RE = /^\s*-{2,}\s*BEGIN\s+day-planner\/(\d+)\s*-{2,}\s*$/i;
+const END_RE = /^\s*-{2,}\s*END\s+day-planner\/(\d+)\s*-{2,}\s*$/i;
+const FENCE_RE = /^\s*```/;
+
+// Pull the JSON out of whatever was pasted: a block between the two lines, or a plain .json file.
+// Lines are joined without their line breaks, so a block the chat re-wrapped still reads — JSON
+// never holds a raw newline inside a string.
+function findPayload(text) {
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  let begin = -1, end = -1, version = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = BEGIN_RE.exec(lines[i]);
+    if (m) { begin = i; version = m[1]; break; }
+  }
+  if (begin >= 0) {
+    for (let i = begin + 1; i < lines.length; i++) if (END_RE.test(lines[i])) { end = i; break; }
+    if (end < 0) return { form: 'block', version, cut: true };
+    const body = lines.slice(begin + 1, end).filter((l) => !FENCE_RE.test(l)).join('');
+    return { form: 'block', version, body };
+  }
+  const bare = lines.filter((l) => !FENCE_RE.test(l)).join('\n').trim();
+  return { form: 'bare', body: bare };
+}
+
+// Read a pasted block or the contents of a saved file. Always returns an object; check `ok`.
+function readBlock(text, now) {
+  const found = findPayload(text);
+  if (found.cut || !found.body) return fail('unreadable', found, null);
+  let env;
+  try { env = JSON.parse(found.body); } catch (e) { return fail('unreadable', found, null); }
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return fail('unreadable', found, null);
+  if (str(env.schema) !== SCHEMA) return fail('unreadable', found, env);
+  if (!KINDS_INOUT.includes(str(env.kind))) return fail('unreadable', found, env);
+  const { trip, issues } = normTrip(env.trip, now);
+  return {
+    ok: true,
+    kind: str(env.kind),
+    tripId: cleanId(env.tripId) || trip.id,
+    title: str(env.title, 80) || trip.title,
+    at: str(env.at, 32),
+    app: str(env.app, 40),
+    trip, issues,
+    summary: summarise(trip),
+  };
+}
+function fail(problem, found, env) {
+  return { ok: false, problem, message: 'I could not read a day-planner block in that text.', env: env || null, found };
+}
+// "6 days and 43 places" — for confirmations and for the import report.
+function summarise(trip) {
+  const days = dayIds(trip).length;
+  const places = Object.keys(obj(trip.places)).length;
+  const s = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  return joinList([s(days, 'day', 'days'), s(places, 'place', 'places')]);
+}
+
 const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
@@ -614,6 +670,7 @@ const Core = {
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
   reorderPlan, deletePlace, addDay, deleteDay, setDayDate,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
+  findPayload, readBlock, summarise,
 };
 root.DayPlannerCore = Core;
 if (typeof module !== 'undefined' && module.exports) module.exports = Core;
