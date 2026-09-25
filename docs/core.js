@@ -737,6 +737,25 @@ function moveToBacklog(trip, id, now) {
   touch(trip, now);
   return { ok: true, left, text: p.name + ' moved to the backlog' + (left.length ? ', and out of ' + planWords(left) : '') };
 }
+// Where a new stop fits best. Until the scheduler lands this is least added distance, measured
+// straight-line from the day's start and back to its end.
+function bestSlot(trip, dayId, key, placeId) {
+  const d = obj(obj(trip).days)[dayId];
+  const p = placeById(trip, placeId);
+  if (!d || !p || !hasPos(p)) return d ? d.plans[key].length : 0;
+  const stops = d.plans[key].map((id) => trip.places[id]).filter(hasPos);
+  const start = hasPos(d.start) ? d.start : null;
+  const end = d.end && hasPos(d.end) ? d.end : start;
+  const chain = [start].concat(stops, [end]);
+  let best = stops.length, bestCost = Infinity;
+  for (let i = 0; i <= stops.length; i++) {
+    const before = chain[i], after = chain[i + 1];
+    const cost = (before ? kmBetween(before, p) : 0) + (after ? kmBetween(p, after) : 0)
+      - (before && after ? kmBetween(before, after) : 0);
+    if (cost < bestCost - 1e-9) { bestCost = cost; best = i; }
+  }
+  return best;
+}
 function addToPlan(trip, id, key, index, now) {
   const p = placeById(trip, id);
   if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not on a day' };
@@ -988,7 +1007,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, deletePlace, addDay, deleteDay, setDayDate,
+  reorderPlan, deletePlace, addDay, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };

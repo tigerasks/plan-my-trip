@@ -29,6 +29,19 @@ with sync_playwright() as pw:
             return True
         return False
 
+    FIX = json.loads((harness.HERE / 'fixtures.json').read_text())
+    asked = []
+
+    def services(r):
+        u = r.request.url
+        if 'photon.komoot.io' in u:
+            asked.append(u)
+            hit = 'nothing' not in u
+            r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                      body=json.dumps(FIX['photon'] if hit else {'features': []}))
+            return True
+        return fake_service(r)
+
     def no_maplibre(r):
         if 'maplibre-gl.js' in r.request.url:
             r.fulfill(status=200, body='', headers={'Content-Type': 'application/javascript'})
@@ -233,7 +246,7 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     panel = pg.inner_text('#panel')
     ck('07:45' in panel and 'Leave Example Ryokan' in panel, 'the times and the start place follow')
-    card = pg.inner_text('#panel .card')
+    card = pg.inner_text('#panel .day-card')
     ck('Open-ended day' in card and 'Lunch' not in card, 'an empty back-by time makes the day open-ended, and lunch can be dropped')
     ck('Made-up day, made-up note.' in panel, 'and the note shows under the day')
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['days']['2026-11-21']
@@ -265,6 +278,44 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'and Undo brings the day back: ' + pg.inner_text('#dayFace'))
     ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
+    ctx.close()
+
+    # ---- searching for a place
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.fill('#findBox', 'n')
+    pg.wait_for_timeout(600)
+    ck(len(asked) == 0, 'one letter is not a search')
+    pg.fill('#findBox', 'nintendo museum')
+    pg.wait_for_timeout(1500)
+    ck(len(asked) == 1 and 'q=nintendo+museum' in asked[0], 'typing a name asks Photon once, after a pause')
+    ck('lat=' in asked[0], 'biased to where the map is looking')
+    ck(pg.locator('#findResults .item').count() == 2, 'the results are listed')
+    ck('Nintendo Museum' in pg.locator('#findResults .nm').first.inner_text(), 'by name')
+    ck('Museum · Ogura · Ogura-cho · Uji' in pg.locator('#findResults .meta').first.inner_text(),
+       'with what they are and where: ' + pg.locator('#findResults .meta').first.inner_text())
+    pg.screenshot(path=str(SHOTS / 'app_search_desktop_light.png'))
+
+    # nothing is added until you say so
+    pg.click('#findResults .item')
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
+    ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
+    pg.screenshot(path=str(SHOTS / 'app_preview_desktop_light.png'))
+    pg.click('[data-act="add-place"][data-to="plan"]')
+    pg.wait_for_timeout(900)
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(len(trip['places']) == 7, 'choosing Add puts it in the trip')
+    ck(trip['places']['nintendo-museum']['kind'] == 'museum', 'with the kind worked out for it')
+    ck(trip['places']['nintendo-museum']['added'] == {'by': 'you', 'how': 'search', 'at': trip['places']['nintendo-museum']['added']['at']},
+       'and a note of how it was found')
+    ck(trip['days']['2026-11-21']['plans']['balanced'].index('nintendo-museum') >= 0, 'in the version that was on screen')
+    ck(trip['days']['2026-11-21']['plans']['packed'].count('nintendo-museum') == 0, 'and in no other')
+
+    # a search that finds nothing, and one that fails
+    pg.fill('#findBox', 'nothing at all here')
+    pg.wait_for_timeout(1600)
+    ck('Nothing found' in pg.inner_text('#findResults'), 'an empty answer says so: ' + pg.inner_text('#findResults'))
     ctx.close()
 
     # ---- trip settings

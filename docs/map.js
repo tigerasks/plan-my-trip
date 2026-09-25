@@ -40,6 +40,12 @@ const MapView = {
     return true;
   },
 
+  // Where the map is looking, so search can favour places near it.
+  centre() {
+    if (!this.ready || !this.map) return null;
+    try { const c = this.map.getCenter(); return { lat: c.lat, lng: c.lng }; } catch (e) { return null; }
+  },
+
   clear() {
     for (const m of this.marks) { try { m.remove(); } catch (e) { /* already gone */ } }
     this.marks = [];
