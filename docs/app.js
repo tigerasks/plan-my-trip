@@ -17,6 +17,7 @@ const ICON = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
   bed: '<path d="M3 18v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6"/><path d="M3 18h18M7 10V7h5v3"/>',
+  dots: '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   down: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
   up: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
@@ -29,6 +30,7 @@ const App = {
   ui: {
     dayId: null, sheet: null, backlogDots: true,
     find: { q: '', busy: false, results: null, error: '' },   // the search box
+    menu: null,                                               // the row menu that is open
     pinning: false,                                           // the next tap drops a pin
   },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
@@ -340,10 +342,54 @@ function chipsHtml(p) {
 }
 function itemHtml(p, lead) {
   const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
-  return '<li><button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
+  const open = App.ui.menu && App.ui.menu.id === p.id;
+  return '<li class="row' + (open ? ' menu-open' : '') + '">'
+    + '<div class="row-main">'
+    + '<button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
     + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
-    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button></li>';
+    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button>'
+    + '<button type="button" class="icon-btn row-menu" data-act="row-menu" data-id="' + esc(p.id) + '"'
+    + ' aria-label="What to do with ' + esc(p.name) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + ic('dots') + '</button>'
+    + '</div>'
+    + (open ? menuHtml(p) : '')
+    + '</li>';
 }
+
+// ---------- the row menu ----------
+// Everything you do to a place is here, one tap from the list. The card behind the row is for
+// reading: what a place is, when it is open, what still needs checking.
+const menuItem = (act, id, label, extra) =>
+  '<button type="button" class="menu-item' + (extra && extra.danger ? ' danger' : '') + '" role="menuitem"'
+  + ' data-act="' + act + '" data-id="' + esc(id) + '"' + (extra && extra.day ? ' data-day="' + esc(extra.day) + '"' : '')
+  + '>' + esc(label) + (extra && extra.more ? '<span class="chev">›</span>' : '') + '</button>';
+
+function menuHtml(p) {
+  const day = currentDay();
+  const holds = C.plansHolding(App.trip, p.id);
+  const here = day && p.dayId === day.id;
+  if (App.ui.menu.level === 'move') return moveMenuHtml(p);
+  const out = [];
+  if (day && here && holds.includes(day.shown)) out.push(menuItem('move-remove', p.id, 'Remove from ' + C.PLAN_LABEL[day.shown]));
+  else if (day) out.push(menuItem('move-add', p.id, 'Add to ' + C.PLAN_LABEL[day.shown]));
+  if (day && !p.dayId) out.push(menuItem('move-today', p.id, 'Add to ' + C.fmtDateUK(day.id)));
+  out.push(menuItem('menu-move', p.id, 'Move to', { more: true }));
+  out.push(menuItem('menu-duration', p.id, 'How long it takes', { more: true }));
+  out.push(menuItem('place', p.id, 'Open details'));
+  out.push(menuItem('delete-place', p.id, 'Delete', { danger: true }));
+  return '<div class="menu" role="menu">' + out.join('') + '</div>';
+}
+function moveMenuHtml(p) {
+  const out = [menuItem('menu-main', p.id, '‹ Back')];
+  if (p.dayId) out.push(menuItem('move-backlog', p.id, 'The backlog'));
+  for (const id of C.dayIds(App.trip)) {
+    if (id === p.dayId) continue;
+    out.push(menuItem('move-to', p.id, C.fmtDateUK(id) + (App.trip.days[id].city ? ' · ' + App.trip.days[id].city : ''), { day: id }));
+  }
+  if (out.length === 1) out.push('<p class="menu-note">Nowhere else to put it yet.</p>');
+  return '<div class="menu" role="menu">' + out.join('') + '</div>';
+}
+const actingOn = (el) => (el && el.dataset.id) || (App.ui.sheet && App.ui.sheet.id) || '';
+function closeMenu() { App.ui.menu = null; }
 function listHtml(places, lead, empty) {
   if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
   return '<ul class="list">' + places.map((p, i) => itemHtml(p, lead(i))).join('') + '</ul>';
@@ -452,38 +498,6 @@ function timeWheels(id, hhmm) {
     + wheelHtml(id + 'M', minuteValues(m), m, 'Minutes') + '</div>';
 }
 const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
-
-function deleteNote(p) {
-  const holds = C.plansHolding(App.trip, p.id);
-  return holds.length
-    ? 'Deleting drops it from ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) + ', and off the trip altogether.'
-    : 'Deleting drops it off the trip altogether.';
-}
-
-// Moving a place about. Remove takes it out of one version only; Remove to the backlog takes it off
-// the day altogether, which means it leaves every version, and the planner says so.
-function movesHtml(p, holds) {
-  const day = currentDay();
-  const here = day && p.dayId === day.id;
-  const elsewhere = C.dayIds(App.trip).filter((id) => id !== p.dayId);
-  const btn = (act, label, cls) => '<button type="button" class="btn' + (cls ? ' ' + cls : '') + '" data-act="' + act + '">' + esc(label) + '</button>';
-  const out = [];
-  if (here && holds.includes(day.shown)) out.push(btn('move-remove', 'Remove from ' + C.PLAN_LABEL[day.shown]));
-  if (here && !holds.includes(day.shown)) out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
-  if (!p.dayId && day) {
-    out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
-    out.push(btn('move-today', 'Add to ' + C.fmtDateUK(day.id)));
-  }
-  if (p.dayId) out.push(btn('move-backlog', holds.length ? 'Remove to the backlog' : 'Move to the backlog'));
-  let picker = '';
-  if (elsewhere.length) {
-    picker = '<div class="span-row" style="margin-top:10px"><span class="label">' + (p.dayId ? 'Or move to' : 'Put it on') + '</span>'
-      + '<select class="in" id="moveDay">' + elsewhere.map((id) =>
-        '<option value="' + esc(id) + '">' + esc(C.fmtDateUK(id) + (App.trip.days[id].city ? ' · ' + App.trip.days[id].city : '')) + '</option>').join('')
-      + '</select>' + btn('move-to-day', 'Move') + '</div>';
-  }
-  return (out.length ? '<div class="actions">' + out.join('') + '</div>' : '') + picker;
-}
 
 // ---------- opening hours ----------
 // Filled in from OpenStreetMap where it had them, always marked unverified until you say otherwise.
@@ -680,18 +694,23 @@ const SHEETS = {
       + esc(p.dayId
         ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
         : 'In the backlog, with no day yet') + '</p>'
-      + movesHtml(p, holds) + '</div>'
-      + '<div class="sh-sec"><span class="label">How long it takes</span>'
-      + durationWheels('dur', p.duration)
-      + '<div class="actions"><button type="button" class="btn" data-act="save-duration">Save</button></div></div>'
+      + '</div>'
+      + '<div class="sh-sec"><span class="label">How long it takes</span><p class="note">' + esc(C.fmtDur(p.duration)) + '</p></div>'
       + hoursSectionHtml(s, p, line)
       + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
       + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
       + linksHtml(p, null)
-      + gmapsHtml(p)
-      + '<div class="sh-sec"><span class="label">Delete</span>'
-      + '<p class="note">' + esc(deleteNote(p)) + ' You can undo it straight afterwards.</p>'
-      + '<button type="button" class="btn danger" data-act="delete-place">Delete ' + esc(p.name) + '</button></div>';
+      + gmapsHtml(p);
+  },
+
+  // One thing, from the row menu, rather than a card you have to go and find it in.
+  duration: (s) => {
+    const p = C.placeById(App.trip, s.id);
+    if (!p) return sheetHead('That place has gone');
+    return sheetHead('How long it takes', p.name)
+      + durationWheels('dur', p.duration)
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-duration">Save</button>'
+      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>';
   },
 
   preview: (s) => {
@@ -1149,11 +1168,16 @@ const ACTIONS = {
     if (found) openPreview(found, true);
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
-  place: (el) => openPlace(el.dataset.id),
-  'delete-place': () => {
+  place: (el) => { closeMenu(); openPlace(el.dataset.id); },
+  'delete-place': (el) => {
     const before = C.clone(App.trip);
     const wasDay = App.ui.dayId;
-    const res = C.deletePlace(App.trip, App.ui.sheet.id);
+    const id = actingOn(el);
+    // Say what it is coming out of, since one tap can empty three versions at once.
+    const holds = C.plansHolding(App.trip, id).map((k) => C.PLAN_LABEL[k]);
+    const res = C.deletePlace(App.trip, id);
+    res.text += holds.length ? ', from ' + C.joinList(holds) : '';
+    closeMenu();
     closeSheet();
     changed();
     toast(res.text, { label: 'Undo', fn: () => {
@@ -1163,23 +1187,32 @@ const ACTIONS = {
       changed('Brought back');
     } }, 9000);
   },
-  'move-remove': () => {
-    const day = currentDay();
-    const res = C.removeFromPlan(App.trip, App.ui.sheet.id, day.shown);
-    changed(res.text);
+  'row-menu': (el) => {
+    const id = el.dataset.id;
+    App.ui.menu = App.ui.menu && App.ui.menu.id === id ? null : { id: id, level: 'main' };
+    render();
   },
-  'move-add': () => {
+  'menu-move': (el) => { App.ui.menu = { id: el.dataset.id, level: 'move' }; render(); },
+  'menu-main': (el) => { App.ui.menu = { id: el.dataset.id, level: 'main' }; render(); },
+  'menu-duration': (el) => { closeMenu(); openSheet('duration', { id: el.dataset.id }); },
+  'move-remove': (el) => {
     const day = currentDay();
-    const id = App.ui.sheet.id;
+    closeMenu();
+    changed(C.removeFromPlan(App.trip, actingOn(el), day.shown).text);
+  },
+  'move-add': (el) => {
+    const day = currentDay();
+    const id = actingOn(el);
+    closeMenu();
     if (C.placeById(App.trip, id).dayId !== day.id) C.moveToDay(App.trip, id, day.id);
-    const res = C.addToPlan(App.trip, id, day.shown, C.bestSlot(App.trip, day.id, day.shown, id));
-    changed(res.text);
+    changed(C.addToPlan(App.trip, id, day.shown, C.bestSlot(App.trip, day.id, day.shown, id)).text);
   },
-  'move-today': () => { changed(C.moveToDay(App.trip, App.ui.sheet.id, currentDay().id).text); },
-  'move-backlog': () => { changed(C.moveToBacklog(App.trip, App.ui.sheet.id).text); },
-  'move-to-day': () => {
-    const to = val('moveDay');
-    const res = C.moveToDay(App.trip, App.ui.sheet.id, to);
+  'move-today': (el) => { const id = actingOn(el); closeMenu(); changed(C.moveToDay(App.trip, id, currentDay().id).text); },
+  'move-backlog': (el) => { const id = actingOn(el); closeMenu(); changed(C.moveToBacklog(App.trip, id).text); },
+  'move-to': (el) => {
+    const id = actingOn(el), to = el.dataset.day;
+    closeMenu();
+    const res = C.moveToDay(App.trip, id, to);
     if (res.ok) { App.ui.dayId = to; saveUi(); }
     changed(res.text);
   },
@@ -1234,6 +1267,7 @@ const ACTIONS = {
     const p = C.placeById(App.trip, App.ui.sheet.id);
     if (!p) return;
     p.duration = durationOf('dur');
+    closeSheet();
     changed(p.name + ' takes ' + C.fmtDur(p.duration));
   },
   'pin-mode': () => setPinning(!App.ui.pinning),
@@ -1308,9 +1342,12 @@ const ACTIONS = {
 };
 function onClick(e) {
   const el = e.target.closest('[data-act]');
-  if (!el) return;
-  const fn = ACTIONS[el.dataset.act];
-  if (!fn) return;
+  const act = el ? el.dataset.act : '';
+  const fn = ACTIONS[act];
+  // A click anywhere else puts the row menu away.
+  const closing = App.ui.menu && !e.target.closest('.menu') && act !== 'row-menu';
+  if (closing) closeMenu();
+  if (!fn) { if (closing) render(); return; }
   if (el.tagName !== 'INPUT') e.preventDefault();   // a tickbox must be left to tick itself
   fn(el);
 }
@@ -1352,7 +1389,11 @@ function boot() {
       render();
     });
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (App.ui.menu) { closeMenu(); render(); return; }
+    closeSheet();
+  });
   window.addEventListener('pagehide', saveNow);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   restore();

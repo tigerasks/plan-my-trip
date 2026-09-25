@@ -176,6 +176,22 @@ button.item:hover { background: var(--hover); }
 .item .meta { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px; }
 .item .meta .sep { color: var(--faint); }
 .empty-line { padding: 7px 2px; font-size: 12.5px; color: var(--faint); }
+.row-main { display: flex; align-items: flex-start; gap: 4px; }
+.row-main .item { flex: 1 1 auto; min-width: 0; }
+.row-menu { flex: none; width: 30px; height: 30px; align-self: center; color: var(--faint); }
+.row-menu:hover, .menu-open .row-menu { color: var(--ink); background: var(--hover); }
+.menu {
+  margin: 2px 0 8px 24px; padding: 4px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); box-shadow: var(--shadow);
+}
+.menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 7px 9px; border-radius: 7px; font-size: 13px; text-align: left;
+}
+.menu-item:hover { background: var(--hover); }
+.menu-item.danger { color: var(--rose-strong); }
+.menu-item .chev { color: var(--faint); }
+.menu-note { margin: 4px 9px 6px; font-size: 12.5px; color: var(--muted); }
 
 /* ---------- chips ---------- */
 .chip { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }

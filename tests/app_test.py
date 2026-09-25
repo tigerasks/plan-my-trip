@@ -284,20 +284,12 @@ with sync_playwright() as pw:
     ck('Sat 21 Nov, in Do less, Balanced and Packed' in sheet, 'saying where it sits: '
        + [l for l in sheet.split(chr(10)) if 'Sat 21 Nov' in l][0])
     ck('How long it takes' in pg.locator('#sheet .label').all_text_contents(), 'with a section for how long it takes')
+    ck(pg.locator('#sheet .btn.danger').count() == 0, 'and no actions on it at all')
     ck('Mon–Fri 06:00–18:00 · Sat–Sun 06:00–21:00' in sheet, 'and when it is open: '
        + [l for l in sheet.split(chr(10)) if '06:00' in l][0])
     ck('unverified' in sheet, 'flagged unverified, since OpenStreetMap supplied them')
     ck('Made-up hours — check' in sheet, 'with whatever is still to be checked')
-    ck(pg.locator('#durH').get_attribute('data-value') == '1' and pg.locator('#durM').get_attribute('data-value') == '30',
-       'the duration wheels open on what it takes now')
-    ck(pg.locator('#durH .wheel-item').count() == 13 and pg.locator('#durM .wheel-item').count() == 4,
-       '0 to 12 hours, and quarter hours')
-    pg.click('#durH .wheel-item[data-v="2"]')
-    pg.click('#durM .wheel-item[data-v="45"]')
-    pg.click('[data-act="save-duration"]')
-    pg.wait_for_timeout(900)
-    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 165, 'and set it when you save')
-    ck('2h 45' in pg.inner_text('#panel'), 'which shows in the list straight away')
+    ck('1h 30' in pg.inner_text('#sheet'), 'reading how long it takes, without offering to change it here')
     pg.screenshot(path=str(SHOTS / 'app_place_desktop_light.png'))
 
     # ---- the hours editor
@@ -350,48 +342,75 @@ with sync_playwright() as pw:
     ck(len(hours['week']['wed']) == 2 and hours['lastEntry']['wed'] == '17:30', 'and the split day with its last entry')
     ck('Tue closed' in pg.inner_text('#sheet'), 'which the card reads back: '
        + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'closed' in l][0])
-    # ---- moving a place about
-    ck('Remove from Balanced' in pg.inner_text('#sheet'), 'a stop in the version on screen can be taken out of it')
+    # ---- moving a place about, from the row rather than the card
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'the card is for reading, so close it')
+    pg.click('.row-menu >> nth=0')
+    pg.wait_for_timeout(200)
+    items = pg.locator('.menu-item').all_text_contents()
+    ck(items[0] == 'Remove from Balanced', 'the row menu leads with what this version can do: ' + ' · '.join(items))
+    joined = ' · '.join(items)
+    ck('Move to' in joined and 'How long it takes' in joined and 'Delete' in joined and 'Open details' in joined,
+       'and holds the rest of them')
+    pg.screenshot(path=str(SHOTS / 'app_menu_desktop_light.png'))
     pg.click('[data-act="move-remove"]')
     pg.wait_for_timeout(500)
     ck('is still in Do less and Packed' in pg.inner_text('#toast'), 'and the planner says where it still is: ' + pg.inner_text('#toast'))
-    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-21', 'it stays on its day')
-    ck('Add to Balanced' in pg.inner_text('#sheet'), 'and can go back in')
-    pg.click('[data-act="move-add"]')
-    pg.wait_for_timeout(500)
-    ck('example-temple' in pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced"), 'back in the version')
+    ck(pg.locator('.menu').count() == 0, 'the menu puts itself away afterwards')
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'without ever opening the card')
 
-    pg.click('[data-act="move-backlog"]')
-    pg.wait_for_timeout(900)
-    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
-    ck(trip['places']['example-temple']['dayId'] is None, 'Remove to the backlog takes it off the day')
-    ck('example-temple' not in trip['days']['2026-11-21']['plans']['packed'], 'which means out of every version')
-    pg.select_option('#moveDay', '2026-11-22')
-    pg.click('[data-act="move-to-day"]')
+    pg.click('.row-menu >> nth=1')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.menu-item').first.inner_text() == 'Add to Balanced', 'an idea offers to join the version on screen')
+    pg.click('[data-act="menu-move"]')
+    pg.wait_for_timeout(200)
+    moves = pg.locator('.menu-item').all_text_contents()
+    ck(moves[0] == '\u2039 Back' and 'The backlog' in moves and 'Sun 22 Nov · Kyoto' in moves,
+       'Move to lists where it can go: ' + ' · '.join(moves))
+    pg.click('[data-act="move-to"][data-day="2026-11-22"]')
     pg.wait_for_timeout(900)
     ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-22',
-       'and it can be put on another day from the same card')
-    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which follows it there: ' + pg.inner_text('#dayFace'))
-    pg.keyboard.press('Escape')
+       'and picking one moves it there')
+    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which the day picker follows: ' + pg.inner_text('#dayFace'))
     pg.select_option('#daySel', '2026-11-21')
     pg.wait_for_timeout(200)
 
-    pg.click('.list .item >> nth=3')
+    # how long, from the same menu
+    pg.click('.row-menu >> nth=0')
+    pg.wait_for_timeout(200)
+    pg.click('[data-act="menu-duration"]')
     pg.wait_for_timeout(250)
-    ck('In the backlog, with no day yet' in pg.inner_text('#sheet'), 'a backlog place says so')
-    pg.keyboard.press('Escape')
+    ck(pg.locator('#durH').count() == 1 and 'How long it takes' in pg.inner_text('.sh-title'),
+       'How long opens just the wheels, not the whole card')
+    ck(pg.locator('#durH .wheel-item').count() == 13 and pg.locator('#durM .wheel-item').count() == 4,
+       '0 to 12 hours, and quarter hours')
+    pg.click('#durH .wheel-item[data-v="2"]')
+    pg.click('#durM .wheel-item[data-v="45"]')
+    pg.click('[data-act="save-duration"]')
+    pg.wait_for_timeout(900)
+    ck('2h 45' in pg.inner_text('#panel'), 'and setting it closes again, with the list showing it')
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'leaving you where you were')
+
+    # clicking away
+    pg.click('.row-menu >> nth=0')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.menu').count() == 1, 'the menu opens')
+    pg.click('#panel .label >> nth=0')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.menu').count() == 0, 'and a click anywhere else puts it away')
 
     # ---- deleting a place, with a way back
-    pg.click('.list .item >> nth=0')
-    pg.wait_for_timeout(250)
-    name = pg.inner_text('.sh-title').split(chr(10))[0]
-    ck('drops it from' in pg.inner_text('#sheet'), 'deleting says which versions it would empty: '
-       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Deleting' in l][0])
+    doomed = pg.locator('.row-menu').first.get_attribute('data-id')
+    name = pg.evaluate('id => window.DayPlannerApp.trip.places[id].name', doomed)
     before = len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)'))
+    pg.click('.row-menu >> nth=0')
+    pg.wait_for_timeout(200)
     pg.click('[data-act="delete-place"]')
     pg.wait_for_timeout(400)
     ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before - 1, 'and it goes')
-    ck(name.split(' ')[0] in pg.inner_text('#toast'), 'with a note of what went: ' + pg.inner_text('#toast'))
+    ck(name.split(' ')[0] in pg.inner_text('#toast') and 'from ' in pg.inner_text('#toast'),
+       'with a note of what went, and what it came out of: ' + pg.inner_text('#toast'))
     pg.click('#toastBtn')
     pg.wait_for_timeout(900)
     ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before, 'and Undo brings it back')
