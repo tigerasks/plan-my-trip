@@ -24,6 +24,7 @@ const App = {
   ui: { dayId: null, sheet: null, backlogDots: true },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
   fileAt: null,          // when this device last saved a file, as an ISO stamp
+  undo: null,            // the trip the last import displaced, kept until it is used
   storageProblem: null,  // why the browser copy could not be used, in plain words
 };
 
@@ -63,6 +64,13 @@ function saveNow() { if (saveTimer) save(); }
 function saveUi() {
   Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots, fileAt: App.fileAt });
 }
+// The trip an import displaced, kept in the browser so it survives a reload.
+function readUndo() {
+  const env = Store.read(KEY.undo);
+  if (!env) return null;
+  const res = C.readBlock(JSON.stringify(env));
+  return res.ok ? res : null;
+}
 function restore() {
   const ui = Store.read(KEY.ui);
   if (ui && ui.dayId) App.ui.dayId = ui.dayId;
@@ -77,6 +85,7 @@ function restore() {
   }
   App.trip = res.trip;
   App.savedAt = null;
+  App.undo = readUndo();
 }
 const two = (n) => String(n).padStart(2, '0');
 const fmtClock = (d) => two(d.getHours()) + ':' + two(d.getMinutes());
@@ -251,6 +260,13 @@ function pendingHtml(p) {
     + '<div class="actions"><button type="button" class="btn primary" data-act="import-go">Load it</button>'
     + '<button type="button" class="btn" data-act="import-cancel">Cancel</button></div></div>';
 }
+function undoHtml() {
+  if (!App.undo) return '';
+  return '<div class="sh-sec"><span class="label">Undo</span>'
+    + '<p class="note">The last thing you loaded replaced "' + esc(App.undo.title) + '" — ' + esc(App.undo.summary)
+    + '. This puts it back, and drops what came in.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="undo-import">Undo the last import</button></div></div>';
+}
 function reportHtml(r) {
   if (!r) return '';
   return '<div class="sh-sec"><span class="label">' + (r.bad ? 'Not loaded' : 'Loaded') + '</span>'
@@ -273,7 +289,7 @@ const SHEETS = {
     const t = App.trip;
     const when = App.fileAt ? new Date(App.fileAt) : null;
     return sheetHead('Trip file', t ? t.title + ' — ' + C.summarise(t) : 'Nothing to save yet')
-      + pendingHtml(s.pending) + reportHtml(s.report)
+      + pendingHtml(s.pending) + reportHtml(s.report) + undoHtml()
       + '<div class="sh-sec"><span class="label">Save to a file</span>'
       + '<p class="note">A file is a backup, the way to move this trip to another device, and what you upload to the chat.'
       + (when ? ' Last saved on this device ' + esc(C.fmtDateUK(isoOf(when)) + ' ' + fmtClock(when)) + '.' : '')
@@ -400,7 +416,10 @@ function takeIn(text) {
 }
 function applyImport(res) {
   const s = App.ui.sheet;
-  if (App.trip) Store.write(KEY.undo, C.envelope(App.trip, 'save'));
+  if (App.trip) {
+    Store.write(KEY.undo, C.envelope(App.trip, 'save'));
+    App.undo = readUndo();
+  }
   App.trip = res.trip;
   App.ui.dayId = null;
   App.storageProblem = null;
@@ -410,7 +429,20 @@ function applyImport(res) {
   s.report = { bad: false, title: res.title + ' — ' + res.summary, lines: res.issues };
   saveUi();
   changed();
-  toast('Loaded ' + res.summary + ' from ' + res.title);
+  if (App.undo) toast('Loaded ' + res.summary + ' from ' + res.title, { label: 'Undo', fn: undoImport }, 9000);
+  else toast('Loaded ' + res.summary + ' from ' + res.title);
+}
+function undoImport() {
+  const back = App.undo;
+  if (!back) return;
+  Store.drop(KEY.undo);
+  App.undo = null;
+  App.trip = back.trip;
+  App.ui.dayId = null;
+  if (App.ui.sheet) { App.ui.sheet.report = null; App.ui.sheet.pending = null; }
+  saveUi();
+  changed();
+  toast('Back to ' + back.title + ' — ' + back.summary);
 }
 
 // ---------- actions ----------
@@ -528,6 +560,7 @@ const ACTIONS = {
     toast('Saved ' + C.fileName(App.trip, now));
   },
   'open-file': () => $('#fileIn').click(),
+  'undo-import': undoImport,
   'paste-in': () => {
     App.ui.sheet.paste = $('#inBox') ? $('#inBox').value : '';
     takeIn(App.ui.sheet.paste);
