@@ -430,6 +430,143 @@ function plansHolding(trip, placeId) {
   return PLAN_KEYS.filter((k) => d.plans[k].includes(placeId));
 }
 
+// ---------- changing the model ----------
+// Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
+const clone = (x) => JSON.parse(JSON.stringify(x));
+const touch = (trip, now) => { trip.updatedAt = now || new Date().toISOString(); return trip; };
+const nameOf = (trip, id) => (placeById(trip, id) || {}).name || id;
+function joinList(list) {
+  return list.length <= 1 ? list.join('') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+}
+const planWords = (keys) => joinList(keys.map((k) => PLAN_LABEL[k]));
+
+function freeId(trip, wanted, fallback) {
+  const base = cleanId(wanted) || slug(fallback) || 'place';
+  if (!trip.places[base]) return base;
+  let k = 2;
+  while (trip.places[base + '-' + k]) k++;
+  return base + '-' + k;
+}
+function takeOutOfPlans(trip, id, dayId) {
+  const d = trip.days[dayId];
+  if (!d) return [];
+  const left = [];
+  for (const k of PLAN_KEYS) {
+    const i = d.plans[k].indexOf(id);
+    if (i >= 0) { d.plans[k].splice(i, 1); left.push(k); }
+  }
+  return left;
+}
+const takeOutOfBacklog = (trip, id) => { const i = trip.backlog.indexOf(id); if (i >= 0) trip.backlog.splice(i, 1); };
+
+// Put a new place into the trip. `dayId` null means the backlog.
+function addPlace(trip, raw, dayId, now) {
+  const issues = [];
+  const p = normPlace(raw, issues, now || new Date().toISOString());
+  p.id = freeId(trip, p.id, p.name);
+  p.dayId = dayId && trip.days[dayId] ? dayId : null;
+  trip.places[p.id] = p;
+  if (!p.dayId) trip.backlog.push(p.id);
+  touch(trip, now);
+  return { ok: true, id: p.id, place: p, issues, text: p.name + (p.dayId ? ' added to ' + fmtDateUK(p.dayId) : ' added to the backlog') };
+}
+function moveToDay(trip, id, dayId, now) {
+  const p = placeById(trip, id);
+  if (!p || !trip.days[dayId]) return { ok: false, text: 'That place or day is no longer here' };
+  if (p.dayId === dayId) return { ok: false, text: p.name + ' is already on ' + fmtDateUK(dayId) };
+  const left = p.dayId ? takeOutOfPlans(trip, id, p.dayId) : (takeOutOfBacklog(trip, id), []);
+  p.dayId = dayId;
+  touch(trip, now);
+  return { ok: true, left, text: p.name + ' moved to ' + fmtDateUK(dayId) + (left.length ? ', and out of ' + planWords(left) : '') };
+}
+function moveToBacklog(trip, id, now) {
+  const p = placeById(trip, id);
+  if (!p) return { ok: false, text: 'That place is no longer here' };
+  if (!p.dayId) return { ok: false, text: p.name + ' is already in the backlog' };
+  const left = takeOutOfPlans(trip, id, p.dayId);
+  p.dayId = null;
+  trip.backlog.push(id);
+  touch(trip, now);
+  return { ok: true, left, text: p.name + ' moved to the backlog' + (left.length ? ', and out of ' + planWords(left) : '') };
+}
+function addToPlan(trip, id, key, index, now) {
+  const p = placeById(trip, id);
+  if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not on a day' };
+  const list = trip.days[p.dayId].plans[key];
+  if (list.includes(id)) return { ok: false, text: p.name + ' is already in ' + PLAN_LABEL[key] };
+  const at = index == null ? list.length : clamp(Math.round(index), 0, list.length);
+  list.splice(at, 0, id);
+  touch(trip, now);
+  return { ok: true, text: p.name + ' added to ' + PLAN_LABEL[key] };
+}
+// Remove takes a place out of one version only; it stays on the day and in any other version.
+function removeFromPlan(trip, id, key, now) {
+  const p = placeById(trip, id);
+  if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not in a plan' };
+  const list = trip.days[p.dayId].plans[key];
+  const i = list.indexOf(id);
+  if (i < 0) return { ok: false, text: p.name + ' is not in ' + PLAN_LABEL[key] };
+  list.splice(i, 1);
+  touch(trip, now);
+  const still = plansHolding(trip, id);
+  return { ok: true, still, text: p.name + ' left ' + PLAN_LABEL[key] + (still.length ? ', and is still in ' + planWords(still) : '') };
+}
+function reorderPlan(trip, dayId, key, from, to, now) {
+  const d = trip.days[dayId];
+  if (!d || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That version is no longer here' };
+  const list = d.plans[key];
+  if (from < 0 || from >= list.length) return { ok: false, text: 'Nothing to move' };
+  const at = clamp(Math.round(to), 0, list.length - 1);
+  list.splice(at, 0, list.splice(from, 1)[0]);
+  touch(trip, now);
+  return { ok: true, text: 'Order changed' };
+}
+// Delete drops a place from every version and from its day or the backlog.
+function deletePlace(trip, id, now) {
+  const p = placeById(trip, id);
+  if (!p) return { ok: false, text: 'That place is no longer here' };
+  if (p.dayId) takeOutOfPlans(trip, id, p.dayId); else takeOutOfBacklog(trip, id);
+  delete trip.places[id];
+  touch(trip, now);
+  return { ok: true, text: p.name + ' deleted' };
+}
+function addDay(trip, date, city, now) {
+  const iso = normDate(date);
+  if (!iso) return { ok: false, text: 'That is not a date the planner can read (it wants 2026-11-21)' };
+  if (trip.days[iso]) return { ok: false, text: fmtDateUK(iso) + ' is already a day of this trip' };
+  const d = normDay({ date: iso, city }, [], now || new Date().toISOString());
+  trip.days[iso] = d;
+  touch(trip, now);
+  return { ok: true, id: iso, day: d, text: fmtDateUK(iso) + ' added' };
+}
+// Deleting a day sends its ideas back to the backlog.
+function deleteDay(trip, dayId, now) {
+  const d = trip.days[dayId];
+  if (!d) return { ok: false, text: 'That day is no longer here' };
+  const moved = dayPlaces(trip, dayId);
+  for (const p of moved) { p.dayId = null; trip.backlog.push(p.id); }
+  delete trip.days[dayId];
+  touch(trip, now);
+  return {
+    ok: true, moved: moved.length,
+    text: fmtDateUK(dayId) + ' deleted' + (moved.length ? ', and its ' + moved.length + ' place' + (moved.length > 1 ? 's went' : ' went') + ' back to the backlog' : ''),
+  };
+}
+function setDayDate(trip, dayId, date, now) {
+  const d = trip.days[dayId];
+  if (!d) return { ok: false, text: 'That day is no longer here' };
+  const iso = normDate(date);
+  if (!iso) return { ok: false, text: 'That is not a date the planner can read (it wants 2026-11-21)' };
+  if (iso === dayId) return { ok: false, text: 'That is the date it already has' };
+  if (trip.days[iso]) return { ok: false, text: fmtDateUK(iso) + ' is already a day of this trip' };
+  delete trip.days[dayId];
+  d.id = iso; d.date = iso;
+  trip.days[iso] = d;
+  for (const p of Object.values(trip.places)) if (p.dayId === dayId) p.dayId = iso;
+  touch(trip, now);
+  return { ok: true, id: iso, text: fmtDateUK(dayId) + ' is now ' + fmtDateUK(iso) };
+}
+
 const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
@@ -441,6 +578,8 @@ const Core = {
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
+  clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
+  reorderPlan, deletePlace, addDay, deleteDay, setDayDate,
 };
 root.DayPlannerCore = Core;
 if (typeof module !== 'undefined' && module.exports) module.exports = Core;

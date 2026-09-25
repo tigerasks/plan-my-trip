@@ -79,5 +79,62 @@ ok(fresh.id === 'japan-nov-2026' && fresh.title === 'Japan · Nov 2026', 'a new 
 ok(C.normalise(fresh).issues.length === 0 && C.dayIds(fresh).length === 0, 'a new trip is empty and valid');
 ok(C.newTrip('').title === 'My trip', 'an unnamed trip still has a name');
 
+console.log('\n== Moving places around ==');
+function withDemo(fn) {
+  const t = C.normalise(clone(demoEnv.trip)).trip;
+  return { t, out: fn(t) };
+}
+let m = withDemo((t) => C.moveToBacklog(t, 'example-temple'));
+ok(m.out.ok && m.t.places['example-temple'].dayId === null, 'a day place can move to the backlog');
+ok(m.t.backlog[m.t.backlog.length - 1] === 'example-temple', 'and joins the end of the backlog');
+ok(m.out.text === 'Example Temple moved to the backlog, and out of Do less, Balanced and Packed', 'and the planner says which versions it left: ' + m.out.text);
+ok(C.normalise(m.t).issues.length === 0, 'the trip stays consistent afterwards');
+
+m = withDemo((t) => C.moveToDay(t, 'imaginary-museum', '2026-11-22'));
+ok(m.out.ok && m.t.places['imaginary-museum'].dayId === '2026-11-22', 'a backlog place can move to a day');
+ok(!m.t.backlog.includes('imaginary-museum'), 'and leaves the backlog');
+ok(C.ideasFor(m.t, '2026-11-22', 'balanced').map((p) => p.name).join() === 'Imaginary Museum', 'and arrives as an idea, not in a version');
+
+m = withDemo((t) => C.moveToDay(t, 'example-temple', '2026-11-22'));
+ok(m.t.days['2026-11-21'].plans.packed.join(' ') === 'pretend-noodle-bar made-up-market', 'moving to another day takes it out of the old day\'s versions');
+
+m = withDemo((t) => C.removeFromPlan(t, 'made-up-market', 'balanced'));
+ok(m.out.ok && m.t.days['2026-11-21'].plans.packed.includes('made-up-market'), 'Remove takes a place out of one version only');
+ok(m.out.text === 'Made-up Market left Balanced, and is still in Packed', 'and says where it still is: ' + m.out.text);
+ok(m.t.places['made-up-market'].dayId === '2026-11-21', 'and it stays on the day');
+
+m = withDemo((t) => C.addToPlan(t, 'pretend-noodle-bar', 'balanced', 1));
+ok(m.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple pretend-noodle-bar made-up-market', 'a place can be added to a version at a chosen position');
+ok(!C.addToPlan(m.t, 'pretend-noodle-bar', 'balanced').ok, 'but not twice');
+ok(!C.addToPlan(m.t, 'imaginary-museum', 'balanced').ok, 'and not from the backlog');
+
+m = withDemo((t) => C.reorderPlan(t, '2026-11-21', 'packed', 2, 0));
+ok(m.t.days['2026-11-21'].plans.packed.join(' ') === 'made-up-market example-temple pretend-noodle-bar', 'stops can be reordered inside a version');
+
+m = withDemo((t) => C.deletePlace(t, 'example-temple'));
+ok(!m.t.places['example-temple'] && C.planPlaces(m.t, '2026-11-21', 'packed').length === 2, 'Delete drops a place from every version');
+ok(C.normalise(m.t).issues.length === 0, 'and leaves nothing dangling');
+
+m = withDemo((t) => C.addPlace(t, { name: 'Made-up Market', lat: 35.01, lng: 135.77 }, '2026-11-22'));
+ok(m.out.id === 'made-up-market-2', 'a new place with a taken id gets its own: ' + m.out.id);
+ok(m.t.places['made-up-market-2'].duration === 60, 'and an hour by default');
+ok(C.addPlace(m.t, { name: 'Spare Idea', lat: 35, lng: 135 }, null).text === 'Spare Idea added to the backlog', 'a new place can go straight to the backlog');
+
+console.log('\n== Days ==');
+m = withDemo((t) => C.addDay(t, '2026-11-23', 'Nara'));
+ok(m.out.ok && m.t.days['2026-11-23'].city === 'Nara', 'a day can be added');
+ok(!C.addDay(m.t, '2026-11-23', 'Nara').ok && !C.addDay(m.t, 'next Tuesday', '').ok, 'but not twice, and not from prose');
+ok(C.addDay(m.t, 'next Tuesday', '').text.indexOf('2026-11-21') > 0, 'and it shows the shape it wants: ' + C.addDay(m.t, 'next Tuesday', '').text);
+
+m = withDemo((t) => C.deleteDay(t, '2026-11-21'));
+ok(m.out.ok && C.dayIds(m.t).join() === '2026-11-22', 'a day can be deleted');
+ok(C.backlogPlaces(m.t).length === 5 && m.out.text.indexOf('back to the backlog') > 0, 'and its ideas go back to the backlog: ' + m.out.text);
+
+m = withDemo((t) => C.setDayDate(t, '2026-11-21', '2026-11-25'));
+ok(m.out.ok && !m.t.days['2026-11-21'] && !!m.t.days['2026-11-25'], 'a day can be given another date');
+ok(m.t.places['example-temple'].dayId === '2026-11-25', 'and its places follow it');
+ok(C.normalise(m.t).issues.length === 0, 'with nothing left pointing at the old date');
+ok(!C.setDayDate(m.t, '2026-11-25', '2026-11-22').ok, 'but not onto a date the trip already has');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
