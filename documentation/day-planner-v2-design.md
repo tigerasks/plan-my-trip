@@ -20,6 +20,8 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Updated Fri 25 Sep 2026, service test 3:** Transitous does have Kyoto's rail timetables — the first two runs were bus journeys. The stop-based fallback is for the bus gap, not for the city as a whole. Node ids confirmed. Photon and Overpass can both take about two seconds. Raw output now kept in `service-tests.md`.
+
 **Updated Fri 25 Sep 2026, Transitous:** building the planner sends Transitous too little traffic to be worth telling them about. The heads-up is the owner's to send, once other people are actually using the planner; while it isn't being advertised it may never be needed.
 
 **Updated Fri 25 Sep 2026, milestone 1:** the exchange format is settled and written down below: fixed marker lines, one envelope, and the same envelope again as a `.json` file. Opening hours are kept as a weekly table with the original OpenStreetMap text beside them, so a place can carry its hours before it has a day. A place belongs to exactly one day through its own `dayId`; the three versions hold order only.
@@ -54,18 +56,30 @@ The price is the live link: data moves between planner and chat as a pasted text
 - **Tapping:** in Liberty, places come back with names in several languages, a type (restaurant, post office, Buddhist temple) and a numeric id. Positron returns only neighbourhood names.
 - **Search:** found "Nintendo Museum" in Uji, 13 km away, in 0.4 s, with its OpenStreetMap reference.
 - **Walking and taxi:** OSRM answered in about 20 ms. A 1.5 km straight line came out at 31 min walking and 4 min by car over 2.3 km, which shows why taxis need a pickup allowance.
-- **Public transport:** Transitous answered (API v6, 70 ms) but found no journey, although a bus stop sits right next to the destination. That points to missing Kyoto timetables rather than a stop-finding problem, since the router walks to nearby stops by itself.
+- **Public transport:** Transitous answered (API v6, 70 ms) but found no journey, although a bus stop sits right next to the destination. At the time this looked like missing Kyoto timetables; the third run showed it is narrower than that — see below.
 
 **Second run, same day:**
 - **Place details:** the map's ids decode to OpenStreetMap ids. Sukiya's became way 1135461266 and was found directly in 175 ms, so details lookups are exact and every place gets a source link.
 - **What OpenStreetMap knows:** little for small places. Sukiya had cuisine and takeaway but no hours. Well-known sights tend to carry more, so Google Maps stays the main check for restaurants.
 - **Google Maps** opened in a separate window, as intended.
 - **Walking** now follows real streets on the map.
-- **Public transport:** Transitous again found nothing, this time from Daisen-in, although the Imamiya-jinja-mae bus stop is a few minutes' walk away. The router walks to nearby stops by itself when it has their timetables, so this is further evidence that it has no Kyoto bus timetables.
+- **Public transport:** Transitous again found nothing, this time from Daisen-in, although the Imamiya-jinja-mae bus stop is a few minutes' walk away. The router walks to nearby stops by itself when it has their timetables, so this pointed at missing bus timetables — which the third run bears out, while showing that the rail ones are there.
+
+**Third run, Fri 25 Sep 2026 15:27 UTC** (raw output in `service-tests.md`), around Kyoto Station and Tō-ji:
+- **Public transport works in Kyoto after all.** Tō-ji to Kyoto Station returned five journeys, all using transit, the best 25 min with no changes on a regional rail leg. So Transitous has Kyoto's rail timetables. The reading that fits all three runs is rail yes, city buses no: the two runs that found nothing were bus journeys, from Daisen-in and to a destination served only by a bus stop.
+- **But the line has no name.** The leg came back as `REGIONAL_RAIL 18999264` — the mode plus a numeric id where `displayName` or `routeShortName` should be. A leg card cannot show that, so naming a line needs another field, or OpenStreetMap, or the planner just says "train".
+- **Node ids confirmed.** Feature `52797288601` decoded to `node/5279728860` and Overpass found it with a matching name. With the way case from the second run, the ×10 + element type rule holds both ways that matter. The six taps were five nodes and one way (`3598968102` → way 359896810, Tō-ji); no relation came up, which is what you would expect of places.
+- **Names need a fallback chain.** Tō-ji came back with no plain `name` at all: only `name:en`, `name_int`, `name:nonlatin` and a dozen translations. Pizza Little Party had `name` in Japanese plus `name:en`, `name_en`, `name:latin` and `name:nonlatin`. And "East Temple" for 東寺 is why the local name is always kept.
+- **Types map cleanly:** `fast_food`, `cafe`, `restaurant`, `viewpoint` under `attraction`, `place_of_worship`.
+- **Still no opening hours.** Pizza Little Party had seven tags — cuisine, phone, takeaway — and no hours. Two small restaurants, two misses: the hours editor will mostly be typing.
+- **Both lookups can be slow.** Photon took 1.5–1.8 s against 0.4 s in the first run, Overpass 1.9 s against 175 ms. Search has to stay responsive through a two-second reply, and the preview has to draw before Overpass lands.
+- **Searching "Kyoto" returns the station**, `railway=station`, not the city. Setting a day's city needs more than the first hit.
+- **Walking and taxi:** 27 min against 5 min over about 2 km, in 15 ms. The pickup allowance stands.
 
 **Still to verify during the build:**
 - whether OpenStreetMap's bus and rail lines are mapped well enough in a trip's region to name the line between two stops;
-- whether Transitous knows any stops in a trip's region, to tell "no timetables here" from "no connection";
+- whether Transitous knows any *bus* stops in a trip's region, to tell "no timetables here" from "no connection". Kyoto's rail is covered (third run); its buses are the open question;
+- which field, if any, carries a line's name in a Transitous leg, since `displayName` gave a numeric id;
 - how big a trip region's feeds are once reduced to stops, lines and frequencies, and what their
   licences allow being republished, if the offline fallback is ever needed;
 - the local-file fallback, optional now that GitHub Pages works;
@@ -79,7 +93,7 @@ Every leg starts with the planner's own estimate, computed instantly from the tw
 
 Legs that are part of a plan then get checked against real routes: OSRM for walking and taxi, Transitous for public transport. Results are cached in the trip data, so each leg is asked once, and requests are spaced at least a second apart. A checked leg shows the real time and its source; its card also shows the estimate and flags a big gap between the two.
 
-Public transport has two catches. Timetables are usually only published a few months ahead, so for a trip further out the planner asks about the same weekday and time in the current timetable, and says so. And where Transitous finds no journey, the planner first asks whether it knows any stops nearby at all, so it can say which case it is: no timetable data for the region (as in both Kyoto tests), or no connection at that time.
+Public transport has two catches. Timetables are usually only published a few months ahead, so for a trip further out the planner asks about the same weekday and time in the current timetable, and says so. And where Transitous finds no journey, the planner first asks whether it knows any stops nearby at all, so it can say which case it is: no timetable data for that kind of service in the region (Kyoto has rail but seemingly not buses), or no connection at that time.
 
 Without timetables, it falls back to a stop-based estimate. This is the manual method automated:
 - it considers every station and stop within 10 minutes' walk of each end, from the map data, not just the nearest one. Where an end has none, it widens the search to 20 minutes' walk. If there are still none, it gives up on public transport for that leg and says so;
@@ -322,7 +336,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 10 | Licence for the planner's public code? | AGPL-3.0. |
 | 11 | Draw real walking paths on the map? | Yes. |
 | 12 | How to check places before adding them? | A preview with OpenStreetMap details and an hours editor; Google Maps opens beside the planner. |
-| 13 | Public transport without timetables? | A stop-based estimate. It uses all stops within 10 minutes' walk of each end, widening to 20 minutes where an end has none, with no public transport estimate if there are still none. The line is named where OpenStreetMap has it, and it's suggested only when it clearly beats walking. |
+| 13 | Public transport without timetables? | A stop-based estimate. It uses all stops within 10 minutes' walk of each end, widening to 20 minutes where an end has none, with no public transport estimate if there are still none. The line is named where OpenStreetMap has it, and it's suggested only when it clearly beats walking. Since the third service test, this is understood to cover the gaps in a region's coverage — Kyoto's buses — rather than whole regions. |
 | 14 | When does Transitous need telling about the planner? | Once other people use it. Development traffic is too small to require it, and while the planner isn't being advertised it may not be needed at all. The owner sends the message, not the planner and not the chat. |
 | 15 | What if the hosted router stops being an option? | Fall back on the dataset. Transitous publishes the timetable data it collects, and says outright that there is no need to scrape the API for it. See "If the hosted router is ever not an option". |
 
