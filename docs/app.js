@@ -404,9 +404,14 @@ function download(name, text) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// Everything that comes in — file or pasted text — goes through here.
+// Everything that comes in — file or pasted text — goes through here. Reading a file takes a
+// moment, so the sheet may have been closed by the time it arrives; it comes back for the answer.
+function dataSheet() {
+  if (!App.ui.sheet || App.ui.sheet.kind !== 'data') openSheet('data');
+  return App.ui.sheet;
+}
 function takeIn(text) {
-  const s = App.ui.sheet;
+  const s = dataSheet();
   const res = C.readBlock(text);
   const note = C.importNote(res, App.trip);
   s.pending = null;
@@ -415,7 +420,7 @@ function takeIn(text) {
   applyImport(res);
 }
 function applyImport(res) {
-  const s = App.ui.sheet;
+  const s = dataSheet();
   if (App.trip) {
     Store.write(KEY.undo, C.envelope(App.trip, 'save'));
     App.undo = readUndo();
@@ -614,9 +619,9 @@ function boot() {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (!App.ui.sheet || App.ui.sheet.kind !== 'data') openSheet('data');
+    dataSheet();
     file.text().then(takeIn, () => {
-      App.ui.sheet.report = { bad: true, title: 'That file could not be read.', lines: [] };
+      dataSheet().report = { bad: true, title: 'That file could not be read.', lines: [] };
       render();
     });
   });

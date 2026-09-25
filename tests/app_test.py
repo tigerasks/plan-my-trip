@@ -373,6 +373,20 @@ with sync_playwright() as pw:
     ck(pg.evaluate("localStorage.getItem('plan-my-trip/undo')") is None, 'and the way back is spent, not left lying about')
     ctx.close()
 
+    # ---- a file that lands after the sheet was closed
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    # make reading the file slow, so Escape lands while it is still in flight
+    pg.evaluate("() => { const orig = Blob.prototype.text;"
+                " Blob.prototype.text = function () { return new Promise((r) => setTimeout(() => orig.call(this).then(r), 400)); }; }")
+    pg.set_input_files('#fileIn', files=[{'name': 'notes.txt', 'mimeType': 'text/plain', 'buffer': b'just my notes'}])
+    pg.keyboard.press('Escape')
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'the sheet is shut while the file is still being read')
+    pg.wait_for_timeout(700)
+    ck('BEGIN day-planner/2' in pg.inner_text('#sheet .note.bad'), 'and the file still gets an answer when it lands')
+    ctx.close()
+
     # ---- a stored copy that cannot be used
     ctx, pg = open_page(held={'schema': 'day-planner/9', 'kind': 'save', 'trip': {}})
     ck('No trip yet' in pg.inner_text('#panel'), 'an unusable stored copy does not break the page')
