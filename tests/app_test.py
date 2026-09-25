@@ -22,7 +22,8 @@ with sync_playwright() as pw:
     def open_page(w=1280, h=800, scheme='light', held=None, extra=None):
         phone = w < 500
         ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
-                             is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
+                             is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1,
+                             permissions=['clipboard-read', 'clipboard-write'])
         ctx.route('**/*', harness.offline(BASE, extra))
         pg = ctx.new_page()
         ck.watch(pg)
@@ -310,6 +311,22 @@ with sync_playwright() as pw:
     ck('BEGIN day-planner/2' in pg.inner_text('#sheet .note.bad'),
        'a file that is not a trip is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
     ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'and the trip is untouched')
+    ctx.close()
+
+    # ---- copying the trip as text
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="copy-text"]')
+    pg.wait_for_timeout(300)
+    block = pg.input_value('#outBox')
+    ck(block.startswith('--- BEGIN day-planner/2 ---') and block.rstrip().endswith('--- END day-planner/2 ---'),
+       'the block is wrapped in the two fixed lines')
+    ck(len(block.strip().split(chr(10))) == 3, 'with the trip on one line between them')
+    ck(json.loads(block.strip().split(chr(10))[1])['trip']['id'] == 'example-kyoto', 'and it holds the trip')
+    ck('Copied' in pg.inner_text('#toast'), 'the clipboard gets it too: ' + pg.inner_text('#toast'))
+    ck(pg.evaluate('navigator.clipboard.readText()') == block, 'the same text, byte for byte')
+    pg.screenshot(path=str(SHOTS / 'app_text_desktop_light.png'))
     ctx.close()
 
     # ---- a stored copy that cannot be used

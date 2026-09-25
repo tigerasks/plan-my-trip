@@ -282,7 +282,12 @@ const SHEETS = {
       + ic('down') + 'Save to file</button></div></div>'
       + '<div class="sh-sec"><span class="label">Open a file</span>'
       + '<p class="note">A trip you saved before, or one the chat gave you as a file. It replaces what is in this browser, and you can undo it straight afterwards.</p>'
-      + '<div class="actions"><button type="button" class="btn" data-act="open-file">' + ic('up') + 'Open a file</button></div></div>';
+      + '<div class="actions"><button type="button" class="btn" data-act="open-file">' + ic('up') + 'Open a file</button></div></div>'
+      + '<div class="sh-sec"><span class="label">As text</span>'
+      + '<p class="note">The same trip, as a block to paste into the chat. It starts and ends with a fixed line, so the chat can find it whatever you paste it into.</p>'
+      + '<div class="actions"><button type="button" class="btn" data-act="copy-text"' + (t ? '' : ' disabled') + '>Copy as text</button></div>'
+      + (s.text ? '<textarea class="in copybox" id="outBox" readonly aria-label="The trip as text">' + esc(s.text) + '</textarea>' : '')
+      + '</div>';
   },
   day: (s) => {
     const day = currentDay();
@@ -517,6 +522,19 @@ const ACTIONS = {
     toast('Saved ' + C.fileName(App.trip, now));
   },
   'open-file': () => $('#fileIn').click(),
+  'copy-text': () => {
+    if (!App.trip) return;
+    saveNow();
+    const block = C.writeBlock(App.trip, 'save');
+    App.ui.sheet.text = block;
+    render();
+    const box = $('#outBox');
+    if (box) { box.focus(); box.select(); }
+    const byHand = () => toast('Select the text below and copy it yourself.');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(block).then(() => toast('Copied — ' + C.sizeText(block)), byHand);
+    } else byHand();
+  },
   'import-go': () => { if (App.ui.sheet.pending) applyImport(App.ui.sheet.pending.res); },
   'import-cancel': () => { App.ui.sheet.pending = null; render(); },
   version: (el) => {
