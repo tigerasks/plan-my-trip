@@ -254,11 +254,21 @@ with sync_playwright() as pw:
     sheet = pg.inner_text('#sheet')
     ck('Sat 21 Nov, in Do less, Balanced and Packed' in sheet, 'saying where it sits: '
        + [l for l in sheet.split(chr(10)) if 'Sat 21 Nov' in l][0])
-    ck('1h 30' in sheet, 'how long it takes')
+    ck('How long it takes' in pg.locator('#sheet .label').all_text_contents(), 'with a section for how long it takes')
     ck('Mon–Fri 06:00–18:00 · Sat–Sun 06:00–21:00' in sheet, 'and when it is open: '
        + [l for l in sheet.split(chr(10)) if '06:00' in l][0])
     ck('unverified' in sheet, 'flagged unverified, since OpenStreetMap supplied them')
     ck('Made-up hours — check' in sheet, 'with whatever is still to be checked')
+    ck(pg.locator('#durH').get_attribute('data-value') == '1' and pg.locator('#durM').get_attribute('data-value') == '30',
+       'the duration wheels open on what it takes now')
+    ck(pg.locator('#durH .wheel-item').count() == 13 and pg.locator('#durM .wheel-item').count() == 4,
+       '0 to 12 hours, and quarter hours')
+    pg.click('#durH .wheel-item[data-v="2"]')
+    pg.click('#durM .wheel-item[data-v="45"]')
+    pg.click('[data-act="save-duration"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 165, 'and set it when you save')
+    ck('2h 45' in pg.inner_text('#panel'), 'which shows in the list straight away')
     pg.screenshot(path=str(SHOTS / 'app_place_desktop_light.png'))
     pg.keyboard.press('Escape')
 

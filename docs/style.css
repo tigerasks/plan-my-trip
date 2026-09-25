@@ -216,6 +216,19 @@ textarea.in { min-height: 90px; resize: vertical; }
 .lookup-row .in:first-child { flex: 0 0 110px; }
 code { font: 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--stone-bg); padding: 1px 4px; border-radius: 5px; }
 .pair > * { flex: 1 1 0; min-width: 0; }
+.wheels { display: flex; gap: 8px; margin: 8px 0 4px; }
+.wheel {
+  flex: 1 1 0; min-width: 0; height: 132px; overflow-y: auto; overscroll-behavior: contain;
+  scroll-snap-type: y mandatory; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); text-align: center; scrollbar-width: none;
+}
+.wheel::-webkit-scrollbar { display: none; }
+.wheel-pad { height: 44px; }
+.wheel-item {
+  display: block; width: 100%; height: 44px; line-height: 44px; scroll-snap-align: center;
+  font-size: 15px; color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.wheel-item[aria-selected="true"] { color: var(--ink); font-weight: 700; background: var(--hover); }
 .tick { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; font-size: 13px; }
 .tick input { width: 16px; height: 16px; accent-color: var(--ink); }
 

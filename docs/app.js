@@ -293,6 +293,74 @@ function creditsHtml() {
     + '</p>';
 }
 
+// ---------- wheels ----------
+// One control for every number in the planner: a column you scroll or tap. Chosen over typed
+// fields because it is the same gesture on a laptop trackpad and under a thumb.
+const WHEEL_ITEM = 44;
+function wheelHtml(id, values, current, label) {
+  const at = values.findIndex((v) => String(v.value) === String(current));
+  return '<div class="wheel" id="' + id + '" role="listbox" tabindex="0" aria-label="' + esc(label) + '"'
+    + ' data-value="' + esc(values[at < 0 ? 0 : at].value) + '">'
+    + '<div class="wheel-pad"></div>'
+    + values.map((v) => '<button type="button" class="wheel-item" role="option" data-v="' + esc(v.value) + '"'
+      + ' aria-selected="' + (String(v.value) === String(current)) + '">' + esc(v.label) + '</button>').join('')
+    + '<div class="wheel-pad"></div></div>';
+}
+const wheelValue = (id) => { const el = $('#' + id); return el ? el.dataset.value : ''; };
+function wheelSet(el, index, scroll) {
+  const items = el.querySelectorAll('.wheel-item');
+  if (!items.length) return;
+  const i = Math.max(0, Math.min(items.length - 1, index));
+  el.dataset.value = items[i].dataset.v;
+  items.forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
+  if (scroll) el.scrollTop = i * WHEEL_ITEM;
+}
+// After every render the wheels have to be scrolled back to what they hold.
+function placeWheels() {
+  for (const el of document.querySelectorAll('.wheel')) {
+    const items = [...el.querySelectorAll('.wheel-item')];
+    const i = items.findIndex((b) => b.dataset.v === el.dataset.value);
+    el.scrollTop = Math.max(0, i) * WHEEL_ITEM;
+  }
+}
+const wheelTimers = new WeakMap();
+function onWheelScroll(el) {
+  clearTimeout(wheelTimers.get(el));
+  wheelTimers.set(el, setTimeout(() => wheelSet(el, Math.round(el.scrollTop / WHEEL_ITEM), false), 120));
+}
+function onWheelKey(e, el) {
+  const items = [...el.querySelectorAll('.wheel-item')];
+  const at = items.findIndex((b) => b.dataset.v === el.dataset.value);
+  const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+  if (!step) return;
+  e.preventDefault();
+  wheelSet(el, at + step, true);
+}
+const hourValues = (max) => Array.from({ length: max + 1 }, (_, h) => ({ value: h, label: String(h) + 'h' }));
+const clockValues = () => Array.from({ length: 24 }, (_, h) => ({ value: h, label: two(h) }));
+// Quarter hours, plus whatever odd minute a place arrived with, so nothing is silently rounded.
+function minuteValues(extra) {
+  const mins = [0, 15, 30, 45];
+  const odd = C.toNum(extra);
+  if (odd != null && !mins.includes(odd)) mins.push(odd);
+  return mins.sort((a, b) => a - b).map((m) => ({ value: m, label: two(m) }));
+}
+// Two wheels, a duration in minutes.
+function durationWheels(id, minutes) {
+  return '<div class="wheels">' + wheelHtml(id + 'H', hourValues(12), Math.floor(minutes / 60), 'Hours')
+    + wheelHtml(id + 'M', minuteValues(minutes % 60), minutes % 60, 'Minutes') + '</div>';
+}
+const durationOf = (id) => C.clamp((+wheelValue(id + 'H') || 0) * 60 + (+wheelValue(id + 'M') || 0), 0, C.MAX_DURATION);
+// Two wheels, a time of day.
+function timeWheels(id, hhmm) {
+  const mins = C.parseTime(hhmm);
+  const h = mins == null ? 9 : Math.floor(mins / 60) % 24;
+  const m = mins == null ? 0 : mins % 60;
+  return '<div class="wheels">' + wheelHtml(id + 'H', clockValues(), h, 'Hour')
+    + wheelHtml(id + 'M', minuteValues(m), m, 'Minutes') + '</div>';
+}
+const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
+
 // ---------- sheets ----------
 // One panel at a time, sliding in from the right on a laptop and up from the bottom on a phone.
 function openSheet(kind, data) {
@@ -313,6 +381,7 @@ function renderSheet() {
   el.innerHTML = build ? build(s) : '';
   el.classList.toggle('open', !!build);
   el.setAttribute('aria-hidden', build ? 'false' : 'true');
+  placeWheels();
 }
 function pendingHtml(p) {
   if (!p) return '';
@@ -392,7 +461,9 @@ const SHEETS = {
       + esc(p.dayId
         ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
         : 'In the backlog, with no day yet') + '</p></div>'
-      + '<div class="sh-sec"><span class="label">How long</span><p class="note">' + esc(C.fmtDur(p.duration)) + '</p></div>'
+      + '<div class="sh-sec"><span class="label">How long it takes</span>'
+      + durationWheels('dur', p.duration)
+      + '<div class="actions"><button type="button" class="btn" data-act="save-duration">Save</button></div></div>'
       + '<div class="sh-sec"><span class="label">Opening hours</span>'
       + (p.hours
         ? '<p class="note' + (p.hours.verified ? ' good' : ' amber') + '">' + esc(line || p.hours.raw || 'Nothing readable')
@@ -816,6 +887,12 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => openPlace(el.dataset.id),
+  'save-duration': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    if (!p) return;
+    p.duration = durationOf('dur');
+    changed(p.name + ' takes ' + C.fmtDur(p.duration));
+  },
   'pin-mode': () => setPinning(!App.ui.pinning),
   gmaps: () => {
     const s = App.ui.sheet;
@@ -905,6 +982,19 @@ function boot() {
   }
   document.addEventListener('click', onClick);
   document.addEventListener('input', (e) => { if (e.target.id === 'findBox') onFindInput(e); });
+  document.addEventListener('click', (e) => {
+    const item = e.target.closest('.wheel-item');
+    if (!item) return;
+    const wheel = item.closest('.wheel');
+    wheelSet(wheel, [...wheel.querySelectorAll('.wheel-item')].indexOf(item), true);
+  });
+  document.addEventListener('scroll', (e) => {
+    if (e.target.classList && e.target.classList.contains('wheel')) onWheelScroll(e.target);
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    const wheel = e.target.closest && e.target.closest('.wheel');
+    if (wheel) onWheelKey(e, wheel);
+  });
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
   $('#fileIn').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
