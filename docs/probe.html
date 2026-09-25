@@ -45,7 +45,7 @@
     <section class="step"><h2>1 · This page</h2><div class="res" id="r-env"></div></section>
 
     <section class="step"><h2>2 · Map</h2>
-      <div class="row"><button type="button" data-style="positron" aria-pressed="true">Positron</button><button type="button" data-style="liberty" aria-pressed="false">Liberty</button></div>
+      <div class="row"><button type="button" data-style="liberty" aria-pressed="true">Liberty</button><button type="button" data-style="positron" aria-pressed="false">Positron</button></div>
       <div class="res" id="r-map">Loading…</div></section>
 
     <section class="step"><h2>3 · Test area</h2>
@@ -53,26 +53,31 @@
       <p class="hint">Use a city you're planning a trip to.</p><div class="res" id="r-area"></div></section>
 
     <section class="step"><h2>4 · Tap a place</h2>
-      <p class="hint">Tap a labelled place on the map (a temple, shop or station), right on its label or icon. Try a few, in both map styles.</p>
+      <p class="hint">Tap a labelled place on the map (a restaurant, temple or shop), right on its icon or label. Liberty shows places; Positron doesn't.</p>
       <div class="res" id="r-tap"></div></section>
 
-    <section class="step"><h2>5 · Search nearby</h2>
+    <section class="step"><h2>5 · Place details</h2>
+      <p class="hint">After tapping a place: see what OpenStreetMap knows about it, and try opening Google Maps beside this window. Try a few places, including a small restaurant.</p>
+      <div class="row" style="margin-top:8px"><button type="button" id="details" class="primary" disabled>Get details</button><button type="button" id="gmaps" disabled>Check on Google Maps</button></div>
+      <div class="res" id="r-details"></div><div class="res" id="r-gmaps"></div></section>
+
+    <section class="step"><h2>6 · Search nearby</h2>
       <div class="row"><input id="q" value="station" aria-label="Search"><button type="button" id="search" class="primary">Search</button></div>
       <p class="hint">Results should favour places near the map's centre.</p><div class="res" id="r-search"></div></section>
 
-    <section class="step"><h2>6 · Routes</h2>
+    <section class="step"><h2>7 · Routes</h2>
       <p class="hint">Walking, taxi and public transport from the last place you tapped (or the map centre) to a point about 1.5 km away. Public transport is asked for tomorrow at about 10:00 local time.</p>
       <div class="row" style="margin-top:8px"><button type="button" id="route" class="primary">Run route tests</button></div>
       <div class="res" id="r-route"></div></section>
 
-    <section class="step"><h2>7 · Results</h2>
+    <section class="step"><h2>8 · Results</h2>
       <p class="hint">Copy everything below and paste it into the chat.</p>
       <div class="row" style="margin-top:8px"><button type="button" id="copy" class="primary">Copy results</button></div>
       <textarea id="out" readonly aria-label="Results"></textarea></section>
 
     <p class="credits">
       Map: <a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://www.openmaptiles.org/">© OpenMapTiles</a> · Data <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a><br>
-      Search: <a href="https://photon.komoot.io/">Photon by komoot</a> · Routes: <a href="https://routing.openstreetmap.de/about.html">OSRM on FOSSGIS servers</a> · <a href="https://www.openstreetmap.org/fixthemap">Fix the map</a><br>
+      Search: <a href="https://photon.komoot.io/">Photon by komoot</a> · Details: <a href="https://wiki.openstreetmap.org/wiki/Overpass_API">Overpass API</a> · Routes: <a href="https://routing.openstreetmap.de/about.html">OSRM on FOSSGIS servers</a> · <a href="https://www.openstreetmap.org/fixthemap">Fix the map</a><br>
       Public transport: <a href="https://transitous.org/">Transitous</a> · <a href="https://transitous.org/sources/">data sources</a><br>
       Personal, non-commercial test page · code licensed AGPL-3.0 · <span id="contact"></span>
     </p>
@@ -83,7 +88,7 @@
 (() => {
   'use strict';
   const STYLES = { positron: 'https://tiles.openfreemap.org/styles/positron', liberty: 'https://tiles.openfreemap.org/styles/liberty' };
-  const R = { probe: 'day-planner service test 1', ranAt: new Date().toISOString(), page: {}, map: { styles: {} }, area: null, taps: [], search: null, routes: null };
+  const R = { probe: 'day-planner service test 2', ranAt: new Date().toISOString(), page: {}, map: { styles: {} }, area: null, taps: [], details: null, gmaps: null, search: null, routes: null };
   const $ = (id) => document.getElementById(id);
   const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -129,13 +134,13 @@
   }
 
   // ---------- 2 · map ----------
-  let map = null, styleName = 'positron', styleT0 = 0, routeGeo = null, markers = [], tapped = null;
+  let map = null, styleName = 'liberty', styleT0 = 0, routeGeo = null, markers = [], tapped = null, tappedPlace = null;
   const st = () => (R.map.styles[styleName] = R.map.styles[styleName] || {});
   function initMap() {
     if (!window.maplibregl) { R.map.library = 'not loaded'; show('r-map', no('The map library didn\'t load (cdn.jsdelivr.net).')); return; }
     R.map.library = window.maplibregl.version || 'loaded';
     try {
-      map = new window.maplibregl.Map({ container: 'map', style: STYLES.positron, center: [135.7681, 35.0116], zoom: 13 });
+      map = new window.maplibregl.Map({ container: 'map', style: STYLES.liberty, center: [135.7681, 35.0116], zoom: 13 });
     } catch (e) { R.map.error = errText(e); show('r-map', no('The map failed to start: ' + esc(R.map.error))); return; }
     try { map.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), 'top-right'); } catch (e) { /* optional */ }
     styleT0 = performance.now();
@@ -219,17 +224,95 @@
     R.taps.push(rec);
     if (R.taps.length > 6) R.taps.shift();
     tapped = { lat: e.lngLat.lat, lng: e.lngLat.lng, name: best ? nameOf(best.properties) : null };
+    tappedPlace = best ? { name: nameOf(best.properties), local: best.properties.name || null, en: best.properties['name:en'] || best.properties.name_en || null, id: rec.featureId, lat: e.lngLat.lat, lng: e.lngLat.lng } : null;
+    $('details').disabled = !tappedPlace; $('gmaps').disabled = !tappedPlace;
+    show('r-details', ''); show('r-gmaps', '');
     if (best) {
       const p = rec.properties;
       show('r-tap', ok('<b>' + esc(tapped.name) + '</b> · ' + esc(rec.sourceLayer || rec.layer) + (p.class ? ' · ' + esc(p.class) + (p.subclass ? '/' + esc(p.subclass) : '') : '') + (rec.featureId ? ' · id ' + esc(rec.featureId) : ' · no id')) +
-        '<br><span class="hint">Tapped in ' + esc(styleName) + '. Try a few places, and the other style.</span>');
+        '<br><span class="hint">Tapped in ' + esc(styleName) + '. Now try step 5.</span>');
     } else {
       show('r-tap', no('Nothing with a name here (' + feats.length + ' map features). Tap right on a label or icon.'));
     }
     update();
   }
 
-  // ---------- 3 & 5 · search ----------
+  // ---------- 5 · details (OpenStreetMap via Overpass) and Google Maps ----------
+  function decodeOsm(fid) {
+    if (!fid || !/^\d+$/.test(fid)) return null;
+    const n = Number(fid), t = n % 10, id = Math.floor(n / 10);
+    const type = t === 1 ? 'node' : t === 2 ? 'way' : t === 3 ? 'relation' : null;
+    return type && id > 0 ? { type, id: String(id) } : null;
+  }
+  async function overpass(q) {
+    const { res, ms } = await politeFetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return { data: await res.json(), ms };
+  }
+  function sameName(tags, p) {
+    if (!tags || !p) return false;
+    const mine = [p.local, p.en, p.name].filter(Boolean);
+    return [tags.name, tags['name:en'], tags['name:ja'], tags['name:latin']].filter(Boolean).some((n) => mine.includes(n));
+  }
+  const DETAIL_KEYS = ['opening_hours', 'check_date:opening_hours', 'cuisine', 'website', 'contact:website', 'phone', 'contact:phone', 'reservation', 'diet:vegetarian', 'diet:vegan', 'takeaway', 'wheelchair', 'fee', 'description', 'wikipedia', 'wikidata'];
+  async function getDetails() {
+    const p = tappedPlace;
+    if (!p) return;
+    const btn = $('details');
+    btn.disabled = true;
+    const d = decodeOsm(p.id);
+    R.details = { name: p.name, featureId: p.id, decodedAs: d ? d.type + '/' + d.id : null };
+    show('r-details', 'Asking OpenStreetMap…');
+    let el = null;
+    try {
+      if (d) {
+        const r = await overpass('[out:json][timeout:15];' + d.type + '(' + d.id + ');out tags center;');
+        const e0 = (r.data.elements || [])[0];
+        R.details.byId = { ms: r.ms, found: !!e0, nameMatches: sameName(e0 && e0.tags, p) };
+        if (e0 && R.details.byId.nameMatches) { el = e0; R.details.method = 'id'; }
+      }
+      if (!el) {
+        const r = await overpass('[out:json][timeout:15];nwr(around:60,' + p.lat.toFixed(6) + ',' + p.lng.toFixed(6) + ')["name"];out tags center 30;');
+        const list = r.data.elements || [];
+        el = list.find((x) => sameName(x.tags, p)) || null;
+        R.details.nearby = { ms: r.ms, named: list.length, found: !!el };
+        if (el) R.details.method = 'name nearby';
+      }
+    } catch (e) {
+      R.details.error = errText(e);
+      show('r-details', no('Overpass failed: ' + esc(R.details.error)));
+      btn.disabled = false;
+      update();
+      return;
+    }
+    btn.disabled = false;
+    if (!el) { R.details.found = false; show('r-details', no('No matching OpenStreetMap entry found for ' + esc(p.name) + '.')); update(); return; }
+    const t = el.tags || {}, useful = {};
+    DETAIL_KEYS.forEach((k) => { if (t[k]) useful[k] = String(t[k]).slice(0, 140); });
+    Object.assign(R.details, { found: true, osm: el.type + '/' + el.id, tagCount: Object.keys(t).length, useful });
+    const keys = Object.keys(useful);
+    show('r-details', ok('Found <a href="https://www.openstreetmap.org/' + esc(el.type) + '/' + esc(el.id) + '" target="_blank" rel="noopener">' + esc(el.type + '/' + el.id) + '</a>, matched by ' + esc(R.details.method) + ' (' + keys.length + ' useful of ' + Object.keys(t).length + ' tags)') +
+      (keys.length ? '<ul>' + keys.map((k) => '<li>' + esc(k) + ': ' + esc(useful[k]) + '</li>').join('') + '</ul>' : '<br><span class="hint">No hours, cuisine or website mapped for this one.</span>'));
+    update();
+  }
+  function gmapsBeside() {
+    const p = tappedPlace;
+    if (!p) return;
+    const area = (R.area && R.area.found && R.area.name) || $('area').value.trim();
+    const query = (p.local || p.name) + (area ? ' ' + area : '');
+    const url = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query);
+    const sw = screen.availWidth || 1280, sh = screen.availHeight || 800;
+    const w = Math.min(560, Math.round(sw * 0.42)), h = Math.round(sh * 0.92);
+    const left = (screen.availLeft || 0) + sw - w, top = (screen.availTop || 0) + Math.round((sh - h) / 2);
+    let win = null;
+    try { win = window.open(url, 'dp-gmaps', 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top); } catch (e) { win = null; }
+    if (win) { try { win.opener = null; } catch (e) { /* cross-origin */ } }
+    R.gmaps = { opened: !!win, query, size: [w, h] };
+    show('r-gmaps', win ? ok('Google Maps opened. Did it appear as a separate window beside this one, or as a tab? Mention it when you paste the results.') : no('The browser blocked the window.'));
+    update();
+  }
+
+  // ---------- 3 & 6 · search ----------
   async function goArea() {
     const q = $('area').value.trim();
     if (!q) return;
@@ -242,7 +325,8 @@
       if (!f) { R.area = { ok: true, found: false, query: q, ms }; show('r-area', no('No match for “' + esc(q) + '”.')); update(); return; }
       const c = f.geometry.coordinates, p = f.properties || {};
       R.area = { ok: true, found: true, query: q, ms, name: p.name, country: p.country || null, type: (p.osm_key || '') + '=' + (p.osm_value || ''), lat: r5(c[1]), lng: r5(c[0]), fields: Object.keys(p) };
-      tapped = null;
+      tapped = null; tappedPlace = null;
+      $('details').disabled = true; $('gmaps').disabled = true;
       if (map) map.jumpTo({ center: [c[0], c[1]], zoom: 14.5 });
       show('r-area', ok('Found <b>' + esc(p.name) + '</b>' + (p.country ? ', ' + esc(p.country) : '') + ' in ' + ms + ' ms. Now tap places near the centre.'));
     } catch (e) { R.area = { ok: false, query: q, error: errText(e) }; show('r-area', no('Search failed: ' + esc(R.area.error))); }
@@ -361,6 +445,8 @@
   $('search').addEventListener('click', searchNear);
   $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchNear(); });
   $('route').addEventListener('click', runRoutes);
+  $('details').addEventListener('click', getDetails);
+  $('gmaps').addEventListener('click', gmapsBeside);
   $('copy').addEventListener('click', copyOut);
   document.querySelectorAll('[data-style]').forEach((b) => b.addEventListener('click', () => setStyle(b.dataset.style)));
   envCheck();
