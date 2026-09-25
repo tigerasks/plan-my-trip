@@ -235,5 +235,34 @@ const feats = [{ sourceLayer: 'building', properties: { name: 'A block of flats'
 ok(C.bestFeature(feats).sourceLayer === 'poi', 'a point of interest wins over whatever else is under the finger');
 ok(C.bestFeature([{ properties: {} }]) === null, 'and nothing named means nothing tapped');
 
+console.log('\n== Opening hours from OpenStreetMap ==');
+const hrs = (t) => C.parseOsmHours(t);
+let h = hrs('Mo-Sa 11:00-14:00,17:00-22:00; Su off');
+ok(JSON.stringify(h.week.mon) === '[["11:00","14:00"],["17:00","22:00"]]', 'split hours read as two spans');
+ok(JSON.stringify(h.week.sun) === '[]' && !h.partial, 'a day off reads as closed, with nothing left over');
+ok(JSON.stringify(h.week.sat) === JSON.stringify(h.week.mon), 'a day range covers its whole span');
+ok(JSON.stringify(hrs('Mo-Su 06:00-18:00').week.wed) === '[["06:00","18:00"]]', 'every day, written as a range');
+ok(JSON.stringify(hrs('09:00-17:00').week.sun) === '[["09:00","17:00"]]', 'times with no days apply to every day');
+ok(JSON.stringify(hrs('Mo,We,Fr 10:00-18:00').week.wed) === '[["10:00","18:00"]]', 'a list of days');
+ok(hrs('Mo,We,Fr 10:00-18:00').week.tue === null, 'and the days it does not mention stay unknown');
+ok(hrs('24/7').week.mon[0][1] === '23:59', 'around the clock is stored as a full day');
+ok(JSON.stringify(hrs('Sa-Su 10:00-16:00').week.sun) === '[["10:00","16:00"]]', 'a range that wraps past Sunday');
+
+h = hrs('Mo-Fr 09:00-17:00; Nov-Mar Su off; PH closed');
+ok(JSON.stringify(h.week.mon) === '[["09:00","17:00"]]' && h.partial,
+  'what it can read it reads, and it owns up to the rest');
+ok(hrs('sunrise-sunset') === null && hrs('') === null, 'a string it cannot read at all gives nothing');
+
+const fromOsm = C.hoursFromOsm(fix.overpassTags.opening_hours);
+ok(fromOsm.hours.source === 'osm' && fromOsm.hours.verified === false, 'hours from the map arrive unverified');
+ok(fromOsm.hours.raw === 'Mo-Sa 11:00-14:00,17:00-22:00; Su off', 'with the original text kept beside them');
+ok(fromOsm.partial === false, 'and this one was read in full');
+const half = C.hoursFromOsm('Nov-Mar 09:00-16:00');
+ok(half.partial && half.hours.raw === 'Nov-Mar 09:00-16:00', 'an unreadable string still comes through, as text to correct');
+ok(!('partial' in C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours } } }).trip.places.x.hours),
+  'the stored hours carry no claim about how well they were read');
+ok(C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours } } }).trip.places.x.hours.week.sun.length === 0,
+  'and they survive normalising into the trip');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

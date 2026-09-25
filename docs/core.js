@@ -430,6 +430,79 @@ function plansHolding(trip, placeId) {
   return PLAN_KEYS.filter((k) => d.plans[k].includes(placeId));
 }
 
+// ---------- OpenStreetMap opening hours ----------
+// The opening_hours syntax is far bigger than anything a trip needs, and small places rarely carry
+// hours at all (two Kyoto restaurants, two misses in the service test). So this reads the common
+// shapes and admits it when it cannot: whatever is left over is kept as text for you to type in.
+const WEEK_ABBR = { mo: 'mon', tu: 'tue', we: 'wed', th: 'thu', fr: 'fri', sa: 'sat', su: 'sun' };
+const ALL_WEEK = () => { const w = {}; for (const d of WEEK) w[d] = null; return w; };
+
+function osmDays(spec) {
+  const out = [];
+  for (const part of str(spec).split(',')) {
+    const t = part.trim().toLowerCase();
+    if (!t) continue;
+    const range = /^([a-z]{2})\s*-\s*([a-z]{2})$/.exec(t);
+    if (range) {
+      const a = WEEK.indexOf(WEEK_ABBR[range[1]]), b = WEEK.indexOf(WEEK_ABBR[range[2]]);
+      if (a < 0 || b < 0) return null;
+      for (let i = a, guard = 0; guard < 7; i = (i + 1) % 7, guard++) { out.push(WEEK[i]); if (i === b) break; }
+      continue;
+    }
+    if (!WEEK_ABBR[t]) return null;
+    out.push(WEEK_ABBR[t]);
+  }
+  return out.length ? out : null;
+}
+function osmSpans(spec) {
+  const t = str(spec).toLowerCase();
+  if (t === 'off' || t === 'closed') return [];
+  const out = [];
+  for (const part of str(spec).split(',')) {
+    const m = /^\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s*$/.exec(part);
+    if (!m) return null;
+    const from = normTime(m[1]), to = normTime(m[2]);
+    if (from == null || to == null) return null;
+    out.push([from, to]);
+  }
+  return out.length ? out : null;
+}
+// Returns { week, partial } — partial when part of the string went unread — or null when none of it did.
+function parseOsmHours(text) {
+  const src = str(text, 200);
+  if (!src) return null;
+  if (/^\s*24\s*\/\s*7\s*$/.test(src)) {
+    const week = {};
+    for (const d of WEEK) week[d] = [['00:00', '23:59']];   // a minute short of midnight, and never ambiguous
+    return { week, partial: false };
+  }
+  const week = ALL_WEEK();
+  let read = 0, partial = false;
+  for (const rule of src.split(';')) {
+    const r = rule.trim();
+    if (!r) continue;
+    const m = /^([A-Za-z]{2}(?:\s*[-,]\s*[A-Za-z]{2})*)?\s*(.+)$/.exec(r);
+    const days = m && m[1] ? osmDays(m[1]) : WEEK.slice();
+    const spans = m ? osmSpans(m[2]) : null;
+    if (!days || spans == null) { partial = true; continue; }
+    for (const d of days) week[d] = spans;
+    read++;
+  }
+  return read ? { week, partial } : null;
+}
+// What the planner stores for a place whose hours came from OpenStreetMap, and whether any of the
+// string went unread. `partial` is deliberately not part of the stored hours: once you have edited
+// them it would be a stale claim, and it can always be worked out again from `raw`.
+function hoursFromOsm(text) {
+  const raw = str(text, 200);
+  if (!raw) return null;
+  const parsed = parseOsmHours(raw);
+  return {
+    hours: { source: 'osm', verified: false, raw, week: parsed ? parsed.week : ALL_WEEK(), lastEntry: {} },
+    partial: !parsed || parsed.partial,
+  };
+}
+
 // ---------- reading the map ----------
 // A tapped vector-tile feature carries the OpenStreetMap id as id × 10 + the element type.
 // Verified live for ways (Sukiya) and nodes (Pizza Little Party); relations never came up, and
@@ -809,6 +882,7 @@ const Core = {
   fmtMoney, kmBetween, hasPos,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
+  osmDays, osmSpans, parseOsmHours, hoursFromOsm,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
