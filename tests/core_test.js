@@ -403,5 +403,25 @@ ok(st.out.ok && st.t.stays.length === 0 && C.dayIds(st.t).length === 3, 'removin
 ok(/days are still in the trip/.test(st.out.text), 'and says so: ' + st.out.text);
 ok(C.normalise(st.t).issues.length === 0, 'with the trip still consistent');
 
+console.log('\n== Dragging things about ==');
+let dg = withDemo((t) => C.placeInPlan(t, 'made-up-market', 'packed', 0));
+ok(dg.t.days['2026-11-21'].plans.packed.join(' ') === 'made-up-market example-temple pretend-noodle-bar',
+  'a stop can be dropped higher up its own version: ' + dg.t.days['2026-11-21'].plans.packed.join(' '));
+ok(dg.out.moved && dg.out.text === 'Made-up Market moved to stop 1', 'and says where it landed: ' + dg.out.text);
+dg = withDemo((t) => C.placeInPlan(t, 'pretend-noodle-bar', 'balanced', 1));
+ok(dg.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple pretend-noodle-bar made-up-market',
+  'an idea can be dropped straight into a version at a position');
+ok(!dg.out.moved && /added to Balanced as stop 2/.test(dg.out.text), 'and says it is new there: ' + dg.out.text);
+ok(C.placeInPlan(dg.t, 'pretend-noodle-bar', 'balanced', 99).index === 2, 'a position past the end lands at the end');
+ok(!C.placeInPlan(dg.t, 'imaginary-museum', 'balanced', 0).ok, 'a backlog place cannot be dropped into a version directly');
+
+dg = withDemo((t) => C.moveInBacklog(t, 'nowhere-viewpoint', 0));
+ok(dg.t.backlog.join(' ') === 'nowhere-viewpoint imaginary-museum', 'the backlog can be reordered');
+dg = withDemo((t) => C.moveInBacklog(t, 'example-temple', 1));
+ok(dg.t.backlog.join(' ') === 'imaginary-museum example-temple nowhere-viewpoint', 'and a day place can be dropped into it at a position');
+ok(dg.t.places['example-temple'].dayId === null, 'which takes it off its day');
+ok(dg.t.days['2026-11-21'].plans.packed.indexOf('example-temple') < 0, 'and out of every version');
+ok(C.normalise(dg.t).issues.length === 0, 'with the trip still consistent');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

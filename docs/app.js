@@ -340,11 +340,12 @@ function chipsHtml(p) {
   if (p.meal) h += '<span class="chip flex">Lunch option</span>';
   return h;
 }
-function itemHtml(p, lead) {
+function itemHtml(p, lead, kind) {
   const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
   const open = App.ui.menu && App.ui.menu.id === p.id;
-  return '<li class="row' + (open ? ' menu-open' : '') + '">'
+  return '<li class="row' + (open ? ' menu-open' : '') + '" data-row-id="' + esc(p.id) + '" data-from="' + esc(kind) + '">'
     + '<div class="row-main">'
+    + '<span class="grip" data-drag="' + esc(p.id) + '" title="Drag to move it"></span>'
     + '<button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
     + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
     + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button>'
@@ -390,9 +391,10 @@ function moveMenuHtml(p) {
 }
 const actingOn = (el) => (el && el.dataset.id) || (App.ui.sheet && App.ui.sheet.id) || '';
 function closeMenu() { App.ui.menu = null; }
-function listHtml(places, lead, empty) {
-  if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
-  return '<ul class="list">' + places.map((p, i) => itemHtml(p, lead(i))).join('') + '</ul>';
+function listHtml(places, lead, empty, kind) {
+  const open = '<ul class="list" data-list="' + esc(kind) + '">';
+  if (!places.length) return open + '<li class="empty-line">' + esc(empty) + '</li></ul>';
+  return open + places.map((p, i) => itemHtml(p, lead(i), kind)).join('') + '</ul>';
 }
 function sectionHtml(label, count, body, extra) {
   return '<div class="card"><div class="card-head"><span class="label">' + esc(label)
@@ -402,13 +404,13 @@ function planHtml(day) {
   const places = C.planPlaces(App.trip, day.id, day.shown);
   return sectionHtml('Plan · ' + C.PLAN_LABEL[day.shown], places.length,
     listHtml(places, (i) => '<span class="num">' + (i + 1) + '</span>',
-      'Nothing in ' + C.PLAN_LABEL[day.shown] + ' yet. Places you add to this version show up here, in order.'));
+      'Nothing in ' + C.PLAN_LABEL[day.shown] + ' yet. Drag places here, or add them from the list below.', 'plan'));
 }
 function ideasHtml(day) {
   const places = C.ideasFor(App.trip, day.id, day.shown);
   return sectionHtml('Ideas for today', places.length,
     listHtml(places, () => '<span class="dot"></span>',
-      'Nothing else on this day. Ideas sit here until you put them in a version.'));
+      'Nothing else on this day. Ideas sit here until you put them in a version.', 'ideas'));
 }
 function backlogHtml() {
   const places = C.backlogPlaces(App.trip);
@@ -419,7 +421,7 @@ function backlogHtml() {
     : '';
   return sectionHtml('Backlog', places.length,
     listHtml(places, () => '<span class="dot"></span>',
-      'The backlog is empty. It holds ideas that do not have a day yet.'), toggle);
+      'The backlog is empty. It holds ideas that do not have a day yet.', 'backlog'), toggle);
 }
 function creditsHtml() {
   return '<p class="credits">'
@@ -941,6 +943,150 @@ function linksHtml(place, details) {
     + '</p></div>';
 }
 
+// ---------- dragging ----------
+// Pointer events rather than the browser's own drag and drop, which never worked under a thumb.
+// Only the grip starts a drag, so tapping a row still opens it and the list still scrolls.
+const Drag = {
+  id: null, from: '', row: null, ghost: null, moved: false, start: null,
+  target: null,      // { list, rowId, before }
+  scroller: 0, step: 0, last: null,
+
+  begin(e, id, from, row) {
+    this.id = id;
+    this.from = from;
+    this.row = row;
+    this.moved = false;
+    this.start = { x: e.clientX, y: e.clientY };
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragEnd);
+  },
+  lift() {
+    this.moved = true;
+    document.body.classList.add('dragging');
+    this.row.classList.add('dragged');
+    const box = this.row.getBoundingClientRect();
+    const ghost = this.row.cloneNode(true);
+    ghost.className = 'row ghost';
+    ghost.style.width = box.width + 'px';
+    this.offset = { x: this.start.x - box.left, y: this.start.y - box.top };
+    document.body.appendChild(ghost);
+    this.ghost = ghost;
+  },
+  // Near the top or bottom of the panel, keep scrolling: the list you want may be off-screen.
+  edgeScroll(y) {
+    const panel = $('#panel');
+    const box = panel.getBoundingClientRect();
+    const edge = 56;
+    const step = y < box.top + edge ? -14 : y > box.bottom - edge ? 14 : 0;
+    if (step === this.step) return;
+    this.step = step;
+    clearInterval(this.scroller);
+    if (!step) return;
+    this.scroller = setInterval(() => {
+      panel.scrollTop += step;
+      if (this.last) this.to(this.last.x, this.last.y);
+    }, 40);
+  },
+  to(x, y) {
+    this.last = { x, y };
+    this.edgeScroll(y);
+    if (this.ghost) {
+      this.ghost.style.left = (x - this.offset.x) + 'px';
+      this.ghost.style.top = (y - this.offset.y) + 'px';
+    }
+    const under = document.elementFromPoint(x, y);
+    const list = under && under.closest ? under.closest('[data-list]') : null;
+    const row = under && under.closest ? under.closest('.row') : null;
+    if (!list) { this.mark(null); return; }
+    let before = true;
+    if (row && row !== this.row) {
+      const box = row.getBoundingClientRect();
+      before = y < box.top + box.height / 2;
+    }
+    this.mark({ list: list.dataset.list, rowId: row && row !== this.row ? row.dataset.rowId : '', before });
+  },
+  mark(target) {
+    this.target = target;
+    for (const el of document.querySelectorAll('.drop-before, .drop-after')) el.classList.remove('drop-before', 'drop-after');
+    for (const el of document.querySelectorAll('[data-list].drop-in')) el.classList.remove('drop-in');
+    if (!target) return;
+    const list = document.querySelector('[data-list="' + target.list + '"]');
+    if (list) list.classList.add('drop-in');
+    if (!target.rowId) return;
+    const row = document.querySelector('.row[data-row-id="' + target.rowId + '"]');
+    if (row) row.classList.add(target.before ? 'drop-before' : 'drop-after');
+  },
+  finish() {
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+    window.removeEventListener('pointercancel', onDragEnd);
+    clearInterval(this.scroller);
+    this.scroller = 0;
+    this.step = 0;
+    this.last = null;
+    if (this.ghost) this.ghost.remove();
+    document.body.classList.remove('dragging');
+    const out = this.moved ? { id: this.id, from: this.from, target: this.target } : null;
+    this.mark(null);   // after reading it: clearing the marks clears the target with them
+    this.id = null; this.row = null; this.ghost = null; this.moved = false; this.target = null;
+    return out;
+  },
+};
+function onDragDown(e) {
+  const grip = e.target.closest && e.target.closest('[data-drag]');
+  if (!grip || (e.button != null && e.button > 0)) return;
+  const row = grip.closest('.row');
+  if (!row) return;
+  e.preventDefault();
+  Drag.begin(e, grip.dataset.drag, row.dataset.from, row);
+}
+function onDragMove(e) {
+  if (!Drag.id) return;
+  if (!Drag.moved) {
+    if (Math.abs(e.clientX - Drag.start.x) + Math.abs(e.clientY - Drag.start.y) < 6) return;
+    Drag.lift();
+  }
+  e.preventDefault();
+  Drag.to(e.clientX, e.clientY);
+}
+function onDragEnd() {
+  const drop = Drag.finish();
+  if (drop && drop.target) applyDrop(drop);
+  else render();
+}
+// Where a stop lands in a list, once the one being dragged is out of the way.
+function dropIndex(ids, target, dragged) {
+  const rest = ids.filter((id) => id !== dragged);
+  if (!target.rowId) return rest.length;
+  const at = rest.indexOf(target.rowId);
+  if (at < 0) return rest.length;
+  return target.before ? at : at + 1;
+}
+function applyDrop(drop) {
+  const day = currentDay();
+  const to = drop.target.list;
+  const p = C.placeById(App.trip, drop.id);
+  if (!p) { render(); return; }
+  if (to === 'plan' && day) {
+    if (p.dayId !== day.id) C.moveToDay(App.trip, drop.id, day.id);
+    const ids = day.plans[day.shown];
+    changed(C.placeInPlan(App.trip, drop.id, day.shown, dropIndex(ids, drop.target, drop.id)).text);
+    return;
+  }
+  if (to === 'ideas' && day) {
+    if (p.dayId !== day.id) { changed(C.moveToDay(App.trip, drop.id, day.id).text); return; }
+    if (drop.from === 'plan') { changed(C.removeFromPlan(App.trip, drop.id, day.shown).text); return; }
+    render();
+    return;
+  }
+  if (to === 'backlog') {
+    changed(C.moveInBacklog(App.trip, drop.id, dropIndex(App.trip.backlog, drop.target, drop.id)).text);
+    return;
+  }
+  render();
+}
+
 // ---------- toast ----------
 let toastTimer = 0;
 function toast(msg, action, ms) {
@@ -1361,6 +1507,7 @@ function boot() {
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
   }
   document.addEventListener('click', onClick);
+  document.addEventListener('pointerdown', onDragDown);
   document.addEventListener('input', (e) => {
     if (e.target.id === 'findBox') onFindInput(e);
     if (e.target.id === 'stName') onStayInput(e);

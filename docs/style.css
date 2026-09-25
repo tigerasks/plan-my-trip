@@ -177,6 +177,28 @@ button.item:hover { background: var(--hover); }
 .item .meta .sep { color: var(--faint); }
 .empty-line { padding: 7px 2px; font-size: 12.5px; color: var(--faint); }
 .row-main { display: flex; align-items: flex-start; gap: 4px; }
+/* Only the grip starts a drag, so a row can still be tapped and the list can still be scrolled. */
+.grip {
+  flex: none; align-self: center; width: 18px; height: 28px; cursor: grab; touch-action: none;
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 5px 5px; background-position: 4px 8px; background-repeat: repeat;
+  color: var(--line); opacity: 0; transition: opacity .12s;
+}
+.row:hover .grip, .menu-open .grip, .dragging .grip { opacity: 1; }
+.grip:hover { color: var(--faint); }
+body.dragging { cursor: grabbing; user-select: none; }
+body.dragging .grip { cursor: grabbing; }
+.row.dragged { opacity: .35; }
+.row.ghost {
+  position: fixed; z-index: 60; list-style: none; margin: 0; padding: 4px 8px; pointer-events: none;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+}
+.row.ghost .grip { opacity: 1; }
+.row.ghost .row-menu { display: none; }
+.list.drop-in { box-shadow: 0 0 0 2px var(--blue-line); border-radius: 8px; }
+.row.drop-before { box-shadow: inset 0 2px 0 var(--focus); }
+.row.drop-after { box-shadow: inset 0 -2px 0 var(--focus); }
+li.empty-line { list-style: none; }
 .row-main .item { flex: 1 1 auto; min-width: 0; }
 .row-menu { flex: none; width: 30px; height: 30px; align-self: center; color: var(--faint); }
 .row-menu:hover, .menu-open .row-menu { color: var(--ink); background: var(--hover); }
