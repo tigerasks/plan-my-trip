@@ -400,7 +400,62 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(200)
     ck(pg.locator('.menu').count() == 0, 'and a click anywhere else puts it away')
 
+    # ---- dragging (a tall window, so every list is on screen at once)
+    ctx, pg = open_page(1280, 1100, held=DEMO, extra=services)
+
+    def drag(source_id, target_list, target_id=None, below=False):
+        """Drag a row by its grip onto a list, dropping it above or below a row in it."""
+        grip = pg.locator('.row[data-row-id="%s"] .grip' % source_id)
+        grip.hover()
+        pg.mouse.down()
+        where = pg.locator('.row[data-row-id="%s"]' % target_id).bounding_box() if target_id \
+            else pg.locator('[data-list="%s"]' % target_list).bounding_box()
+        x = where['x'] + where['width'] / 2
+        y = where['y'] + (where['height'] * (0.8 if below else 0.2)) if target_id else where['y'] + where['height'] / 2
+        pg.mouse.move(x, y - 40, steps=3)
+        pg.mouse.move(x, y, steps=6)
+        pg.mouse.up()
+        pg.wait_for_timeout(500)
+
+    order = lambda: pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced")
+    ck(order() == ['example-temple', 'made-up-market'], 'the version starts in its own order')
+    drag('made-up-market', 'plan', 'example-temple')
+    ck(order() == ['made-up-market', 'example-temple'], 'a stop can be dragged above another: ' + ' '.join(order()))
+    ck('moved to stop 1' in pg.inner_text('#toast'), 'and says where it landed: ' + pg.inner_text('#toast'))
+
+    drag('pretend-noodle-bar', 'plan', 'example-temple')
+    ck(order() == ['made-up-market', 'pretend-noodle-bar', 'example-temple'],
+       'an idea can be dragged into the plan at a position: ' + ' '.join(order()))
+    ck(len(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.packed")) == 3, 'without touching the other versions')
+
+    drag('example-temple', 'ideas')
+    ck(order() == ['made-up-market', 'pretend-noodle-bar'], 'dragging a stop to the ideas takes it out of the version')
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-21', 'but leaves it on the day')
+
+    drag('example-temple', 'backlog')
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") is None,
+       'and dragging it to the backlog takes it off the day')
+    back = pg.evaluate('window.DayPlannerApp.trip.backlog')
+    ck(back[-1] == 'example-temple' or 'example-temple' in back, 'where it joins the list: ' + ' '.join(back))
+
+    drag('example-temple', 'plan', 'made-up-market')
+    ck(order()[0] == 'example-temple', 'and can be dragged straight back into the plan: ' + ' '.join(order()))
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-21', 'back onto the day with it')
+
+    drag('nowhere-viewpoint', 'backlog', 'imaginary-museum')
+    ck(pg.evaluate('window.DayPlannerApp.trip.backlog')[0] == 'nowhere-viewpoint', 'the backlog can be reordered too')
+
+    # a tap is not a drag
+    pg.click('.row[data-row-id="example-temple"] .item')
+    pg.wait_for_timeout(300)
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'tapping a row still opens it')
+    pg.keyboard.press('Escape')
+    ctx.close()
+
+    ctx, pg = open_page(held=DEMO, extra=services)
+
     # ---- deleting a place, with a way back
+    pg.wait_for_timeout(200)
     doomed = pg.locator('.row-menu').first.get_attribute('data-id')
     name = pg.evaluate('id => window.DayPlannerApp.trip.places[id].name', doomed)
     before = len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)'))
