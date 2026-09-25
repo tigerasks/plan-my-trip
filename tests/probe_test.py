@@ -1,30 +1,13 @@
 """Playwright test of docs/probe.html with every outside service mocked (no network needed).
-Run: python3 tests/probe_test.py   (or set PROBE_URL to test another copy)"""
-import json, os, pathlib
+Run: python3 tests/probe_test.py   (or set PROBE_URL to test a copy that is already served)"""
+import json, os
 from playwright.sync_api import sync_playwright
+import harness
+from harness import SHOTS
 
-HERE = pathlib.Path(__file__).resolve().parent
-URL = os.environ.get('PROBE_URL') or (HERE.parent / 'docs' / 'probe.html').as_uri()
-SHOTS = HERE / 'shots'; SHOTS.mkdir(exist_ok=True)
-STUB = r"""
-window.maplibregl = { version: 'stub',
-  NavigationControl: function () {},
-  Marker: function () { this.setLngLat = () => this; this.addTo = () => this; this.remove = () => this; },
-  Map: function (opts) {
-    const h = {}, src = {}; let center = { lng: opts.center[0], lat: opts.center[1] };
-    const fire = (ev, a) => (h[ev] || []).forEach((f) => f(a));
-    this.__fire = fire; window.__lastMap = this;
-    this.on = (ev, f) => { (h[ev] = h[ev] || []).push(f); return this; };
-    this.addControl = () => this;
-    this.setStyle = () => { for (const k in src) delete src[k]; setTimeout(() => { fire('style.load'); fire('idle'); }, 20); };
-    this.jumpTo = (o) => { center = { lng: o.center[0], lat: o.center[1] }; };
-    this.getCenter = () => center;
-    this.queryRenderedFeatures = () => [{ sourceLayer: 'poi', layer: { id: 'poi_r1' }, id: 31415921, properties: { name: '清水寺', 'name:en': 'Kiyomizu-dera', class: 'place_of_worship', subclass: 'buddhist', rank: 1 } }];
-    this.getSource = (id) => src[id]; this.addSource = (id) => { src[id] = { setData: () => {} }; }; this.addLayer = () => {};
-    this.areTilesLoaded = () => true;
-    setTimeout(() => { fire('style.load'); fire('idle'); }, 30);
-  } };
-"""
+SHOTS.mkdir(exist_ok=True)
+BASE, stop = ('', None) if os.environ.get('PROBE_URL') else harness.serve()
+URL = os.environ.get('PROBE_URL') or BASE + '/probe.html'
 AREA = {"features": [{"geometry": {"coordinates": [135.7681, 35.0116]}, "properties": {"name": "Kyoto", "country": "Japan", "osm_key": "place", "osm_value": "city", "osm_type": "R", "osm_id": 357794}}]}
 NEAR = {"features": [{"geometry": {"coordinates": [135.7588, 34.9858]}, "properties": {"name": "Kyoto Station", "osm_key": "railway", "osm_value": "station", "city": "Kyoto", "osm_type": "N", "osm_id": 1}},
                      {"geometry": {"coordinates": [135.7722, 35.0036]}, "properties": {"name": "Gion-Shijō", "osm_key": "railway", "osm_value": "station", "city": "Kyoto", "osm_type": "N", "osm_id": 2}}]}
@@ -35,25 +18,28 @@ OVERPASS = {"elements": [{"type": "node", "id": 3141592, "tags": {"name": "清�
 H = {"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"}
 errs, log, seen, gseen = [], [], [], []
 def check(c, m): log.append(('PASS  ' if c else 'FAIL  ') + m)
-def route(r):
+def services(r):
+    """The outside services the probe talks to. Returns True once it has answered."""
     u = r.request.url
-    if u.startswith('file://'): return r.continue_()
-    if 'maplibre-gl.js' in u: return r.fulfill(status=200, body=STUB, headers={"Content-Type": "application/javascript"})
-    if 'maplibre-gl.css' in u: return r.fulfill(status=200, body='', headers={"Content-Type": "text/css"})
-    if 'photon.komoot.io' in u: return r.fulfill(status=200, body=json.dumps(AREA if 'q=Kyoto' in u else NEAR), headers=H)
-    if 'routing.openstreetmap.de' in u: return r.fulfill(status=200, body=json.dumps(OSRM), headers=H)
-    if 'api.transitous.org/api/v6/plan' in u: return r.fulfill(status=200, body=json.dumps(TRANSIT), headers=H)
-    if 'overpass-api.de/api/interpreter' in u:
+    if 'photon.komoot.io' in u:
+        r.fulfill(status=200, body=json.dumps(AREA if 'q=Kyoto' in u else NEAR), headers=H)
+    elif 'routing.openstreetmap.de' in u:
+        r.fulfill(status=200, body=json.dumps(OSRM), headers=H)
+    elif 'api.transitous.org/api/v6/plan' in u:
+        r.fulfill(status=200, body=json.dumps(TRANSIT), headers=H)
+    elif 'overpass-api.de/api/interpreter' in u:
         seen.append(u)
-        return r.fulfill(status=200, body=json.dumps(OVERPASS if ('node(3141592)' in u or 'node%283141592%29' in u) else {"elements": []}), headers=H)
-    if 'google.com/maps' in u:
+        r.fulfill(status=200, body=json.dumps(OVERPASS if ('node(3141592)' in u or 'node%283141592%29' in u) else {"elements": []}), headers=H)
+    elif 'google.com/maps' in u:
         gseen.append(u)
-        return r.abort()
-    return r.abort()
+        r.abort()
+    else:
+        return False
+    return True
 with sync_playwright() as pw:
     br = pw.chromium.launch()
     ctx = br.new_context(viewport={'width': 1280, 'height': 800})
-    ctx.route('**/*', route)
+    ctx.route('**/*', harness.offline(BASE, services))
     pg = ctx.new_page()
     pg.on('pageerror', lambda e: errs.append('pageerror: ' + str(e)))
     pg.on('console', lambda m: errs.append('console.' + m.type + ': ' + m.text) if m.type == 'error' else None)
@@ -85,4 +71,5 @@ with sync_playwright() as pw:
           'results block: details + gmaps recorded; query = ' + res['gmaps']['query'])
     pg.screenshot(path=str(SHOTS / 'probe_desktop.png'), full_page=False)
     br.close()
+if stop: stop()
 print('\n'.join(log)); print('ERRORS (%d):' % len(errs)); print('\n'.join(errs[:10]))
