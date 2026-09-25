@@ -13,11 +13,17 @@ ck = Checks('Day planner — the skeleton')
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
-    def open_page(w=1280, h=800, scheme='light', held=None):
+    def no_maplibre(r):
+        if 'maplibre-gl.js' in r.request.url:
+            r.fulfill(status=200, body='', headers={'Content-Type': 'application/javascript'})
+            return True
+        return False
+
+    def open_page(w=1280, h=800, scheme='light', held=None, extra=None):
         phone = w < 500
         ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
                              is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
-        ctx.route('**/*', harness.offline(BASE))
+        ctx.route('**/*', harness.offline(BASE, extra))
         pg = ctx.new_page()
         ck.watch(pg)
         if held is not None:
@@ -99,6 +105,41 @@ with sync_playwright() as pw:
     ctx.close()
     ctx, pg = open_page(scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
+    ctx.close()
+
+    # ---- the map
+    ctx, pg = open_page(held=DEMO)
+    ck(pg.evaluate('window.__lastMap.__opts.style') == 'https://tiles.openfreemap.org/styles/liberty',
+       'the map opens on the Liberty style, the only one that shows places')
+    ck(pg.evaluate('window.DayPlannerMap.ready') is True, 'and reports itself ready')
+    ck(pg.locator('#mapEmpty').is_hidden(), 'with no apology over it')
+    ck(pg.locator('.mk-plan').count() == 2 and pg.locator('.mk-idea').count() == 1,
+       'the version on screen is numbered on the map, the day\'s other ideas are hollow')
+    ck([t for t in pg.locator('.mk-plan').all_text_contents()] == ['1', '2'], 'stops carry their order')
+    ck(pg.locator('.mk-anchor').count() == 1, 'and where the day starts is marked')
+    ck(pg.evaluate('window.__fitted.length') == 4, 'the view is fitted around everything on the day')
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-plan').count() == 3 and pg.locator('.mk-idea').count() == 0, 'switching version renumbers the map')
+    pg.select_option('#daySel', '2026-11-22')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-plan').count() == 1, 'and switching day redraws it')
+    ck(pg.locator('.mk-backlog').count() == 2, 'backlog places sit on the map as faint dots')
+    ck(pg.evaluate('window.__fitted.length') == 2, 'without pulling the view out to reach them')
+    pg.click('[data-act="backlog-dots"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-backlog').count() == 0 and 'Off the map' in pg.inner_text('#panel'), 'and they can be switched off')
+    pg.reload()
+    pg.wait_for_timeout(300)
+    ck(pg.locator('.mk-backlog').count() == 0, 'which this browser remembers')
+    pg.click('[data-act="backlog-dots"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.mk-backlog').count() == 2, 'and back on again')
+    ctx.close()
+
+    ctx, pg = open_page(held=DEMO, extra=no_maplibre)
+    ck('could not be loaded' in pg.inner_text('#mapEmpty'), 'a map that will not load says so: ' + pg.inner_text('#mapEmpty'))
+    ck('Example Temple' in pg.inner_text('#panel'), 'and the planner carries on without it')
     ctx.close()
 
     # ---- adding days by hand
