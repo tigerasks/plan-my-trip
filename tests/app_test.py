@@ -519,6 +519,10 @@ with sync_playwright() as pw:
     ck('unverified' in sheet, 'marked unverified until you check them')
     ck('pizza' in sheet and '075-672-9889' in sheet, 'and whatever else it knows')
     ck('OpenStreetMap' in sheet and 'Example look-up' in sheet, 'with a link to the source and your own look-ups')
+    ck('Informative links' in pg.locator('#sheet .label').all_text_contents(), 'gathered under Informative links')
+    ck('Find on Google Maps' == pg.locator('[data-act="gmaps"]').inner_text(), 'and Google Maps is offered by name')
+    ck('stop being a free planner' in sheet, 'with the reason it is a link rather than a map: '
+       + [l for l in sheet.split(chr(10)) if 'free planner' in l][0])
     pg.screenshot(path=str(SHOTS / 'app_details_desktop_light.png'))
 
     # Google Maps, beside the planner
