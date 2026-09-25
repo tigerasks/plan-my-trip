@@ -60,7 +60,7 @@ If an older `probe.html` is still at the repository root, delete it: the copy in
   - **Public transport:** Transitous.
     - Endpoint: `https://api.transitous.org/api/v6/plan?fromPlace=LAT,LON&toPlace=LAT,LON&time=ISO`, falling back to v5.
     - Conditions: open source and non-commercial only. Browser requests identify themselves through the Referer header, with contact details shown on the site. Cache results.
-    - Before routine routing use, the owner gives Transitous a heads-up in their Matrix channel.
+    - The owner gives Transitous a heads-up in their Matrix channel (`#transitous:matrix.spline.de`) once other people use the planner. Development traffic is too small to need it (design doc, decision 14).
   - **No Google APIs.** Google Maps appears only as outgoing search links ("Check on Google Maps").
   - **Never OpenStreetMap's own tile servers:** they reject requests without a Referer.
 - **Using the services:**
