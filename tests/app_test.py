@@ -1,6 +1,6 @@
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import json
+import datetime, json
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -99,6 +99,118 @@ with sync_playwright() as pw:
     ctx.close()
     ctx, pg = open_page(scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
+    ctx.close()
+
+    # ---- adding days by hand
+    ctx, pg = open_page()
+    pg.click('[data-act="new-trip"]')
+    pg.wait_for_timeout(120)
+    pg.click('#panel [data-act="add-day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#dyDate') == datetime.date.today().isoformat(), 'a first day is offered as today: ' + pg.input_value('#dyDate'))
+    pg.fill('#dyDate', '2026-11-21')
+    pg.fill('#dyCity', 'Kyoto')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(200)
+    ck('Sat 21 Nov' in pg.inner_text('#dayFace'), 'the new day opens straight away: ' + pg.inner_text('#dayFace'))
+    ck('Where you set off from is not set yet' in pg.inner_text('#panel') and '08:30' in pg.inner_text('#panel'),
+       'with sensible times, and it asks for the rest')
+    pg.click('#addDayBtn')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#dyDate') == '2026-11-22' and pg.input_value('#dyCity') == 'Kyoto', 'the next day is offered as the day after, same city')
+    pg.fill('#dyDate', '2026-11-21')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(150)
+    ck('already a day of this trip' in pg.inner_text('#sheet'), 'a date the trip already has is refused: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#dyDate', '2026-11-22')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(900)
+    ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
+    ctx.close()
+
+    # ---- a day's shape
+    ctx, pg = open_page(held=DEMO)
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edStartName') == 'Example Hotel · Kyoto Station',
+       'the day sheet opens on what the day holds')
+    ck(pg.input_value('#edLunchFrom') == '11:30' and pg.input_value('#edLunchFor') == '60', 'lunch included')
+    pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
+    pg.fill('#edStartName', 'Example Ryokan')
+    pg.fill('#edStartTime', '07:45')
+    pg.fill('#edEndTime', '')
+    pg.uncheck('#edLunchOn')
+    pg.fill('#edNote', 'Made-up day, made-up note.')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(900)
+    panel = pg.inner_text('#panel')
+    ck('07:45' in panel and 'Leave Example Ryokan' in panel, 'the times and the start place follow')
+    card = pg.inner_text('#panel .card')
+    ck('Open-ended day' in card and 'Lunch' not in card, 'an empty back-by time makes the day open-ended, and lunch can be dropped')
+    ck('Made-up day, made-up note.' in panel, 'and the note shows under the day')
+    held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['days']['2026-11-21']
+    ck(held['end'] is None and held['start']['lat'] is None, 'a renamed start place drops the position it had, ready for search')
+
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(150)
+    pg.fill('#edDate', '2026-11-22')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(150)
+    ck('already a day of this trip' in pg.inner_text('#sheet'), 'moving a day onto another day is refused')
+    pg.fill('#edDate', '2026-11-19')
+    pg.click('[data-act="save-day-shape"]')
+    pg.wait_for_timeout(900)
+    ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'a day can be given another date: ' + pg.inner_text('#dayFace'))
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(trip['places']['example-temple']['dayId'] == '2026-11-19', 'and its places move with it')
+    ck(sorted(trip['days'].keys()) == ['2026-11-19', '2026-11-22'], 'leaving nothing behind')
+
+    # ---- deleting a day
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(150)
+    ck('sends its 3 places back to the backlog' in pg.inner_text('#sheet'), 'deleting says what happens to the places on the day')
+    pg.click('[data-act="delete-day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 5', 'the day goes, and its places land in the backlog')
+    ck('back to the backlog' in pg.inner_text('#toast'), 'with a plain account of it: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'and Undo brings the day back: ' + pg.inner_text('#dayFace'))
+    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
+    ctx.close()
+
+    # ---- trip settings
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#tripBtn')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the title opens the trip settings')
+    ck(pg.input_value('#trTitle') == 'Example · Kyoto (made up)' and pg.input_value('#trTz') == 'JST', 'filled in with what the trip holds')
+    pg.screenshot(path=str(SHOTS / 'app_trip_desktop_light.png'))
+    pg.fill('#trCur', '12')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(150)
+    ck('three letters' in pg.inner_text('#sheet'), 'a currency that is not a code is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#trCur', 'chf')
+    pg.fill('#trTitle', 'Example · Kyoto')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(900)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'saving renames the trip')
+    held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
+    ck(held['trip']['currency'] == 'CHF' and held['trip']['id'] == 'example-kyoto', 'the currency is stored, and the id never moves')
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'Escape closes a sheet')
+
+    # ---- starting again, with a way back
+    pg.click('#tripBtn')
+    pg.wait_for_timeout(120)
+    pg.click('[data-act="clear-trip"]')
+    pg.wait_for_timeout(150)
+    ck(pg.inner_text('#tripBtn') == 'My trip', 'starting again clears the trip')
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'and the toast brings it back')
+    ck(len(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']) == 6, 'with everything in it')
     ctx.close()
 
     # ---- a stored copy that cannot be used
