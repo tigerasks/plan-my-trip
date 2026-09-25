@@ -1,0 +1,10 @@
+import pathlib
+d = pathlib.Path('/home/claude/dp')
+css = (d/'style.css').read_text()
+tpl = (d/'index.template.html').read_text()
+out = tpl.replace('/*CSS*/', css).replace('/*CORE*/', (d/'core.js').read_text()).replace('/*APP*/', (d/'app.js').read_text())
+assert '</script' not in (d/'core.js').read_text() + (d/'app.js').read_text()
+p = pathlib.Path('/mnt/user-data/outputs/day-planner.html')
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(out)
+print('wrote', p, len(out.encode()), 'bytes')

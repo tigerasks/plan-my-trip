@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Day planner</title>
+<style>
+/*CSS*/
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <label class="daypick">
+      <span class="sr">Choose a day</span>
+      <select id="daySel"></select>
+      <span class="dp-face" id="dpFace"><span class="dp-date">Day planner</span><span class="dp-title">Loading…</span></span>
+      <svg class="i chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </label>
+    <span id="status"></span>
+    <button type="button" class="icon-btn" data-act="settings" aria-label="Day settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg></button>
+  </header>
+  <section class="mapwrap" id="mapwrap" aria-label="Map of the candidate places">
+    <svg id="map" role="img" aria-label="Schematic map: positions to scale, no streets"></svg>
+    <div class="mode-seg" id="modeSeg" role="group" aria-label="How you get around" hidden></div>
+    <div class="map-ctl" id="mapCtl"></div>
+    <div class="map-foot" id="scale"></div>
+    <div class="map-empty" id="mapEmpty">The map appears once a day is loaded.</div>
+  </section>
+  <main class="plan" id="plan" aria-live="polite"></main>
+  <footer class="foot" id="foot"></footer>
+</div>
+<aside class="sheet" id="sheet" aria-hidden="true"></aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+/*CORE*/
+</script>
+<script>
+/*APP*/
+</script>
+</body>
+</html>
