@@ -83,6 +83,7 @@ a { color: var(--ink-2); }
 .mk-plan { background: var(--ink); color: var(--bg); }
 .mk-idea { background: var(--card); color: var(--ink); border-color: var(--ink); width: 15px; height: 15px; }
 .mk-anchor { background: var(--slate); color: var(--card); width: 15px; height: 15px; border-radius: 4px; }
+.mk-backlog { background: var(--faint); border-color: transparent; box-shadow: none; opacity: .7; width: 9px; height: 9px; }
 .panel {
   grid-column: 2; overflow-y: auto; overscroll-behavior: contain;
   border-left: 1px solid var(--line); background: var(--bg);
@@ -174,6 +175,9 @@ button.item:hover { background: var(--hover); }
 .btn[disabled] { opacity: .45; cursor: default; }
 .btn .i { width: 16px; height: 16px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.mini { font-size: 11.5px; font-weight: 700; color: var(--muted); padding: 2px 6px; border-radius: 7px; }
+.mini:hover { background: var(--hover); color: var(--ink); }
+.mini[aria-pressed="true"] { color: var(--ink); }
 
 /* ---------- empty state ---------- */
 .empty { text-align: center; padding: 34px 10px; }

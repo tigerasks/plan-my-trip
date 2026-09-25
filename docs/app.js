@@ -19,7 +19,7 @@ const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICO
 // ---------- state ----------
 const App = {
   trip: null,            // the one trip this browser holds, already normalised
-  ui: { dayId: null, sheet: null },   // what is on screen; never part of what gets exported
+  ui: { dayId: null, sheet: null, backlogDots: true },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
   storageProblem: null,  // why the browser copy could not be used, in plain words
 };
@@ -58,11 +58,12 @@ function save() {
 }
 function saveNow() { if (saveTimer) save(); }
 function saveUi() {
-  Store.write(KEY.ui, { dayId: App.ui.dayId });
+  Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots });
 }
 function restore() {
   const ui = Store.read(KEY.ui);
   if (ui && ui.dayId) App.ui.dayId = ui.dayId;
+  if (ui && ui.backlogDots === false) App.ui.backlogDots = false;
   const held = Store.read(KEY.trip);
   if (held == null) return;
   const res = C.readBlock(JSON.stringify(held));
@@ -82,7 +83,7 @@ function render() {
   renderPanel();
   renderSheet();
   renderSaved();
-  M.show(App.trip, App.trip ? App.ui.dayId : null);
+  M.show(App.trip, App.trip ? App.ui.dayId : null, { backlog: App.ui.backlogDots });
 }
 function renderSaved() {
   const el = $('#saved');
@@ -179,9 +180,9 @@ function listHtml(places, lead, empty) {
   if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
   return '<ul class="list">' + places.map((p, i) => itemHtml(p, lead(i))).join('') + '</ul>';
 }
-function sectionHtml(label, count, body) {
+function sectionHtml(label, count, body, extra) {
   return '<div class="card"><div class="card-head"><span class="label">' + esc(label)
-    + ' <span class="count">' + count + '</span></span></div>' + body + '</div>';
+    + ' <span class="count">' + count + '</span></span>' + (extra || '') + '</div>' + body + '</div>';
 }
 function planHtml(day) {
   const places = C.planPlaces(App.trip, day.id, day.shown);
@@ -197,9 +198,14 @@ function ideasHtml(day) {
 }
 function backlogHtml() {
   const places = C.backlogPlaces(App.trip);
+  const on = App.ui.backlogDots;
+  const toggle = places.length
+    ? '<button type="button" class="mini" data-act="backlog-dots" aria-pressed="' + on + '">'
+      + (on ? 'On the map' : 'Off the map') + '</button>'
+    : '';
   return sectionHtml('Backlog', places.length,
     listHtml(places, () => '<span class="dot"></span>',
-      'The backlog is empty. It holds ideas that do not have a day yet.'));
+      'The backlog is empty. It holds ideas that do not have a day yet.'), toggle);
 }
 function creditsHtml() {
   return '<p class="credits">'
@@ -421,6 +427,11 @@ const ACTIONS = {
       saveUi();
       changed('Day brought back');
     } }, 9000);
+  },
+  'backlog-dots': () => {
+    App.ui.backlogDots = !App.ui.backlogDots;
+    saveUi();
+    render();
   },
   version: (el) => {
     const day = currentDay();

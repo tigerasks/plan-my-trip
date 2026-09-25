@@ -46,27 +46,30 @@ const MapView = {
   },
 
   // Numbered stops for the version on screen, hollow markers for the day's other ideas.
-  show(trip, dayId) {
+  show(trip, dayId, opts) {
     if (!this.ready || !this.map) return;
     this.clear();
     const day = trip && dayId ? trip.days[dayId] : null;
     if (!day) { this.shownAs = ''; return; }
     const gl = root.maplibregl;
     const pts = [];
-    const put = (p, cls, label, title) => {
+    const put = (p, cls, label, title, fit) => {
       if (!C.hasPos(p)) return;
       const mk = new gl.Marker({ element: pin(cls, label, title), anchor: 'center' })
         .setLngLat([p.lng, p.lat]).addTo(this.map);
       this.marks.push(mk);
-      pts.push(p);
+      if (fit !== false) pts.push(p);
     };
     put(day.start, 'mk-anchor', '', day.start.name || 'Where the day starts');
     if (day.end && (day.end.lat != null)) put(day.end, 'mk-anchor', '', day.end.name || 'Where the day ends');
     C.planPlaces(trip, dayId, day.shown).forEach((p, i) => put(p, 'mk-plan', String(i + 1), p.name));
     C.ideasFor(trip, dayId, day.shown).forEach((p) => put(p, 'mk-idea', '', p.name));
+    // Backlog dots are there to spot an idea near today's route; they never pull the view about.
+    const dots = !!(opts && opts.backlog);
+    if (dots) C.backlogPlaces(trip).forEach((p) => put(p, 'mk-backlog', '', p.name + ' · backlog', false));
 
     // Only move the view when the day or its places change, so panning is never yanked back.
-    const as = dayId + '|' + day.shown + '|' + this.marks.length;
+    const as = dayId + '|' + day.shown + '|' + this.marks.length + '|' + dots;
     if (as === this.shownAs) return;
     this.shownAs = as;
     if (pts.length) {
