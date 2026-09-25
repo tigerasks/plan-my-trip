@@ -329,5 +329,25 @@ ok(C.nearText(near(35.5, 136.5)).indexOf('km from') > 0, 'too far to walk is giv
 ok(C.nearestInDay(demoTrip, '2026-11-21', {}) === null, 'a place with no position has no distance');
 ok(C.nearText(null) === '', 'and nothing to say about it');
 
+console.log('\n== Adding several days at once ==');
+let many = withDemo((t) => C.addDays(t, '2026-11-23', 4, 'Nara'));
+ok(many.out.ok && C.dayIds(many.t).join(' ') === '2026-11-21 2026-11-22 2026-11-23 2026-11-24 2026-11-25 2026-11-26',
+  'a run of days is created: ' + C.dayIds(many.t).join(' '));
+ok(many.out.text === '4 days added, Mon 23 Nov to Thu 26 Nov', 'and said plainly: ' + many.out.text);
+ok(many.t.days['2026-11-25'].city === 'Nara', 'each with the city it was given');
+
+many = withDemo((t) => C.addDays(t, '2026-11-20', 3, 'Kyoto'));
+ok(many.out.added.join(' ') === '2026-11-20', 'days the trip already has are left alone');
+ok(many.t.days['2026-11-21'].city === 'Kyoto' && many.t.days['2026-11-21'].plans.balanced.length === 2,
+  'exactly as they were, places and all');
+ok(/2 days were already there, left as they were/.test(many.out.text), 'and it says so, in the right number: ' + many.out.text);
+ok(/1 day was already there, left as it was/.test(C.addDays(C.normalise(clone(demoEnv.trip)).trip, '2026-11-22', 2).text), 'and in the singular too');
+
+many = withDemo((t) => C.addDays(t, '2026-11-21', 2));
+ok(!many.out.ok && /already has all 2 of those days/.test(many.out.text), 'a run that adds nothing says that: ' + many.out.text);
+ok(!C.addDays(C.newTrip('x'), 'whenever', 3).ok, 'and prose is still not a date');
+ok(C.addDays(C.newTrip('x'), '2026-11-21', 999).added.length === 60, 'a silly number of days is capped at 60');
+ok(C.addDays(C.newTrip('x'), '2026-02-27', 3).added.join(' ') === '2026-02-27 2026-02-28 2026-03-01', 'and months roll over properly');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
