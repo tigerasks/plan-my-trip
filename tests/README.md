@@ -23,7 +23,8 @@ python3 -m venv .venv
 
 Both print a `PASS`/`FAIL` line per check. `app_test.py` exits non-zero when anything fails or the
 page logs a console error; run it before every commit. Screenshots land in `tests/shots/` at
-1280×800 and 390×844, light and dark, and are committed so that visual changes show up in the diff.
+1280×800 and 390×844, light and dark. They are not committed: they carry timestamps and timings, so
+every run would rewrite a few of them. Look at them on disk after a run.
 
 `PROBE_URL=https://tigerasks.github.io/plan-my-trip/probe.html .venv/bin/python tests/probe_test.py`
 points the probe test at a copy that is already served. The live services are only ever exercised by
@@ -39,4 +40,4 @@ opening `docs/probe.html` in a browser by hand.
 | `app_test.py` | walk-through of the planner |
 | `demo-trip.json` | an obviously fake trip used as test data |
 | `core_test.js` | Node tests for `docs/core.js`, run with `node tests/core_test.js` |
-| `shots/` | screenshots from the last run |
+| `shots/` | screenshots from the last run, not committed |

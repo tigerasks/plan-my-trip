@@ -295,3 +295,9 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,intellij+all,python
+
+### Day planner ###
+
+# Screenshots from the test runs. They carry timestamps and timings, so every run rewrites a few
+# of them; look at them on disk rather than in the diff.
+tests/shots/
