@@ -1,0 +1,123 @@
+{
+  "schema": "day-planner/2",
+  "kind": "save",
+  "tripId": "example-kyoto",
+  "title": "Example · Kyoto (made up)",
+  "at": "2026-09-25T10:04:12Z",
+  "app": "day-planner 2.0.0",
+  "trip": {
+    "id": "example-kyoto",
+    "title": "Example · Kyoto (made up)",
+    "tzLabel": "JST",
+    "transit": "city",
+    "currency": null,
+    "fx": null,
+    "fxAt": null,
+    "lookups": [{ "label": "Example look-up", "url": "https://example.org/search" }],
+    "days": {
+      "2026-11-21": {
+        "id": "2026-11-21",
+        "date": "2026-11-21",
+        "city": "Kyoto",
+        "start": { "name": "Example Hotel · Kyoto Station", "lat": 34.9858, "lng": 135.7588, "time": "08:30" },
+        "end": { "name": "", "lat": null, "lng": null, "time": "21:00" },
+        "lunch": { "from": "11:30", "to": "13:30", "duration": 60, "on": true },
+        "plans": {
+          "less": ["example-temple"],
+          "balanced": ["example-temple", "made-up-market"],
+          "packed": ["example-temple", "pretend-noodle-bar", "made-up-market"]
+        },
+        "shown": "balanced",
+        "centre": { "lat": 34.9958, "lng": 135.772, "zoom": 13 },
+        "note": "Everything in this example is invented: the places, their hours and their prices."
+      },
+      "2026-11-22": {
+        "id": "2026-11-22",
+        "date": "2026-11-22",
+        "city": "Kyoto",
+        "start": { "name": "Example Hotel · Kyoto Station", "lat": 34.9858, "lng": 135.7588, "time": "09:00" },
+        "end": { "name": "", "lat": null, "lng": null, "time": "19:30" },
+        "lunch": { "from": "12:00", "to": "14:00", "duration": 45, "on": true },
+        "plans": { "less": [], "balanced": ["example-garden"], "packed": ["example-garden"] },
+        "shown": "balanced",
+        "centre": null,
+        "note": ""
+      }
+    },
+    "places": {
+      "example-temple": {
+        "id": "example-temple", "name": "Example Temple", "localName": "見本寺",
+        "lat": 34.9948, "lng": 135.785, "kind": "culture", "area": "Eastern hills",
+        "duration": 90, "fixed": null, "window": null,
+        "hours": {
+          "source": "osm", "verified": false, "raw": "Mo-Su 06:00-18:00 (invented)",
+          "week": {
+            "mon": [["06:00", "18:00"]], "tue": [["06:00", "18:00"]], "wed": [["06:00", "18:00"]],
+            "thu": [["06:00", "18:00"]], "fri": [["06:00", "18:00"]], "sat": [["06:00", "21:00"]],
+            "sun": [["06:00", "21:00"]]
+          },
+          "lastEntry": { "sat": "20:30", "sun": "20:30" }
+        },
+        "closed": [], "meal": false, "booked": false, "priority": "must",
+        "price": { "amount": 400, "currency": "JPY", "per": "pp" },
+        "check": "Made-up hours — check before the trip",
+        "note": "An invented temple, used to try the planner out.",
+        "links": [{ "label": "Example", "url": "https://example.org/temple" }],
+        "osm": { "type": "way", "id": 100000001 },
+        "added": { "by": "chat", "how": "package", "at": "2026-09-20T09:00:00Z" },
+        "dayId": "2026-11-21"
+      },
+      "made-up-market": {
+        "id": "made-up-market", "name": "Made-up Market", "localName": "架空市場",
+        "lat": 35.005, "lng": 135.7649, "kind": "shop", "area": "City centre",
+        "duration": 60, "fixed": null, "window": null,
+        "hours": { "source": "chat", "verified": true, "raw": "", "week": { "mon": [["09:00", "18:00"]], "tue": [["09:00", "18:00"]], "wed": [["09:00", "18:00"]], "thu": [["09:00", "18:00"]], "fri": [["09:00", "18:00"]], "sat": [["09:00", "18:00"]], "sun": [] }, "lastEntry": {} },
+        "closed": [], "meal": false, "booked": false, "priority": "want",
+        "price": null, "check": "", "note": "", "links": [], "osm": null,
+        "added": { "by": "chat", "how": "package", "at": "2026-09-20T09:01:00Z" },
+        "dayId": "2026-11-21"
+      },
+      "pretend-noodle-bar": {
+        "id": "pretend-noodle-bar", "name": "Pretend Noodle Bar", "localName": "",
+        "lat": 35.0032, "lng": 135.769, "kind": "food", "area": "City centre",
+        "duration": 45, "fixed": null, "window": null, "hours": null,
+        "closed": [], "meal": true, "booked": false, "priority": null,
+        "price": { "text": "About ¥1,000 (invented)" },
+        "check": "Hours unknown — check", "note": "", "links": [], "osm": null,
+        "added": { "by": "you", "how": "map", "at": "2026-09-24T11:30:00Z" },
+        "dayId": "2026-11-21"
+      },
+      "example-garden": {
+        "id": "example-garden", "name": "Example Garden", "localName": "見本庭園",
+        "lat": 35.0269, "lng": 135.7983, "kind": "nature", "area": "Northern hills",
+        "duration": 60, "fixed": null, "window": null, "hours": null,
+        "closed": [], "meal": false, "booked": false, "priority": null,
+        "price": null, "check": "", "note": "", "links": [], "osm": null,
+        "added": { "by": "you", "how": "search", "at": "2026-09-24T12:00:00Z" },
+        "dayId": "2026-11-22"
+      },
+      "imaginary-museum": {
+        "id": "imaginary-museum", "name": "Imaginary Museum", "localName": "",
+        "lat": 35.0116, "lng": 135.7681, "kind": "museum", "area": "City centre",
+        "duration": 120, "fixed": null, "window": null, "hours": null,
+        "closed": [], "meal": false, "booked": false, "priority": "want",
+        "price": { "amount": 1200, "currency": "JPY", "per": "pp" },
+        "check": "", "note": "Invented, for the backlog.", "links": [], "osm": null,
+        "added": { "by": "chat", "how": "package", "at": "2026-09-20T09:02:00Z" },
+        "dayId": null
+      },
+      "nowhere-viewpoint": {
+        "id": "nowhere-viewpoint", "name": "Nowhere Viewpoint", "localName": "",
+        "lat": 34.967, "lng": 135.773, "kind": "view", "area": "Southern hills",
+        "duration": 30, "fixed": null, "window": null, "hours": null,
+        "closed": [], "meal": false, "booked": false, "priority": null,
+        "price": null, "check": "", "note": "", "links": [], "osm": null,
+        "added": { "by": "you", "how": "pin", "at": "2026-09-24T13:00:00Z" },
+        "dayId": null
+      }
+    },
+    "backlog": ["imaginary-museum", "nowhere-viewpoint"],
+    "createdAt": "2026-09-20T09:00:00Z",
+    "updatedAt": "2026-09-25T10:04:12Z"
+  }
+}
