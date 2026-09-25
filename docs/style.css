@@ -74,6 +74,10 @@ a { color: var(--ink-2); }
 }
 .mapwrap { position: relative; background: var(--map-bg); min-width: 0; }
 #map { position: absolute; inset: 0; }
+#map.pinning, #map.pinning canvas { cursor: crosshair; }
+.map-ctl { position: absolute; left: 10px; bottom: 10px; z-index: 2; }
+.map-ctl .btn { box-shadow: var(--shadow); }
+.map-ctl .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .maplibregl-ctrl-attrib { font-size: 11px; }
 .mk {
   display: flex; align-items: center; justify-content: center; box-sizing: border-box;

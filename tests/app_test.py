@@ -336,6 +336,34 @@ with sync_playwright() as pw:
     pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.7, lat: 35.0}})")
     pg.wait_for_timeout(200)
     ck('Nothing named there' in pg.inner_text('#toast'), 'tapping bare building says so: ' + pg.inner_text('#toast'))
+
+    # ---- dropping a pin
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Drop a pin'), 'the toast offers to drop a pin there instead')
+    ck('35.00000, 135.70000' in pg.inner_text('#sheet'), 'at the spot that was tapped')
+    pg.click('[data-act="add-pin"][data-to="backlog"]')
+    pg.wait_for_timeout(200)
+    ck('name first' in pg.inner_text('#sheet .note.bad'), 'a pin with no name is refused: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#pinName', 'Where we said we would meet')
+    pg.select_option('#pinKind', 'other')
+    pg.click('[data-act="add-pin"][data-to="backlog"]')
+    pg.wait_for_timeout(900)
+    pinned = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']
+    key = [k for k in pinned if pinned[k]['added']['how'] == 'pin' and pinned[k]['name'].startswith('Where we')]
+    ck(len(key) == 1, 'a named pin joins the trip, noted as a pin')
+    ck(pinned[key[0]]['lat'] == 35.0 and pinned[key[0]]['osm'] is None, 'at its spot, with no OpenStreetMap entry behind it')
+
+    # the map control arms the next tap
+    pg.click('[data-act="pin-mode"]')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('[data-act="pin-mode"]').get_attribute('aria-pressed') == 'true', 'the pin button arms the next tap')
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][2]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 5, y: 5}, lngLat: {lng: 135.8, lat: 34.9}})")
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Drop a pin'), 'and armed, a tap pins even where the map knows a place')
+    ck(pg.locator('[data-act="pin-mode"]').get_attribute('aria-pressed') == 'false', 'then disarms itself')
+    pg.screenshot(path=str(SHOTS / 'app_pin_desktop_light.png'))
     ctx.close()
 
     # ---- trip settings

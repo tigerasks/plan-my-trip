@@ -27,6 +27,7 @@ const App = {
   ui: {
     dayId: null, sheet: null, backlogDots: true,
     find: { q: '', busy: false, results: null, error: '' },   // the search box
+    pinning: false,                                           // the next tap drops a pin
   },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
   fileAt: null,          // when this device last saved a file, as an ISO stamp
@@ -123,6 +124,7 @@ function renderHeader() {
   $('#tripBtn .name').textContent = t ? t.title : 'Day planner';
   const ids = t ? C.dayIds(t) : [];
   $('#addDayBtn').hidden = !t;
+  $('#mapCtl').hidden = !t || M.failed;
   const pick = $('#dayPick');
   pick.hidden = !ids.length;
   if (!ids.length) return;
@@ -333,6 +335,21 @@ function reportHtml(r) {
     + (r.lines.length ? '<ul class="reasons">' + r.lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>' : '')
     + '</div>';
 }
+// The three ways in, or the one when there is no day yet.
+function addButtonsHtml(act) {
+  const day = currentDay();
+  return '<div class="sh-sec"><span class="label">Add it</span>'
+    + '<p class="note">' + esc(day
+      ? 'To the plan you are looking at, to the day without putting it in a version, or to the backlog for later.'
+      : 'There are no days yet, so it waits in the backlog until there is one.') + '</p>'
+    + '<div class="actions">'
+    + (day
+      ? '<button type="button" class="btn primary" data-act="' + act + '" data-to="plan">Add to ' + esc(C.PLAN_LABEL[day.shown]) + '</button>'
+        + '<button type="button" class="btn" data-act="' + act + '" data-to="day">Add to today</button>'
+        + '<button type="button" class="btn" data-act="' + act + '" data-to="backlog">Add to the backlog</button>'
+      : '<button type="button" class="btn primary" data-act="' + act + '" data-to="backlog">Add to the backlog</button>')
+    + '</div></div>';
+}
 const sheetHead = (title, sub) =>
   '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
   + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
@@ -345,23 +362,21 @@ const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; 
 const SHEETS = {
   // Look before you add: nothing joins the trip until you choose. What the map already knows is
   // here at once; the rest fills in as it arrives.
+  pin: (s) => sheetHead('Drop a pin', s.at.lat.toFixed(5) + ', ' + s.at.lng.toFixed(5))
+    + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+    + '<p class="note">The map has nothing named here, so give this spot a name of your own.</p>'
+    + field('pinName', 'Name', textIn('pinName', s.name || '', ' maxlength="120" placeholder="Meeting point"'))
+    + field('pinKind', 'What is it?', '<select class="in" id="pinKind">' + C.KINDS.map((k) =>
+      '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
+    + addButtonsHtml('add-pin'),
+
   preview: (s) => {
     const p = s.place;
     const day = currentDay();
     const where = [C.KIND_LABEL[p.kind], p.where || p.area].filter(Boolean).join(' · ');
     return sheetHead(p.name, p.localName || '')
       + (where ? '<p class="note">' + esc(where) + '</p>' : '')
-      + '<div class="sh-sec"><span class="label">Add it</span>'
-      + '<p class="note">' + esc(day
-        ? 'To the plan you are looking at, to the day without putting it in a version, or to the backlog for later.'
-        : 'There are no days yet, so it waits in the backlog until there is one.') + '</p>'
-      + '<div class="actions">'
-      + (day
-        ? '<button type="button" class="btn primary" data-act="add-place" data-to="plan">Add to ' + esc(C.PLAN_LABEL[day.shown]) + '</button>'
-          + '<button type="button" class="btn" data-act="add-place" data-to="day">Add to today</button>'
-          + '<button type="button" class="btn" data-act="add-place" data-to="backlog">Add to the backlog</button>'
-        : '<button type="button" class="btn primary" data-act="add-place" data-to="backlog">Add to the backlog</button>')
-      + '</div></div>';
+      + addButtonsHtml('add-place');
   },
 
   // A trip travels two ways with the same content: as a .json file, or as a block of text.
@@ -455,10 +470,30 @@ const SHEETS = {
 
 function onMapTap(place, at, featureCount) {
   if (!App.trip) { toast('Start a trip first, then tap the map to add places to it.'); return; }
+  if (App.ui.pinning) { setPinning(false); openPin(at); return; }
   if (place) { openPreview(place); return; }
-  toast(featureCount
-    ? 'Nothing named there. Tap right on a label or an icon.'
-    : 'Nothing on the map there.');
+  toast(featureCount ? 'Nothing named there. Tap right on a label or an icon.' : 'Nothing on the map there.',
+    { label: 'Drop a pin here', fn: () => openPin(at) }, 9000);
+}
+function setPinning(on) {
+  App.ui.pinning = !!on;
+  const btn = $('#mapCtl button');
+  if (btn) btn.setAttribute('aria-pressed', String(App.ui.pinning));
+  $('#map').classList.toggle('pinning', App.ui.pinning);
+  if (App.ui.pinning) toast('Tap the map where you want the pin.', null, 6000);
+}
+// A pin is a place the map does not know about: a meeting point, a shop with no label, a view.
+function openPin(at) {
+  openSheet('pin', { at: at });
+}
+
+function addPlaceTo(place, to) {
+  const day = currentDay();
+  const res = C.addPlace(App.trip, place, to === 'backlog' || !day ? null : day.id);
+  if (to === 'plan' && day) C.addToPlan(App.trip, res.id, day.shown, C.bestSlot(App.trip, day.id, day.shown, res.id));
+  closeSheet();
+  changed(res.place.name + ' added to ' + (to === 'backlog' || !day ? 'the backlog'
+    : to === 'plan' ? C.PLAN_LABEL[day.shown] : C.fmtDateUK(day.id)));
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
@@ -645,18 +680,16 @@ const ACTIONS = {
     const found = (App.ui.find.results || [])[+el.dataset.i];
     if (found) openPreview(found);
   },
-  'add-place': (el) => {
+  'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
+  'pin-mode': () => setPinning(!App.ui.pinning),
+  'add-pin': (el) => {
     const s = App.ui.sheet;
-    if (!s || !s.place) return;
-    const day = currentDay();
-    const to = el.dataset.to;
-    const res = C.addPlace(App.trip, s.place, to === 'backlog' || !day ? null : day.id);
-    if (to === 'plan' && day) {
-      C.addToPlan(App.trip, res.id, day.shown, C.bestSlot(App.trip, day.id, day.shown, res.id));
-    }
-    closeSheet();
-    changed(res.place.name + ' added to ' + (to === 'backlog' || !day ? 'the backlog'
-      : to === 'plan' ? C.PLAN_LABEL[day.shown] : C.fmtDateUK(day.id)));
+    const name = val('pinName');
+    if (!name) { s.error = 'Give the pin a name first.'; s.name = ''; render(); $('#pinName').focus(); return; }
+    addPlaceTo({
+      name: name, kind: val('pinKind'), lat: s.at.lat, lng: s.at.lng,
+      added: { by: 'you', how: 'pin', at: null },
+    }, el.dataset.to);
   },
   'backlog-dots': () => {
     App.ui.backlogDots = !App.ui.backlogDots;
