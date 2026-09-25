@@ -349,6 +349,71 @@ function normDay(raw, issues, now) {
   d.legs = obj(r.legs);
   return d;
 }
+// ---------- where you sleep ----------
+// A stay is one booking: a place, a first night and a number of nights. The days it covers take
+// their start and end from it, so a hotel is entered once rather than on every day of the week.
+// Three nights from the 21st means the nights of the 21st, 22nd and 23rd: it is where those days
+// end, and where the 22nd, 23rd and 24th start.
+function shiftDate(iso, days) {
+  const d = new Date(normDate(iso) + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function normStay(raw) {
+  const r = obj(raw);
+  const s = {};
+  s.id = cleanId(r.id) || slug(r.name) || 'stay';
+  s.name = str(r.name, 120) || s.id;
+  s.localName = str(r.localName, 120);
+  const lat = toNum(r.lat), lng = toNum(r.lng != null ? r.lng : r.lon);
+  const ok = lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+  s.lat = ok ? lat : null;
+  s.lng = ok ? lng : null;
+  s.area = str(r.area, 80);
+  s.from = normDate(r.from);
+  s.nights = clamp(Math.round(toNum(r.nights) || 1), 1, 60);
+  s.note = str(r.note, 500);
+  s.osm = normOsm(r.osm);
+  return s;
+}
+const stayNights = (s) => ({ first: s.from, last: shiftDate(s.from, s.nights - 1) });
+const stayMornings = (s) => ({ first: shiftDate(s.from, 1), last: shiftDate(s.from, s.nights) });
+// The days a stay touches at all, which is what gets created with it.
+const stayDays = (s) => ({ first: s.from, last: shiftDate(s.from, s.nights) });
+
+// Which stay a day starts or ends at. Where two overlap, the later check-in wins.
+function stayFor(trip, dayId, which) {
+  const date = normDate(dayId);
+  if (!date) return null;
+  let best = null;
+  for (const s of arr(obj(trip).stays)) {
+    if (!s.from) continue;
+    const span = which === 'start' ? stayMornings(s) : stayNights(s);
+    if (date >= span.first && date <= span.last && (!best || s.from > best.from)) best = s;
+  }
+  return best;
+}
+// Where a day begins and ends: the stay if one covers it, otherwise whatever the day itself holds.
+function dayStart(trip, dayId) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return null;
+  const s = stayFor(trip, dayId, 'start');
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.start.time, stayId: s.id };
+  return { name: d.start.name, localName: '', lat: d.start.lat, lng: d.start.lng, time: d.start.time, stayId: null };
+}
+function dayEnd(trip, dayId) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d || !d.end) return null;
+  const s = stayFor(trip, dayId, 'end');
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.end.time, stayId: s.id };
+  const start = dayStart(trip, dayId);
+  const own = str(d.end.name);
+  if (own) return { name: own, localName: '', lat: d.end.lat, lng: d.end.lng, time: d.end.time, stayId: null };
+  // The morning you check out, "back where you started" would mean the hotel you have just left.
+  if (start.stayId) return { name: '', localName: '', lat: null, lng: null, time: d.end.time, stayId: null };
+  return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time: d.end.time, stayId: null };
+}
+
 function normTrip(raw, now) {
   const r = obj(raw);
   const issues = [];
@@ -373,6 +438,23 @@ function normTrip(raw, now) {
     t.lookups.push({ label: str(obj(l).label, 40) || 'Look up', url });
     if (t.lookups.length >= 6) break;
   }
+
+  // where you sleep
+  t.stays = [];
+  const stayIds = new Set();
+  for (const rawStay of arr(r.stays)) {
+    const st = normStay(rawStay);
+    if (!st.from) { issues.push('A stay at "' + st.name + '" had no first night, so it was left out'); continue; }
+    if (stayIds.has(st.id)) {
+      let k = 2;
+      while (stayIds.has(st.id + '-' + k)) k++;
+      st.id = st.id + '-' + k;
+    }
+    stayIds.add(st.id);
+    t.stays.push(st);
+    if (t.stays.length >= 60) break;
+  }
+  t.stays.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
 
   // days, keyed by their date
   t.days = {};
@@ -912,6 +994,65 @@ function addDays(trip, date, count, city, now) {
   };
 }
 
+// Putting a stay in also puts in the days it covers: the nights plus the morning you check out.
+// Days the trip already has are left exactly as they are, places and all.
+function fillStayDays(trip, stay, now) {
+  const span = stayDays(stay);
+  return addDays(trip, span.first, stay.nights + 1, nearestCity(trip, span.first), now);
+}
+// New days take the city of whichever day of the trip sits closest to them.
+function nearestCity(trip, date) {
+  const day = new Date(date + 'T00:00:00Z').getTime();
+  let best = null, gap = Infinity;
+  for (const id of dayIds(trip)) {
+    const city = str(trip.days[id].city);
+    if (!city) continue;
+    const away = Math.abs(new Date(id + 'T00:00:00Z').getTime() - day);
+    if (away < gap) { gap = away; best = city; }
+  }
+  return best || '';
+}
+function addStay(trip, raw, now) {
+  const stay = normStay(raw);
+  if (!stay.from) return { ok: false, text: 'A stay needs the date of its first night', added: [] };
+  if (!str(raw && raw.name)) return { ok: false, text: 'Give the place you are staying a name first', added: [] };
+  let id = stay.id, k = 2;
+  while (trip.stays.some((s) => s.id === id)) { id = stay.id + '-' + k; k++; }
+  stay.id = id;
+  trip.stays.push(stay);
+  trip.stays.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const days = fillStayDays(trip, stay, now);
+  touch(trip, now);
+  return {
+    ok: true, id: stay.id, stay, added: days.added,
+    text: stay.name + ', ' + stay.nights + (stay.nights === 1 ? ' night' : ' nights') + ' from ' + fmtDateUK(stay.from)
+      + (days.added.length ? ' · ' + days.added.length + (days.added.length === 1 ? ' day' : ' days') + ' added' : ''),
+  };
+}
+const stayById = (trip, id) => arr(obj(trip).stays).find((s) => s.id === id) || null;
+function updateStay(trip, id, patch, now) {
+  const stay = stayById(trip, id);
+  if (!stay) return { ok: false, text: 'That stay is no longer here', added: [] };
+  const next = normStay(Object.assign({}, stay, obj(patch), { id: stay.id }));
+  if (!next.from) return { ok: false, text: 'A stay needs the date of its first night', added: [] };
+  Object.assign(stay, next);
+  trip.stays.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const days = fillStayDays(trip, stay, now);
+  touch(trip, now);
+  return {
+    ok: true, id: stay.id, stay, added: days.added,
+    text: stay.name + ' saved' + (days.added.length ? ' · ' + days.added.length + (days.added.length === 1 ? ' day' : ' days') + ' added' : ''),
+  };
+}
+// Removing a stay leaves the days alone: they may well have places on them by now.
+function deleteStay(trip, id, now) {
+  const at = arr(obj(trip).stays).findIndex((s) => s.id === id);
+  if (at < 0) return { ok: false, text: 'That stay is no longer here' };
+  const [gone] = trip.stays.splice(at, 1);
+  touch(trip, now);
+  return { ok: true, stay: gone, text: gone.name + ' removed. Its days are still in the trip.' };
+}
+
 // Deleting a day sends its ideas back to the backlog.
 function deleteDay(trip, dayId, now) {
   const d = trip.days[dayId];
@@ -1106,6 +1247,8 @@ const Core = {
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
+  normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
+  addStay, updateStay, deleteStay, stayById,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   osmDays, osmSpans, parseOsmHours, hoursFromOsm, hoursText,
   PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,

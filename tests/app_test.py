@@ -404,15 +404,75 @@ with sync_playwright() as pw:
        'and a marker on the map opens that place\'s card')
     ctx.close()
 
+    # ---- accommodation
+    ctx, pg = open_page(held=DEMO, extra=services)
+    ck('No accommodation for this day' in pg.inner_text('.stay-line'), 'a day with nowhere to sleep says so')
+    pg.click('[data-act="add-stay"]')
+    pg.wait_for_timeout(250)
+    ck(pg.input_value('#stFrom') == '2026-11-21' and pg.input_value('#stNights') == '1', 'the stay sheet opens on the day you are looking at')
+    ck('Type an address or a hotel name' in pg.inner_text('#sheet'), 'and asks for an address')
+    pg.fill('#stName', 'nintendo museum')
+    pg.wait_for_timeout(1600)
+    ck(pg.locator('#stResults .item').count() == 2, 'typing looks the address up')
+    pg.click('#stResults .item >> nth=0')
+    pg.wait_for_timeout(300)
+    ck(pg.input_value('#stName') == 'Nintendo Museum', 'picking one fills the name')
+    ck('On the map at' in pg.inner_text('#sheet'), 'and pins it to the map: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'On the map' in l][0])
+    pg.fill('#stName', 'Example Ryokan')
+    pg.fill('#stNights', '3')
+    pg.wait_for_timeout(100)
+    pg.fill('#stFrom', '2026-11-21')
+    pg.click('[data-act="save-stay"]')
+    pg.wait_for_timeout(900)
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(len(trip['stays']) == 1 and trip['stays'][0]['nights'] == 3, 'the stay is kept once, with its nights')
+    ck(trip['stays'][0]['lat'] is None, 'a name typed over the picked one drops the position with it')
+    ck(sorted(trip['days'].keys()) == ['2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24'],
+       'and the days it covers are created: ' + ' '.join(sorted(trip['days'].keys())))
+    ck('Example Ryokan' in pg.inner_text('.stay-line'), 'it shows at the top of the day')
+    ck('Back at Example Ryokan' in pg.inner_text('.day-card'), 'and the day now ends there: '
+       + [l for l in pg.inner_text('.day-card').split(chr(10)) if 'Back at' in l][0])
+    pg.screenshot(path=str(SHOTS / 'app_stay_desktop_light.png'))
+
+    pg.select_option('#daySel', '2026-11-24')
+    pg.wait_for_timeout(250)
+    ck('Leave Example Ryokan' in pg.inner_text('.day-card'), 'the check-out morning still starts there')
+    ck('check out this morning' in pg.inner_text('.stay-line'), 'and says that is what it is: ' + pg.inner_text('.stay-line').replace(chr(10), ' / '))
+    ck('not set yet' in pg.inner_text('.day-card'), 'with the evening left open')
+
+    pg.click('[data-act="edit-stay"]')
+    pg.wait_for_timeout(250)
+    ck('3 nights means you sleep from Sat 21 Nov to Mon 23 Nov and check out on the morning of Tue 24 Nov' in pg.inner_text('#sheet'),
+       'the sheet spells out what the nights mean: ' + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'nights means' in l][0][:90])
+
+    # a known position survives an edit that does not touch it
+    pg.evaluate("() => { const t = window.DayPlannerApp.trip; t.stays[0].lat = 35.0; t.stays[0].lng = 135.77; return true; }")
+    pg.fill('#stNights', '2')
+    pg.click('[data-act="save-stay"]')
+    pg.wait_for_timeout(900)
+    kept = pg.evaluate('window.DayPlannerApp.trip.stays[0]')
+    ck(kept['nights'] == 2 and kept['lat'] == 35.0, 'changing the nights leaves the position alone')
+    ck('No accommodation for this day' in pg.inner_text('.stay-line'), 'and a shorter stay stops covering the days it no longer reaches')
+    pg.select_option('#daySel', '2026-11-22')
+    pg.wait_for_timeout(200)
+    pg.click('[data-act="edit-stay"]')
+    pg.wait_for_timeout(250)
+    pg.click('[data-act="drop-stay"]')
+    pg.wait_for_timeout(900)
+    after = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(len(after['stays']) == 0 and len(after['days']) == 4, 'removing a stay leaves its days behind')
+    ck('days are still in the trip' in pg.inner_text('#toast'), 'and says so: ' + pg.inner_text('#toast'))
+    ctx.close()
+
     # ---- a day's shape
     ctx, pg = open_page(held=DEMO)
     pg.click('[data-act="day"]')
     pg.wait_for_timeout(200)
-    ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edStartName') == 'Example Hotel · Kyoto Station',
+    ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edCity') == 'Kyoto',
        'the day sheet opens on what the day holds')
     ck(pg.input_value('#edLunchFrom') == '11:30' and pg.input_value('#edLunchFor') == '60', 'lunch included')
     pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
-    pg.fill('#edStartName', 'Example Ryokan')
     pg.fill('#edStartTime', '07:45')
     pg.fill('#edEndTime', '')
     pg.uncheck('#edLunchOn')
@@ -420,12 +480,12 @@ with sync_playwright() as pw:
     pg.click('[data-act="save-day-shape"]')
     pg.wait_for_timeout(900)
     panel = pg.inner_text('#panel')
-    ck('07:45' in panel and 'Leave Example Ryokan' in panel, 'the times and the start place follow')
+    ck('07:45' in panel, 'the times follow')
     card = pg.inner_text('#panel .day-card')
     ck('Open-ended day' in card and 'Lunch' not in card, 'an empty back-by time makes the day open-ended, and lunch can be dropped')
     ck('Made-up day, made-up note.' in panel, 'and the note shows under the day')
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['days']['2026-11-21']
-    ck(held['end'] is None and held['start']['lat'] is None, 'a renamed start place drops the position it had, ready for search')
+    ck(held['end'] is None, 'and an empty time back leaves the day open-ended')
 
     pg.click('[data-act="day"]')
     pg.wait_for_timeout(150)
@@ -457,6 +517,7 @@ with sync_playwright() as pw:
 
     # ---- searching for a place
     ctx, pg = open_page(held=DEMO, extra=services)
+    asked.clear()          # other sections search too; this one counts its own requests
     pg.fill('#findBox', 'n')
     pg.wait_for_timeout(600)
     ck(len(asked) == 0, 'one letter is not a search')

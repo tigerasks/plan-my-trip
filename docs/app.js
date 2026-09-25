@@ -16,6 +16,7 @@ const ICON = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  bed: '<path d="M3 18v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6"/><path d="M3 18h18M7 10V7h5v3"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
   down: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
   up: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
@@ -211,15 +212,16 @@ function noDaysHtml() {
     + '</div>';
 }
 function dayHtml(day) {
-  const end = day.end;
-  const endName = end ? (end.name || day.start.name) : '';
+  const start = C.dayStart(App.trip, day.id);
+  const end = C.dayEnd(App.trip, day.id);
   return '<div class="card day-card">'
+    + stayLineHtml(day, start)
     + '<div class="card-head"><span class="label">' + esc(C.fmtDateLongUK(day.id)) + (day.city ? ' · ' + esc(day.city) : '') + '</span>'
     + '<button type="button" class="icon-btn" data-act="day" aria-label="Day settings">' + ic('sliders') + '</button></div>'
-    + '<div class="day-line"><span class="t">' + esc(day.start.time) + '</span>'
-    + (day.start.name ? '<span>Leave ' + esc(day.start.name) + '</span>' : '<span class="muted">Where you set off from is not set yet</span>') + '</div>'
+    + '<div class="day-line"><span class="t">' + esc(start.time) + '</span>'
+    + (start.name ? '<span>Leave ' + esc(start.name) + '</span>' : '<span class="muted">Where you set off from is not set yet</span>') + '</div>'
     + (end
-      ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span' + (endName ? '>Back at ' + esc(endName) : ' class="muted">Back where you started') + '</span></div>'
+      ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span' + (end.name ? '>Back at ' + esc(end.name) : ' class="muted">Where the day ends is not set yet') + '</span></div>'
       : '<div class="day-line"><span class="t">—</span><span class="muted">Open-ended day</span></div>')
     + (day.lunch.on
       ? '<div class="day-line"><span class="t">Lunch</span><span class="muted">' + esc(C.fmtDur(day.lunch.duration)) + ', between ' + esc(day.lunch.from) + ' and ' + esc(day.lunch.to) + '</span></div>'
@@ -228,6 +230,95 @@ function dayHtml(day) {
     + versionsHtml(day)
     + '</div>';
 }
+// The name of a place to sleep is also an address, so typing looks it up. You can leave it as
+// plain text — an apartment with no entry on the map still needs a name — but picking a result
+// pins it to the map, which is what the day's travel times will want.
+function stayNameHtml(s, stay) {
+  const name = s.name != null ? s.name : (stay ? stay.name : '');
+  const at = s.pick || (stay && C.hasPos(stay) ? stay : null);
+  return field('stName', 'Where', textIn('stName', name, ' maxlength="120" placeholder="Example Ryokan, Kyoto" autocomplete="off"'))
+    + '<div id="stResults">' + stayResultsHtml(s) + '</div>'
+    + '<p class="hint">' + (at
+      ? esc('On the map at ' + (at.area || at.where || (at.lat.toFixed(4) + ', ' + at.lng.toFixed(4))) + '.')
+      : 'Type an address or a hotel name and pick it from the list, so the planner knows where it is.')
+    + '</p>';
+}
+function stayResultsHtml(s) {
+  if (s.findError) return '<p class="hint bad">' + esc(s.findError) + '</p>';
+  if (s.busy) return '<p class="hint">Looking…</p>';
+  if (!s.results || !s.results.length) return '';
+  return '<ul class="list">' + s.results.map((p, i) =>
+    '<li><button type="button" class="item" data-act="pick-stay" data-i="' + i + '">'
+    + '<span class="dot"></span><span class="body"><span class="nm">' + esc(p.name) + '</span>'
+    + '<span class="meta">' + esc(p.where) + '</span></span></button></li>').join('') + '</ul>';
+}
+let stayFindSeq = 0;
+let stayFindTimer = 0;
+function onStayInput(e) {
+  const s = App.ui.sheet;
+  if (!s) return;
+  s.name = e.target.value;
+  s.pick = null;                       // a typed name is no longer the one that was picked
+  clearTimeout(stayFindTimer);
+  stayFindTimer = setTimeout(runStayFind, 400);
+}
+function runStayFind() {
+  const s = App.ui.sheet;
+  if (!s || s.kind !== 'stay') return;
+  const q = C.str(s.name);
+  const mine = ++stayFindSeq;
+  if (q.length < 3) { s.busy = false; s.results = null; s.findError = ''; renderStayResults(); return; }
+  s.busy = true;
+  s.findError = '';
+  renderStayResults();
+  Live.fetchJson(C.photonUrl(q, M.centre())).then(
+    (json) => {
+      if (mine !== stayFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = C.parsePhoton(json, new Date().toISOString()).slice(0, 5);
+      renderStayResults();
+    },
+    (err) => {
+      if (mine !== stayFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = null;
+      App.ui.sheet.findError = 'Address search ' + Live.why(err) + '. You can still type the name yourself.';
+      renderStayResults();
+    });
+}
+function renderStayResults() {
+  const el = $('#stResults');
+  if (el) el.innerHTML = stayResultsHtml(App.ui.sheet);
+}
+// Spelling out what a number of nights means, since that is where this sort of thing goes wrong.
+function nightsNote(from, nights) {
+  const n = C.clamp(Math.round(+nights || 1), 1, 60);
+  const first = C.normDate(from);
+  if (!first) return 'Pick the date of the first night.';
+  const last = C.shiftDate(first, n - 1);
+  const out = C.shiftDate(first, n);
+  return n + (n === 1 ? ' night means you sleep on ' : ' nights means you sleep from ')
+    + C.fmtDateUK(first) + (n === 1 ? '' : ' to ' + C.fmtDateUK(last))
+    + ' and check out on the morning of ' + C.fmtDateUK(out)
+    + '. Any of those days the trip does not have yet will be created.';
+}
+
+// Where you sleep, at the top of every day it is the start of. A stay is entered once, for as many
+// nights as it is booked, and the days it covers take their start and end from it.
+function stayLineHtml(day, start) {
+  const stay = C.stayFor(App.trip, day.id, 'start') || C.stayFor(App.trip, day.id, 'end');
+  if (!stay) {
+    return '<div class="stay-line none"><span>No accommodation for this day</span>'
+      + '<button type="button" class="mini" data-act="add-stay">Add one</button></div>';
+  }
+  const nights = C.stayNights(stay);
+  const leaving = start.stayId === stay.id && C.stayFor(App.trip, day.id, 'end') !== stay;
+  return '<div class="stay-line"><span class="body"><span class="nm">' + ic('bed') + esc(stay.name) + '</span>'
+    + '<span class="meta">' + esc(stay.nights + (stay.nights === 1 ? ' night' : ' nights') + ' from ' + C.fmtDateUK(nights.first)
+      + (leaving ? ' · you check out this morning' : '')) + '</span></span>'
+    + '<button type="button" class="mini" data-act="edit-stay" data-id="' + esc(stay.id) + '">Change</button></div>';
+}
+
 // The version on screen. The three are yours: the planner never moves a place between them.
 function versionsHtml(day) {
   return '<div class="seg" role="group" aria-label="Which version of this day" style="margin-top:10px">'
@@ -476,6 +567,7 @@ function openSheet(kind, data) {
 }
 function closeSheet() {
   if (!App.ui.sheet) return;
+  clearTimeout(stayFindTimer);
   App.ui.sheet = null;
   M.stopLooking();
   render();
@@ -554,6 +646,27 @@ const SHEETS = {
       '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
     + addButtonsHtml('add-pin'),
 
+  // Where you sleep, entered once per booking rather than once per day.
+  stay: (s) => {
+    const stay = s.id ? C.stayById(App.trip, s.id) : null;
+    const from = s.from || (stay ? stay.from : (App.ui.dayId || isoToday()));
+    const nights = s.nights != null ? s.nights : (stay ? stay.nights : 1);
+    return sheetHead(stay ? 'Accommodation' : 'Add accommodation', stay ? stay.name : '')
+      + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+      + stayNameHtml(s, stay)
+      + '<div class="pair">'
+      + field('stFrom', 'First night', '<input class="in" type="date" id="stFrom" value="' + esc(from) + '">')
+      + field('stNights', 'Nights', '<input class="in" type="number" id="stNights" min="1" max="60" value="' + esc(nights) + '">')
+      + '</div>'
+      + '<p class="hint">' + esc(nightsNote(from, nights)) + '</p>'
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-stay">Save</button>'
+      + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
+      + (stay
+        ? '<div class="sh-sec"><span class="label">Remove</span>'
+          + '<p class="note">The days it created stay in the trip, with whatever you have put on them.</p>'
+          + '<button type="button" class="btn danger" data-act="drop-stay">Remove this stay</button></div>'
+        : '');
+  },
   // A place already in the trip: what it is, how long it takes, when it is open, where it sits.
   place: (s) => {
     const p = C.placeById(App.trip, s.id);
@@ -630,18 +743,13 @@ const SHEETS = {
       + field('edDate', 'Date', '<input class="in" type="date" id="edDate" value="' + esc(day.id) + '">')
       + field('edCity', 'City', textIn('edCity', day.city, ' maxlength="60"'))
       + '</div>'
-      + '<div class="sh-sec"><span class="label">Setting off</span>'
+      + '<div class="sh-sec"><span class="label">Times</span>'
       + '<div class="pair" style="margin-top:6px">'
-      + field('edStartName', 'From', textIn('edStartName', day.start.name, ' maxlength="80" placeholder="Hotel"'))
-      + field('edStartTime', 'At', timeIn('edStartTime', day.start.time))
+      + field('edStartTime', 'Set off at', timeIn('edStartTime', day.start.time))
+      + field('edEndTime', 'Back by', timeIn('edEndTime', end ? end.time : ''))
       + '</div>'
-      + '<p class="hint">Finding the hotel on the map, so its position is known, comes with place search at the next step.</p></div>'
-      + '<div class="sh-sec"><span class="label">Back</span>'
-      + '<div class="pair" style="margin-top:6px">'
-      + field('edEndName', 'At', textIn('edEndName', end ? end.name : '', ' maxlength="80" placeholder="Where you started"'))
-      + field('edEndTime', 'By', timeIn('edEndTime', end ? end.time : ''))
-      + '</div>'
-      + '<p class="hint">Leave the time empty for an open-ended day. An empty place means back where you started.</p></div>'
+      + '<p class="hint">Leave the time back empty for an open-ended day. Where the day starts and ends comes from '
+      + 'the accommodation, which is set at the top of the day.</p></div>'
       + '<div class="sh-sec"><span class="label">Lunch</span>'
       + '<label class="tick" style="margin-top:8px"><input type="checkbox" id="edLunchOn"' + (day.lunch.on ? ' checked' : '') + '><span>Keep a lunch break</span></label>'
       + '<div class="pair">'
@@ -935,6 +1043,45 @@ const ACTIONS = {
     toast('Started again from nothing.', { label: 'Undo', fn: () => { App.trip = before; changed('Trip brought back'); } }, 9000);
   },
   'add-day': () => { if (App.trip) openSheet('add-day', suggestDay()); },
+  'add-stay': () => openSheet('stay', { from: App.ui.dayId || isoToday(), nights: 1 }),
+  'edit-stay': (el) => openSheet('stay', { id: el.dataset.id }),
+  'pick-stay': (el) => {
+    const s = App.ui.sheet;
+    const hit = (s.results || [])[+el.dataset.i];
+    if (!hit) return;
+    s.pick = hit;
+    s.name = hit.name;
+    s.results = null;
+    s.from = val('stFrom');
+    s.nights = val('stNights');
+    render();
+    M.lookAt(hit);
+  },
+  'save-stay': () => {
+    const s = App.ui.sheet;
+    // Only what was actually chosen goes in the patch: an undefined key would wipe a known position.
+    const patch = { name: val('stName'), from: val('stFrom'), nights: val('stNights') };
+    if (s.pick) {
+      patch.lat = s.pick.lat;
+      patch.lng = s.pick.lng;
+      patch.area = s.pick.area;
+      patch.osm = s.pick.osm;
+    }
+    const res = s.id ? C.updateStay(App.trip, s.id, patch) : C.addStay(App.trip, patch);
+    if (!res.ok) {
+      s.error = res.text;
+      s.name = patch.name; s.from = patch.from; s.nights = patch.nights;
+      render();
+      return;
+    }
+    closeSheet();
+    changed(res.text);
+  },
+  'drop-stay': () => {
+    const res = C.deleteStay(App.trip, App.ui.sheet.id);
+    closeSheet();
+    changed(res.text);
+  },
   'save-day': () => {
     const s = App.ui.sheet;
     const res = C.addDays(App.trip, val('dyDate'), val('dyCount'), val('dyCity'));
@@ -963,17 +1110,11 @@ const ACTIONS = {
       day = currentDay();
     }
     day.city = val('edCity');
-    const startName = val('edStartName');
-    if (startName !== day.start.name) { day.start.lat = null; day.start.lng = null; }
-    day.start.name = startName;
     day.start.time = val('edStartTime') || day.start.time;
     const backBy = val('edEndTime');
     if (!backBy) day.end = null;
-    else {
-      const endName = val('edEndName');
-      const kept = day.end && day.end.name === endName ? day.end : { lat: null, lng: null };
-      day.end = { name: endName, lat: kept.lat, lng: kept.lng, time: backBy };
-    }
+    else if (day.end) day.end.time = backBy;
+    else day.end = { name: '', lat: null, lng: null, time: backBy };
     day.lunch = {
       on: $('#edLunchOn').checked,
       from: val('edLunchFrom') || day.lunch.from,
@@ -1183,7 +1324,10 @@ function boot() {
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
   }
   document.addEventListener('click', onClick);
-  document.addEventListener('input', (e) => { if (e.target.id === 'findBox') onFindInput(e); });
+  document.addEventListener('input', (e) => {
+    if (e.target.id === 'findBox') onFindInput(e);
+    if (e.target.id === 'stName') onStayInput(e);
+  });
   document.addEventListener('click', (e) => {
     const item = e.target.closest('.wheel-item');
     if (!item) return;
