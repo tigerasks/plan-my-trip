@@ -63,7 +63,42 @@ with sync_playwright() as pw:
     pg.reload()
     pg.wait_for_timeout(250)
     ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which is remembered for this browser')
+    pg.select_option('#daySel', '2026-11-21')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('.card .label').all_text_contents()[1:] == ['Plan · Balanced 2', 'Ideas for today 1', 'Backlog 2'],
+       'the panel shows the version on screen, the day\'s other ideas and the backlog')
+    ck(pg.locator('.list .nm').first.inner_text().startswith('Example Temple'), 'stops come in the version\'s order')
+    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 3,
+       'labels from the chat, check flags and lunch options show as chips')
+    ck('Temple / culture · 1h 30 · Eastern hills' in pg.inner_text('.list .meta'), 'each place says what it is and how long it takes')
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_light.png'))
+
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(150)
+    labels = pg.locator('.card .label').all_text_contents()
+    ck(labels[1] == 'Plan · Packed 3' and labels[2] == 'Ideas for today 0',
+       'switching version moves places between the plan and today\'s ideas')
+    ck(pg.locator('[data-act="version"][data-v="packed"]').get_attribute('aria-pressed') == 'true', 'and the control follows')
+    pg.click('[data-act="version"][data-v="less"]')
+    pg.wait_for_timeout(900)
+    held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
+    ck(held['trip']['days']['2026-11-21']['shown'] == 'less', 'the version you are looking at is remembered')
+    ck(len(held['trip']['days']['2026-11-21']['plans']['balanced']) == 2, 'and switching never moves a place between versions')
+    labels = pg.locator('.card .label').all_text_contents()
+    ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
+    pg.screenshot(path=str(SHOTS / 'app_less_desktop_light.png'))
+    ctx.close()
+
+    # ---- the same trip on a phone
+    ctx, pg = open_page(390, 844, held=DEMO)
+    ck(pg.locator('.seg').is_visible(), 'the version control still fits on a phone')
+    pg.screenshot(path=str(SHOTS / 'app_day_phone_light.png'))
+    ctx.close()
+    ctx, pg = open_page(390, 844, scheme='dark', held=DEMO)
+    pg.screenshot(path=str(SHOTS / 'app_day_phone_dark.png'))
+    ctx.close()
+    ctx, pg = open_page(scheme='dark', held=DEMO)
+    pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
     ctx.close()
 
     # ---- a stored copy that cannot be used

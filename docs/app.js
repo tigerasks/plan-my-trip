@@ -118,7 +118,7 @@ function emptyHtml() {
 }
 function tripHtml() {
   const day = currentDay();
-  return (day ? dayHtml(day) : noDaysHtml()) + creditsHtml();
+  return (day ? dayHtml(day) + planHtml(day) + ideasHtml(day) : noDaysHtml()) + backlogHtml() + creditsHtml();
 }
 function noDaysHtml() {
   return '<div class="card"><span class="label">Days</span>'
@@ -135,10 +135,62 @@ function dayHtml(day) {
       ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span>Back at ' + esc(endName) + '</span></div>'
       : '<div class="day-line"><span class="t">—</span><span class="muted">Open-ended day</span></div>')
     + (day.lunch.on
-      ? '<div class="day-line"><span class="t">' + esc(day.lunch.from) + '</span><span class="muted">Lunch, ' + esc(C.fmtDur(day.lunch.duration)) + ' between ' + esc(day.lunch.from) + ' and ' + esc(day.lunch.to) + '</span></div>'
+      ? '<div class="day-line"><span class="t">Lunch</span><span class="muted">' + esc(C.fmtDur(day.lunch.duration)) + ', between ' + esc(day.lunch.from) + ' and ' + esc(day.lunch.to) + '</span></div>'
       : '')
     + (day.note ? '<p class="hint">' + esc(day.note) + '</p>' : '')
+    + versionsHtml(day)
     + '</div>';
+}
+// The version on screen. The three are yours: the planner never moves a place between them.
+function versionsHtml(day) {
+  return '<div class="seg" role="group" aria-label="Which version of this day" style="margin-top:10px">'
+    + C.PLAN_KEYS.map((k) =>
+      '<button type="button" data-act="version" data-v="' + k + '" aria-pressed="' + (k === day.shown) + '">'
+      + esc(C.PLAN_LABEL[k]) + ' <span class="count">' + day.plans[k].length + '</span></button>').join('')
+    + '</div>';
+}
+
+// ---------- lists of places ----------
+function chipsHtml(p) {
+  let h = '';
+  if (p.priority === 'must') h += '<span class="chip must">Must-do</span>';
+  else if (p.priority) h += '<span class="chip flex">' + esc(C.PRIORITY_LABEL[p.priority]) + '</span>';
+  if (p.booked) h += '<span class="chip booked">Booked</span>';
+  if (p.check) h += '<span class="chip check">Check</span>';
+  if (p.meal) h += '<span class="chip flex">Lunch option</span>';
+  return h;
+}
+function itemHtml(p, lead) {
+  const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
+  return '<li><div class="item" data-place="' + esc(p.id) + '">' + lead
+    + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
+    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></div></li>';
+}
+function listHtml(places, lead, empty) {
+  if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
+  return '<ul class="list">' + places.map((p, i) => itemHtml(p, lead(i))).join('') + '</ul>';
+}
+function sectionHtml(label, count, body) {
+  return '<div class="card"><div class="card-head"><span class="label">' + esc(label)
+    + ' <span class="count">' + count + '</span></span></div>' + body + '</div>';
+}
+function planHtml(day) {
+  const places = C.planPlaces(App.trip, day.id, day.shown);
+  return sectionHtml('Plan · ' + C.PLAN_LABEL[day.shown], places.length,
+    listHtml(places, (i) => '<span class="num">' + (i + 1) + '</span>',
+      'Nothing in ' + C.PLAN_LABEL[day.shown] + ' yet. Places you add to this version show up here, in order.'));
+}
+function ideasHtml(day) {
+  const places = C.ideasFor(App.trip, day.id, day.shown);
+  return sectionHtml('Ideas for today', places.length,
+    listHtml(places, () => '<span class="dot"></span>',
+      'Nothing else on this day. Ideas sit here until you put them in a version.'));
+}
+function backlogHtml() {
+  const places = C.backlogPlaces(App.trip);
+  return sectionHtml('Backlog', places.length,
+    listHtml(places, () => '<span class="dot"></span>',
+      'The backlog is empty. It holds ideas that do not have a day yet.'));
 }
 function creditsHtml() {
   return '<p class="credits">'
@@ -163,6 +215,12 @@ function toast(msg, action, ms) {
 
 // ---------- actions ----------
 const ACTIONS = {
+  version: (el) => {
+    const day = currentDay();
+    if (!day || day.shown === el.dataset.v) return;
+    day.shown = el.dataset.v;
+    changed();
+  },
   'new-trip': () => {
     App.trip = C.newTrip('My trip');
     App.ui.dayId = null;
