@@ -541,6 +541,29 @@ function hoursFromOsm(text) {
   };
 }
 
+// Opening hours in a line: consecutive days that agree are grouped, unknown days left out.
+const WEEK_SHORT = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+const spansText = (spans) => (spans.length ? spans.map(([a, b]) => a + '–' + b).join(', ') : 'closed');
+function hoursText(hours) {
+  const h = obj(hours);
+  const week = obj(h.week);
+  const known = WEEK.filter((d) => Array.isArray(week[d]));
+  if (!known.length) return '';
+  const same = known.every((d) => JSON.stringify(week[d]) === JSON.stringify(week[known[0]]));
+  if (same && known.length === 7) return spansText(week.mon);
+  const out = [];
+  let run = null;
+  for (const d of WEEK) {
+    const spans = week[d];
+    const text = Array.isArray(spans) ? spansText(spans) : null;
+    if (run && text === run.text) { run.to = d; continue; }
+    if (run) out.push(run);
+    run = text == null ? null : { from: d, to: d, text };
+  }
+  if (run) out.push(run);
+  return out.map((r) => (r.from === r.to ? WEEK_SHORT[r.from] : WEEK_SHORT[r.from] + '–' + WEEK_SHORT[r.to]) + ' ' + r.text).join(' · ');
+}
+
 // ---------- reading the map ----------
 // A tapped vector-tile feature carries the OpenStreetMap id as id × 10 + the element type.
 // Verified live for ways (Sukiya) and nodes (Pizza Little Party); relations never came up, and
@@ -668,9 +691,17 @@ function parsePhoton(json, now) {
 function overpassUrl(osm) {
   const o = normOsm(osm);
   if (!o) return null;
-  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags;');
+  // `center` as well as tags: the finger lands near a place, not on it, so this corrects the position.
+  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags center;');
 }
-const parseOverpass = (json) => { const el = arr(obj(json).elements)[0]; return el ? obj(el.tags) : null; };
+function parseOverpass(json) {
+  const el = arr(obj(json).elements)[0];
+  if (!el) return null;
+  const c = obj(el.center);
+  const lat = toNum(el.lat != null ? el.lat : c.lat);
+  const lng = toNum(el.lon != null ? el.lon : c.lon);
+  return { tags: obj(el.tags), at: lat != null && lng != null ? { lat, lng } : null };
+}
 
 // Your own look-up links, such as Tabelog for restaurants in Japan. {name} and {local} are filled
 // in from the place; a link without either just opens.
@@ -1048,7 +1079,7 @@ const Core = {
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
-  osmDays, osmSpans, parseOsmHours, hoursFromOsm,
+  osmDays, osmSpans, parseOsmHours, hoursFromOsm, hoursText,
   PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,
   osmUrl, gmapsUrl, lookupUrl, kindFromTags, whereOf,
   newTrip, newDay,

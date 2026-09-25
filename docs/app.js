@@ -386,6 +386,8 @@ const SHEETS = {
     return sheetHead(p.name, p.localName || '')
       + (where ? '<p class="note">' + esc(where) + '</p>' : '')
       + (near ? '<p class="note">' + esc(near) + '</p>' : '')
+      + detailsHtml(s)
+      + linksHtml(p, s.details)
       + addButtonsHtml('add-place');
   },
 
@@ -512,8 +514,73 @@ function addPlaceTo(place, to) {
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
+// The map's own information is on screen at once; OpenStreetMap fills in behind it, and the
+// preview works perfectly well if that never arrives.
+let previewSeq = 0;
 function openPreview(place) {
-  openSheet('preview', { place: place });
+  const mine = ++previewSeq;
+  openSheet('preview', { place: place, details: null, detailsBusy: !!C.overpassUrl(place.osm), detailsError: '' });
+  const url = C.overpassUrl(place.osm);
+  if (!url) return;
+  Live.fetchJson(url).then(
+    (json) => {
+      if (mine !== previewSeq || !App.ui.sheet) return;
+      const got = C.parseOverpass(json);
+      const s = App.ui.sheet;
+      s.detailsBusy = false;
+      if (!got) { s.detailsError = 'OpenStreetMap has nothing filed under this place.'; render(); return; }
+      s.details = C.detailsFromTags(got.tags, place.osm);
+      if (got.at) { place.lat = got.at.lat; place.lng = got.at.lng; }   // the finger lands near, not on
+      if (s.details.hours) place.hours = s.details.hours.hours;
+      render();
+    },
+    (err) => {
+      if (mine !== previewSeq || !App.ui.sheet) return;
+      App.ui.sheet.detailsBusy = false;
+      App.ui.sheet.detailsError = 'OpenStreetMap ' + Live.why(err) + '. Everything else here still holds.';
+      render();
+    });
+}
+
+// What OpenStreetMap knows, once it has answered. Coverage varies: a well-known sight carries
+// plenty, a small restaurant often nothing but a name.
+function detailsHtml(s) {
+  if (s.detailsBusy) return '<div class="sh-sec"><span class="label">OpenStreetMap</span><p class="note">Looking…</p></div>';
+  if (s.detailsError) return '<div class="sh-sec"><span class="label">OpenStreetMap</span><p class="note">' + esc(s.detailsError) + '</p></div>';
+  if (!s.details) return '';
+  const d = s.details;
+  const rows = [];
+  const add = (k, v) => { if (v) rows.push([k, v]); };
+  if (d.hours) {
+    const line = C.hoursText(d.hours.hours);
+    add('Hours', line || d.hours.hours.raw);
+  }
+  add('Cuisine', d.cuisine);
+  add('Diet', d.diet.join(', '));
+  add('Takeaway', d.takeaway === 'only' ? 'takeaway only' : d.takeaway === 'yes' ? 'yes' : '');
+  add('Booking', d.reservation);
+  add('Step-free', d.wheelchair);
+  add('Entry', d.fee === 'yes' ? 'there is a charge' : d.fee === 'no' ? 'free' : '');
+  add('Phone', d.phone);
+  return '<div class="sh-sec"><span class="label">What OpenStreetMap knows</span>'
+    + (d.hours
+      ? '<p class="note amber">These hours are unverified — check them before you rely on them.</p>'
+      : '<p class="note amber">Hours unknown — check.</p>')
+    + (rows.length ? '<dl class="facts">' + rows.map(([k, v]) =>
+      '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>' : '')
+    + (d.hours && d.hours.partial ? '<p class="hint">Part of what it says could not be read: <code>' + esc(d.hours.hours.raw) + '</code></p>' : '')
+    + (d.description ? '<p class="hint">' + esc(d.description) + '</p>' : '')
+    + (!rows.length && !d.description ? '<p class="note">Nothing but a name, which is usual for small places.</p>' : '')
+    + '</div>';
+}
+function linksHtml(place, details) {
+  const out = [];
+  for (const l of (details ? details.links : [])) out.push([l.url, l.label]);
+  for (const l of App.trip.lookups) out.push([C.lookupUrl(l, place), l.label]);
+  if (!out.length) return '';
+  return '<div class="sh-sec"><span class="label">Look it up</span><p class="links">'
+    + out.map(([url, label]) => '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + '</a>').join(' · ')
+    + '</p></div>';
 }
 
 // ---------- toast ----------
