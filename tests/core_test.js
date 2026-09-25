@@ -306,5 +306,18 @@ ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーテ
   === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
   'Google Maps is asked for the local name plus the city, as the service test did');
 
+console.log('\n== How far a place is from the day ==');
+const near = (lat, lng, key) => C.nearestInDay(demoTrip, '2026-11-21', { lat, lng }, key);
+let n = near(34.9950, 135.7855);                       // a few steps from Example Temple
+ok(n.name === 'Example Temple' && n.where === 'stop 1', 'the nearest thing on the day is found: ' + C.nearText(n));
+ok(n.minutes >= 1 && n.minutes <= 3, 'with a walking estimate: ' + n.minutes + ' min');
+n = near(34.9860, 135.7590);                           // outside the hotel
+ok(n.where === 'the start' && n.name === 'Example Hotel · Kyoto Station', 'the start counts too: ' + C.nearText(n));
+n = near(35.0052, 135.7650, 'packed');
+ok(n.where === 'stop 3', 'stop numbers follow the version on screen: ' + C.nearText(n));
+ok(C.nearText(near(35.5, 136.5)).indexOf('km from') > 0, 'too far to walk is given as a distance: ' + C.nearText(near(35.5, 136.5)));
+ok(C.nearestInDay(demoTrip, '2026-11-21', {}) === null, 'a place with no position has no distance');
+ok(C.nearText(null) === '', 'and nothing to say about it');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

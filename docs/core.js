@@ -149,6 +149,44 @@ function kmBetween(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 const hasPos = (p) => isNum(obj(p).lat) && isNum(obj(p).lng);
+// The planner's own walking estimate, carried over from v1: straight-line distance with a detour
+// allowance, at a normal pace. Marked ≈ wherever it shows, and replaced by a real route later.
+const WALK_SPEED = 4.6;          // km/h
+const WALK_DETOUR = 1.3;
+const walkMinutes = (km) => (km * WALK_DETOUR / WALK_SPEED) * 60;
+
+// How far a place is from the day on screen: the nearest thing already in it, and the walk to it.
+// "≈ 5 min walk from Example Temple (stop 3)" is the point of the preview saying it.
+function nearestInDay(trip, dayId, place, planKey) {
+  if (!hasPos(place)) return null;
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return null;
+  const key = PLAN_KEYS.includes(planKey) ? planKey : d.shown;
+  const marks = [];
+  if (hasPos(d.start)) marks.push({ name: d.start.name || 'where the day starts', where: 'the start' });
+  d.plans[key].forEach((id, i) => {
+    const p = trip.places[id];
+    if (hasPos(p)) marks.push({ name: p.name, where: 'stop ' + (i + 1), lat: p.lat, lng: p.lng });
+  });
+  if (hasPos(d.start)) { marks[0].lat = d.start.lat; marks[0].lng = d.start.lng; }
+  if (d.end && hasPos(d.end)) marks.push({ name: d.end.name || d.start.name || 'where the day ends', where: 'the end', lat: d.end.lat, lng: d.end.lng });
+  let best = null;
+  for (const m of marks) {
+    const km = kmBetween(m, place);
+    if (!best || km < best.km) best = { km, name: m.name, where: m.where };
+  }
+  if (!best) return null;
+  best.minutes = Math.max(1, Math.round(walkMinutes(best.km)));
+  return best;
+}
+// "≈ 5 min walk from Example Temple (stop 3)", or a plain distance when it is too far to walk.
+function nearText(near) {
+  if (!near) return '';
+  const from = near.name + (near.where.indexOf('stop') === 0 ? ' (' + near.where + ')' : '');
+  return near.minutes <= 45
+    ? '≈ ' + fmtDur(near.minutes) + ' walk from ' + from
+    : '≈ ' + (near.km < 10 ? near.km.toFixed(1) : String(Math.round(near.km))) + ' km from ' + from;
+}
 
 // ---------- normalising ----------
 // Every load, every import and every save goes through normalise(), so the rest of the app can
@@ -1007,7 +1045,7 @@ const Core = {
   WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION, DEFAULT_LUNCH,
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
-  fmtMoney, kmBetween, hasPos,
+  fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   osmDays, osmSpans, parseOsmHours, hoursFromOsm,

@@ -300,6 +300,8 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
     ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
+    ck('km from' in pg.inner_text('#sheet'), 'and how far it is from the day: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'from' in l][0])
     ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
     pg.screenshot(path=str(SHOTS / 'app_preview_desktop_light.png'))
     pg.click('[data-act="add-place"][data-to="plan"]')

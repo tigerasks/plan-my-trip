@@ -382,8 +382,10 @@ const SHEETS = {
     const p = s.place;
     const day = currentDay();
     const where = [C.KIND_LABEL[p.kind], p.where || p.area].filter(Boolean).join(' · ');
+    const near = day ? C.nearText(C.nearestInDay(App.trip, day.id, p, day.shown)) : '';
     return sheetHead(p.name, p.localName || '')
       + (where ? '<p class="note">' + esc(where) + '</p>' : '')
+      + (near ? '<p class="note">' + esc(near) + '</p>' : '')
       + addButtonsHtml('add-place');
   },
 
