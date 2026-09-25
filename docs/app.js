@@ -13,6 +13,7 @@ const ICON = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+  down: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
 };
 const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
 
@@ -21,6 +22,7 @@ const App = {
   trip: null,            // the one trip this browser holds, already normalised
   ui: { dayId: null, sheet: null, backlogDots: true },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
+  fileAt: null,          // when this device last saved a file, as an ISO stamp
   storageProblem: null,  // why the browser copy could not be used, in plain words
 };
 
@@ -58,12 +60,13 @@ function save() {
 }
 function saveNow() { if (saveTimer) save(); }
 function saveUi() {
-  Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots });
+  Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots, fileAt: App.fileAt });
 }
 function restore() {
   const ui = Store.read(KEY.ui);
   if (ui && ui.dayId) App.ui.dayId = ui.dayId;
   if (ui && ui.backlogDots === false) App.ui.backlogDots = false;
+  if (ui && ui.fileAt) App.fileAt = ui.fileAt;
   const held = Store.read(KEY.trip);
   if (held == null) return;
   const res = C.readBlock(JSON.stringify(held));
@@ -248,6 +251,18 @@ const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="'
 const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
 
 const SHEETS = {
+  // A trip travels two ways with the same content: as a .json file, or as a block of text.
+  data: () => {
+    const t = App.trip;
+    const when = App.fileAt ? new Date(App.fileAt) : null;
+    return sheetHead('Trip file', t ? t.title + ' — ' + C.summarise(t) : 'Nothing to save yet')
+      + '<div class="sh-sec"><span class="label">Save to a file</span>'
+      + '<p class="note">A file is a backup, the way to move this trip to another device, and what you upload to the chat.'
+      + (when ? ' Last saved on this device ' + esc(C.fmtDateUK(isoOf(when)) + ' ' + fmtClock(when)) + '.' : '')
+      + '</p>'
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-file"' + (t ? '' : ' disabled') + '>'
+      + ic('down') + 'Save to file</button></div></div>';
+  },
   day: (s) => {
     const day = currentDay();
     const end = day.end;
@@ -328,6 +343,19 @@ function dayPlacesNote(day) {
   return n
     ? 'Deleting this day sends its ' + n + ' place' + (n > 1 ? 's' : '') + ' back to the backlog.'
     : 'Deleting this day takes it off the trip.';
+}
+
+// ---------- files and text ----------
+const isoOf = (d) => d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 // ---------- actions ----------
@@ -432,6 +460,17 @@ const ACTIONS = {
     App.ui.backlogDots = !App.ui.backlogDots;
     saveUi();
     render();
+  },
+  data: () => openSheet('data'),
+  'save-file': () => {
+    if (!App.trip) return;
+    saveNow();
+    const now = new Date();
+    download(C.fileName(App.trip, now), C.writeJson(App.trip, 'save', now.toISOString()));
+    App.fileAt = now.toISOString();
+    saveUi();
+    render();
+    toast('Saved ' + C.fileName(App.trip, now));
   },
   version: (el) => {
     const day = currentDay();

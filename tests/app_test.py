@@ -1,6 +1,6 @@
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import datetime, json
+import datetime, json, pathlib
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -252,6 +252,23 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'and the toast brings it back')
     ck(len(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']) == 6, 'with everything in it')
+    ctx.close()
+
+    # ---- saving to a file
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(200)
+    ck('2 days and 6 places' in pg.inner_text('#sheet'), 'the trip file sheet says what is in the trip')
+    with pg.expect_download() as got:
+        pg.click('[data-act="save-file"]')
+    dl = got.value
+    ck(dl.suggested_filename.startswith('example-kyoto ') and dl.suggested_filename.endswith('.json'),
+       'the file is named after the trip and the moment: ' + dl.suggested_filename)
+    saved = json.loads(pathlib.Path(dl.path()).read_text())
+    ck(saved['schema'] == 'day-planner/2' and saved['kind'] == 'save' and len(saved['trip']['places']) == 6,
+       'and holds the whole trip as valid JSON, ready for the chat')
+    pg.wait_for_timeout(200)
+    ck('Last saved on this device' in pg.inner_text('#sheet'), 'the sheet remembers when: ' + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Last saved' in l][0][-40:])
     ctx.close()
 
     # ---- a stored copy that cannot be used
