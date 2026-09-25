@@ -1,6 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import datetime, json
+import datetime, json, pathlib
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -22,7 +23,8 @@ with sync_playwright() as pw:
     def open_page(w=1280, h=800, scheme='light', held=None, extra=None):
         phone = w < 500
         ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
-                             is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
+                             is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1,
+                             permissions=['clipboard-read', 'clipboard-write'])
         ctx.route('**/*', harness.offline(BASE, extra))
         pg = ctx.new_page()
         ck.watch(pg)
@@ -252,6 +254,123 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'and the toast brings it back')
     ck(len(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']) == 6, 'with everything in it')
+    ctx.close()
+
+    # ---- saving to a file
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(200)
+    ck('2 days and 6 places' in pg.inner_text('#sheet'), 'the trip file sheet says what is in the trip')
+    with pg.expect_download() as got:
+        pg.click('[data-act="save-file"]')
+    dl = got.value
+    ck(dl.suggested_filename.startswith('example-kyoto ') and dl.suggested_filename.endswith('.json'),
+       'the file is named after the trip and the moment: ' + dl.suggested_filename)
+    saved = json.loads(pathlib.Path(dl.path()).read_text())
+    ck(saved['schema'] == 'day-planner/2' and saved['kind'] == 'save' and len(saved['trip']['places']) == 6,
+       'and holds the whole trip as valid JSON, ready for the chat')
+    pg.wait_for_timeout(200)
+    ck('Last saved on this device' in pg.inner_text('#sheet'), 'the sheet remembers when: ' + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Last saved' in l][0][-40:])
+    ctx.close()
+
+    # ---- opening a file
+    ctx, pg = open_page()
+    pg.click('[data-act="data"]')
+    pg.wait_for_timeout(200)
+    ck(pg.is_disabled('[data-act="save-file"]'), 'with nothing to save, saving is off')
+    pg.set_input_files('#fileIn', files=[{'name': 'example-kyoto.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(DEMO).encode()}])
+    pg.wait_for_timeout(400)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'a file loads straight into an empty browser')
+    ck('2 days and 6 places' in pg.inner_text('#sheet .note.good'), 'and the sheet reports what came in: ' + pg.inner_text('#sheet .note.good'))
+    ck('Loaded 2 days and 6 places' in pg.inner_text('#toast'), 'with a toast to match')
+    pg.screenshot(path=str(SHOTS / 'app_import_desktop_light.png'))
+
+    # replacing a trip asks first
+    other = json.loads(json.dumps(DEMO))
+    other['tripId'] = other['trip']['id'] = 'italy-2027'
+    other['title'] = other['trip']['title'] = 'Italy · Apr 2027'
+    pg.set_input_files('#fileIn', files=[{'name': 'italy.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(other).encode()}])
+    pg.wait_for_timeout(400)
+    ck('Swap to another trip?' in pg.inner_text('#sheet'), 'another trip asks before it displaces this one')
+    ck('different trip' in pg.inner_text('#sheet'), 'and says what that means: ' + pg.inner_text('#sheet .reasons'))
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'nothing has changed yet')
+    pg.click('[data-act="import-cancel"]')
+    pg.wait_for_timeout(150)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'and Cancel leaves it alone')
+    pg.set_input_files('#fileIn', files=[{'name': 'italy.json', 'mimeType': 'application/json',
+                                          'buffer': json.dumps(other).encode()}])
+    pg.wait_for_timeout(300)
+    pg.click('[data-act="import-go"]')
+    pg.wait_for_timeout(900)
+    ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'and Load it swaps the trip over')
+
+    # a file that is not a trip
+    pg.set_input_files('#fileIn', files=[{'name': 'notes.txt', 'mimeType': 'text/plain', 'buffer': b'just my notes'}])
+    pg.wait_for_timeout(300)
+    ck('BEGIN day-planner/2' in pg.inner_text('#sheet .note.bad'),
+       'a file that is not a trip is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
+    ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'and the trip is untouched')
+    ctx.close()
+
+    # ---- copying the trip as text
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="copy-text"]')
+    pg.wait_for_timeout(300)
+    block = pg.input_value('#outBox')
+    ck(block.startswith('--- BEGIN day-planner/2 ---') and block.rstrip().endswith('--- END day-planner/2 ---'),
+       'the block is wrapped in the two fixed lines')
+    ck(len(block.strip().split(chr(10))) == 3, 'with the trip on one line between them')
+    ck(json.loads(block.strip().split(chr(10))[1])['trip']['id'] == 'example-kyoto', 'and it holds the trip')
+    ck('Copied' in pg.inner_text('#toast'), 'the clipboard gets it too: ' + pg.inner_text('#toast'))
+    ck(pg.evaluate('navigator.clipboard.readText()') == block, 'the same text, byte for byte')
+    pg.screenshot(path=str(SHOTS / 'app_text_desktop_light.png'))
+
+    # ---- loading a block back in
+    pg.fill('#inBox', 'Here you go!\n\n' + block + '\nAnything else?')
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(400)
+    ck('Replace this trip?' in pg.inner_text('#sheet'), 'the same trip again asks before it overwrites what is open')
+    pg.click('[data-act="import-go"]')
+    pg.wait_for_timeout(400)
+    ck('2 days and 6 places' in pg.inner_text('#sheet .note.good'), 'a pasted block loads, chat chatter and all')
+    ck(pg.input_value('#inBox') == '', 'and the box is emptied once it has')
+    cut = block.strip().rsplit(chr(10), 1)[0][:400]
+    pg.fill('#inBox', cut)
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(300)
+    ck('cut off' in pg.inner_text('#sheet .note.bad'), 'a block that got clipped says so: ' + pg.inner_text('#sheet .note.bad')[:70] + '…')
+    ck(pg.input_value('#inBox') == cut, 'and what you pasted stays in the box')
+    pg.fill('#inBox', block.replace('day-planner/2', 'day-planner/1'))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(300)
+    ck('first planner' in pg.inner_text('#sheet .note.bad'), 'a block from the old planner is turned away: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
+    ctx.close()
+
+    # ---- undoing an import
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', json.dumps(other))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(250)
+    pg.click('[data-act="import-go"]')
+    pg.wait_for_timeout(500)
+    ck(pg.inner_text('#tripBtn') == 'Italy · Apr 2027', 'the new trip is in')
+    ck('Undo' in pg.inner_text('#toast'), 'the toast offers a way back')
+    pg.reload()
+    pg.wait_for_timeout(300)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(200)
+    ck('Example · Kyoto (made up)' in pg.inner_text('#sheet'), 'and the offer survives a reload, so a mistake keeps')
+    pg.click('[data-act="undo-import"]')
+    pg.wait_for_timeout(900)
+    ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'undo brings the old trip back')
+    ck(len(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']['places']) == 6, 'whole')
+    ck(pg.evaluate("localStorage.getItem('plan-my-trip/undo')") is None, 'and the way back is spent, not left lying about')
     ctx.close()
 
     # ---- a stored copy that cannot be used

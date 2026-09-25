@@ -10,7 +10,9 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
 
 **Status:**
 - The v2 design is complete and was tested against the live services on Fri 25 Sep 2026.
-- Nothing of v2 is built yet. The only published page is the service test, `docs/probe.html`.
+- Milestone 1 is built and published: the app shell with the Liberty map, the trip, backlog and days
+  model, auto-save in the browser, and the `day-planner/2` file and text block. Places, plans and
+  travel times are still to come. The service test page, `docs/probe.html`, stays alongside it.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -19,10 +21,10 @@ GitHub Pages publishes the `docs/` folder of `main`; the only choices GitHub off
 
 | Folder | Contents | Published |
 |---|---|---|
-| `docs/` | The app (`index.html` plus its CSS, JavaScript and assets), `probe.html`, and an empty `.nojekyll` so GitHub serves the files as they are | Yes |
+| `docs/` | The app (`index.html`, `style.css`, `core.js`, `map.js`, `app.js`), `probe.html`, and an empty `.nojekyll` so GitHub serves the files as they are | Yes |
 | `documentation/` | The design doc, the v1 spec, and later the chat guide | No |
 | `reference/v1/` | v1 code for reuse | No |
-| `tests/` | Playwright tests, mocks, screenshots; `probe_test.py` already covers the service test page | No |
+| `tests/` | Playwright tests, mocks, screenshots; `harness.py` serves `docs/` locally, `app_test.py` covers the planner, `probe_test.py` the service test page, `core_test.js` the model in Node. See `tests/README.md` | No |
 
 If an older `probe.html` is still at the repository root, delete it: the copy in `docs/` is the one that gets published. Make sure `docs/.nojekyll` exists.
 
@@ -119,7 +121,7 @@ This follows the owner's trip-planning style.
 
 These are proposed; confirm each with the owner before starting it.
 
-1. **Skeleton:**
+1. **Skeleton — built:**
    - app shell and Liberty map;
    - the trip, backlog and days model;
    - auto-save to browser storage;

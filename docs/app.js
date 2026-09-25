@@ -13,6 +13,8 @@ const ICON = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   sliders: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+  down: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+  up: '<path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
 };
 const ic = (n) => '<svg class="i" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
 
@@ -21,6 +23,8 @@ const App = {
   trip: null,            // the one trip this browser holds, already normalised
   ui: { dayId: null, sheet: null, backlogDots: true },   // what is on screen; never part of what gets exported
   savedAt: null,         // when the browser copy was last written
+  fileAt: null,          // when this device last saved a file, as an ISO stamp
+  undo: null,            // the trip the last import displaced, kept until it is used
   storageProblem: null,  // why the browser copy could not be used, in plain words
 };
 
@@ -58,12 +62,20 @@ function save() {
 }
 function saveNow() { if (saveTimer) save(); }
 function saveUi() {
-  Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots });
+  Store.write(KEY.ui, { dayId: App.ui.dayId, backlogDots: App.ui.backlogDots, fileAt: App.fileAt });
+}
+// The trip an import displaced, kept in the browser so it survives a reload.
+function readUndo() {
+  const env = Store.read(KEY.undo);
+  if (!env) return null;
+  const res = C.readBlock(JSON.stringify(env));
+  return res.ok ? res : null;
 }
 function restore() {
   const ui = Store.read(KEY.ui);
   if (ui && ui.dayId) App.ui.dayId = ui.dayId;
   if (ui && ui.backlogDots === false) App.ui.backlogDots = false;
+  if (ui && ui.fileAt) App.fileAt = ui.fileAt;
   const held = Store.read(KEY.trip);
   if (held == null) return;
   const res = C.readBlock(JSON.stringify(held));
@@ -73,6 +85,7 @@ function restore() {
   }
   App.trip = res.trip;
   App.savedAt = null;
+  App.undo = readUndo();
 }
 const two = (n) => String(n).padStart(2, '0');
 const fmtClock = (d) => two(d.getHours()) + ':' + two(d.getMinutes());
@@ -120,7 +133,8 @@ function emptyHtml() {
     + (App.storageProblem ? '<p class="note bad">' + esc(App.storageProblem) + '</p>' : '')
     + '<h2>No trip yet</h2>'
     + '<p>A trip holds a backlog of ideas and the days you are planning. Start one here, then add its days.</p>'
-    + '<div class="actions"><button type="button" class="btn primary" data-act="new-trip">' + ic('plus') + 'Start a trip</button></div>'
+    + '<div class="actions"><button type="button" class="btn primary" data-act="new-trip">' + ic('plus') + 'Start a trip</button>'
+    + '<button type="button" class="btn" data-act="data">' + ic('up') + 'Bring one in</button></div>'
     + '</div>';
 }
 function tripHtml() {
@@ -238,6 +252,28 @@ function renderSheet() {
   el.classList.toggle('open', !!build);
   el.setAttribute('aria-hidden', build ? 'false' : 'true');
 }
+function pendingHtml(p) {
+  if (!p) return '';
+  return '<div class="sh-sec"><span class="label">Before this loads</span>'
+    + '<p class="note">' + esc(p.note.title) + '</p>'
+    + '<ul class="reasons">' + p.note.lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>'
+    + '<div class="actions"><button type="button" class="btn primary" data-act="import-go">Load it</button>'
+    + '<button type="button" class="btn" data-act="import-cancel">Cancel</button></div></div>';
+}
+function undoHtml() {
+  if (!App.undo) return '';
+  return '<div class="sh-sec"><span class="label">Undo</span>'
+    + '<p class="note">The last thing you loaded replaced "' + esc(App.undo.title) + '" — ' + esc(App.undo.summary)
+    + '. This puts it back, and drops what came in.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="undo-import">Undo the last import</button></div></div>';
+}
+function reportHtml(r) {
+  if (!r) return '';
+  return '<div class="sh-sec"><span class="label">' + (r.bad ? 'Not loaded' : 'Loaded') + '</span>'
+    + '<p class="note ' + (r.bad ? 'bad' : 'good') + '">' + esc(r.title) + '</p>'
+    + (r.lines.length ? '<ul class="reasons">' + r.lines.map((l) => '<li>' + esc(l) + '</li>').join('') + '</ul>' : '')
+    + '</div>';
+}
 const sheetHead = (title, sub) =>
   '<div class="sh-head"><div class="sh-title">' + esc(title) + (sub ? '<div class="sh-sub">' + esc(sub) + '</div>' : '') + '</div>'
   + '<button type="button" class="icon-btn" data-act="close-sheet" aria-label="Close">' + ic('x') + '</button></div>';
@@ -248,6 +284,31 @@ const textIn = (id, value, extra) => '<input class="in" id="' + id + '" value="'
 const val = (id) => { const el = $('#' + id); return el ? el.value.trim() : ''; };
 
 const SHEETS = {
+  // A trip travels two ways with the same content: as a .json file, or as a block of text.
+  data: (s) => {
+    const t = App.trip;
+    const when = App.fileAt ? new Date(App.fileAt) : null;
+    return sheetHead('Trip file', t ? t.title + ' — ' + C.summarise(t) : 'Nothing to save yet')
+      + pendingHtml(s.pending) + reportHtml(s.report) + undoHtml()
+      + '<div class="sh-sec"><span class="label">Save to a file</span>'
+      + '<p class="note">A file is a backup, the way to move this trip to another device, and what you upload to the chat.'
+      + (when ? ' Last saved on this device ' + esc(C.fmtDateUK(isoOf(when)) + ' ' + fmtClock(when)) + '.' : '')
+      + '</p>'
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-file"' + (t ? '' : ' disabled') + '>'
+      + ic('down') + 'Save to file</button></div></div>'
+      + '<div class="sh-sec"><span class="label">Open a file</span>'
+      + '<p class="note">A trip you saved before, or one the chat gave you as a file. It replaces what is in this browser, and you can undo it straight afterwards.</p>'
+      + '<div class="actions"><button type="button" class="btn" data-act="open-file">' + ic('up') + 'Open a file</button></div></div>'
+      + '<div class="sh-sec"><span class="label">As text</span>'
+      + '<p class="note">The same trip, as a block to paste into the chat. It starts and ends with a fixed line, so the chat can find it whatever you paste it into.</p>'
+      + '<div class="actions"><button type="button" class="btn" data-act="copy-text"' + (t ? '' : ' disabled') + '>Copy as text</button></div>'
+      + (s.text ? '<textarea class="in copybox" id="outBox" readonly aria-label="The trip as text">' + esc(s.text) + '</textarea>' : '')
+      + '</div>'
+      + '<div class="sh-sec"><span class="label">Paste a block</span>'
+      + '<p class="note">Paste what the chat gave you, from its first line to its last. Anything around it is ignored.</p>'
+      + '<textarea class="in copybox" id="inBox" aria-label="A block to load" placeholder="--- BEGIN day-planner/2 ---">' + esc(s.paste || '') + '</textarea>'
+      + '<div class="actions"><button type="button" class="btn" data-act="paste-in">Load the text</button></div></div>';
+  },
   day: (s) => {
     const day = currentDay();
     const end = day.end;
@@ -328,6 +389,60 @@ function dayPlacesNote(day) {
   return n
     ? 'Deleting this day sends its ' + n + ' place' + (n > 1 ? 's' : '') + ' back to the backlog.'
     : 'Deleting this day takes it off the trip.';
+}
+
+// ---------- files and text ----------
+const isoOf = (d) => d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// Everything that comes in — file or pasted text — goes through here.
+function takeIn(text) {
+  const s = App.ui.sheet;
+  const res = C.readBlock(text);
+  const note = C.importNote(res, App.trip);
+  s.pending = null;
+  if (!res.ok) { s.report = { bad: true, title: res.message, lines: [] }; render(); return; }
+  if (note.confirm) { s.report = null; s.pending = { res: res, note: note }; render(); return; }
+  applyImport(res);
+}
+function applyImport(res) {
+  const s = App.ui.sheet;
+  if (App.trip) {
+    Store.write(KEY.undo, C.envelope(App.trip, 'save'));
+    App.undo = readUndo();
+  }
+  App.trip = res.trip;
+  App.ui.dayId = null;
+  App.storageProblem = null;
+  s.pending = null;
+  s.paste = '';
+  s.text = '';
+  s.report = { bad: false, title: res.title + ' — ' + res.summary, lines: res.issues };
+  saveUi();
+  changed();
+  if (App.undo) toast('Loaded ' + res.summary + ' from ' + res.title, { label: 'Undo', fn: undoImport }, 9000);
+  else toast('Loaded ' + res.summary + ' from ' + res.title);
+}
+function undoImport() {
+  const back = App.undo;
+  if (!back) return;
+  Store.drop(KEY.undo);
+  App.undo = null;
+  App.trip = back.trip;
+  App.ui.dayId = null;
+  if (App.ui.sheet) { App.ui.sheet.report = null; App.ui.sheet.pending = null; }
+  saveUi();
+  changed();
+  toast('Back to ' + back.title + ' — ' + back.summary);
 }
 
 // ---------- actions ----------
@@ -433,6 +548,38 @@ const ACTIONS = {
     saveUi();
     render();
   },
+  data: () => openSheet('data'),
+  'save-file': () => {
+    if (!App.trip) return;
+    saveNow();
+    const now = new Date();
+    download(C.fileName(App.trip, now), C.writeJson(App.trip, 'save', now.toISOString()));
+    App.fileAt = now.toISOString();
+    saveUi();
+    render();
+    toast('Saved ' + C.fileName(App.trip, now));
+  },
+  'open-file': () => $('#fileIn').click(),
+  'undo-import': undoImport,
+  'paste-in': () => {
+    App.ui.sheet.paste = $('#inBox') ? $('#inBox').value : '';
+    takeIn(App.ui.sheet.paste);
+  },
+  'copy-text': () => {
+    if (!App.trip) return;
+    saveNow();
+    const block = C.writeBlock(App.trip, 'save');
+    App.ui.sheet.text = block;
+    render();
+    const box = $('#outBox');
+    if (box) { box.focus(); box.select(); }
+    const byHand = () => toast('Select the text below and copy it yourself.');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(block).then(() => toast('Copied — ' + C.sizeText(block)), byHand);
+    } else byHand();
+  },
+  'import-go': () => { if (App.ui.sheet.pending) applyImport(App.ui.sheet.pending.res); },
+  'import-cancel': () => { App.ui.sheet.pending = null; render(); },
   version: (el) => {
     const day = currentDay();
     if (!day || day.shown === el.dataset.v) return;
@@ -463,6 +610,16 @@ function boot() {
   }
   document.addEventListener('click', onClick);
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
+  $('#fileIn').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!App.ui.sheet || App.ui.sheet.kind !== 'data') openSheet('data');
+    file.text().then(takeIn, () => {
+      App.ui.sheet.report = { bad: true, title: 'That file could not be read.', lines: [] };
+      render();
+    });
+  });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
   window.addEventListener('pagehide', saveNow);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
