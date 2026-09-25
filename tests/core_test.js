@@ -264,5 +264,39 @@ ok(!('partial' in C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours }
 ok(C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours } } }).trip.places.x.hours.week.sun.length === 0,
   'and they survive normalising into the trip');
 
+console.log('\n== Asking the outside services ==');
+const pu = C.photonUrl('nintendo museum', { lat: 34.97787, lng: 135.76039 });
+ok(pu.indexOf('https://photon.komoot.io/api/?') === 0 && /q=nintendo\+museum/.test(pu), 'a Photon query, escaped: ' + pu);
+ok(/lang=en/.test(pu) && /lat=34\.97787/.test(pu) && /lon=135\.76039/.test(pu), 'in English, biased to where the map is looking');
+ok(!/lat=/.test(C.photonUrl('kyoto')), 'and without a bias when the map has nowhere to point');
+
+const found = C.parsePhoton(fix.photon, '2026-09-25T10:00:00Z');
+ok(found.length === 2 && found[0].name === 'Nintendo Museum', 'results come back as places');
+ok(found[0].kind === 'museum' && found[1].kind === 'other', 'with a kind worked out from their OpenStreetMap tags');
+ok(found[0].lat === 34.8871 && found[0].lng === 135.8048, 'and their position the right way round');
+ok(JSON.stringify(found[0].osm) === '{"type":"way","id":263330850}', 'and their OpenStreetMap reference');
+ok(found[0].where === 'Ogura · Ogura-cho · Uji', 'said where they are, nearest first: ' + found[0].where);
+ok(found[0].added.how === 'search' && found[0].added.by === 'you', 'and remember how they were found');
+ok(C.parsePhoton({ features: [{ properties: { name: 'No position' } }] }).length === 0, 'a result with no position is dropped');
+
+ok(C.overpassUrl({ type: 'node', id: 5279728860 }).indexOf('node(5279728860)%3Bout%20tags%3B') > 0,
+  'an Overpass lookup goes straight at the id, never a search');
+ok(C.overpassUrl(null) === null, 'and there is none to make without one');
+ok(C.parseOverpass({ elements: [{ type: 'node', id: 1, tags: { a: 'b' } }] }).a === 'b', 'tags come back');
+ok(C.parseOverpass({ elements: [] }) === null, 'and nothing when the place is not there');
+
+const det = C.detailsFromTags(fix.overpassTags, { type: 'node', id: 5279728860 });
+ok(det.cuisine === 'pizza' && det.phone === '075-672-9889' && det.takeaway === 'only', 'the useful tags are picked out');
+ok(det.hours.hours.raw === fix.overpassTags.opening_hours, 'hours come through as hours');
+ok(det.links.some((l) => l.url === 'https://www.openstreetmap.org/node/5279728860'), 'with a link back to the source');
+const rich = C.detailsFromTags({ website: 'https://example.org/t', wikipedia: 'ja:東寺', 'diet:vegan': 'yes', 'diet:vegetarian': 'only' }, null);
+ok(rich.diet.join(', ') === 'vegetarian, vegan', 'diet options are read: ' + rich.diet.join(', '));
+ok(rich.links[1].url === 'https://ja.wikipedia.org/wiki/%E6%9D%B1%E5%AF%BA', 'and a Wikipedia tag becomes a link: ' + rich.links[1].url);
+ok(C.detailsFromTags({}, null).hours === null, 'a place with no hours says so plainly');
+
+ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }, 'Kyoto')
+  === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
+  'Google Maps is asked for the local name plus the city, as the service test did');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

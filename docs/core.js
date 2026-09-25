@@ -578,6 +578,106 @@ function bestFeature(features) {
   return named.find((f) => obj(f).sourceLayer === 'poi') || named[0] || null;
 }
 
+// ---------- asking the outside services ----------
+// Photon, komoot's geocoder, built for search-as-you-type and biased towards where the map looks.
+// Never Nominatim: its policy forbids search-as-you-type.
+const PHOTON = 'https://photon.komoot.io/api/';
+const OVERPASS = 'https://overpass-api.de/api/interpreter';
+const OSM_PAGE = 'https://www.openstreetmap.org/';
+const GMAPS_SEARCH = 'https://www.google.com/maps/search/?api=1&query=';
+const OSM_BY_LETTER = { N: 'node', W: 'way', R: 'relation' };
+// Photon answers with an OpenStreetMap key and value rather than a map class.
+const KIND_BY_KEY = { shop: 'shop', tourism: 'sight', leisure: 'experience', natural: 'nature', historic: 'culture' };
+
+function photonUrl(query, near, limit) {
+  const p = new URLSearchParams({ q: str(query, 120), lang: 'en', limit: String(clamp(limit || 8, 1, 20)) });
+  const n = obj(near);
+  if (isNum(n.lat) && isNum(n.lng)) { p.set('lat', n.lat.toFixed(5)); p.set('lon', n.lng.toFixed(5)); }
+  return PHOTON + '?' + p.toString();
+}
+const kindFromTags = (key, value) => KIND_BY_TAG[str(value)] || KIND_BY_KEY[str(key)] || 'other';
+// Where a result is, in the words its own country uses, nearest first.
+function whereOf(p) {
+  const bits = [p.street, p.district, p.locality, p.city, p.state, p.country].map((x) => str(x, 60));
+  const out = [];
+  for (const b of bits) if (b && !out.includes(b)) out.push(b);
+  return out.slice(0, 3).join(' · ');
+}
+function parsePhoton(json, now) {
+  const out = [];
+  for (const f of arr(obj(json).features)) {
+    const p = obj(obj(f).properties);
+    const c = arr(obj(obj(f).geometry).coordinates);
+    const lat = toNum(c[1]), lng = toNum(c[0]);
+    const name = firstName(p.name);
+    if (!name || lat == null || lng == null) continue;
+    const type = OSM_BY_LETTER[str(p.osm_type).toUpperCase()];
+    const id = toNum(p.osm_id);
+    out.push({
+      name, localName: '', lat, lng,
+      kind: kindFromTags(p.osm_key, p.osm_value),
+      area: str(p.district || p.locality || p.city, 60),
+      where: whereOf(p),
+      osm: type && id ? { type, id: Math.round(id) } : null,
+      added: { by: 'you', how: 'search', at: now || null },
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+// One lookup per previewed place, straight at its id, so Overpass never has to search.
+function overpassUrl(osm) {
+  const o = normOsm(osm);
+  if (!o) return null;
+  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags;');
+}
+const parseOverpass = (json) => { const el = arr(obj(json).elements)[0]; return el ? obj(el.tags) : null; };
+
+const osmUrl = (osm) => { const o = normOsm(osm); return o ? OSM_PAGE + o.type + '/' + o.id : ''; };
+// Google Maps is for reviews, photos and today's hours. It opens beside the planner and nothing
+// comes back: no Google result is ever stored or drawn on our map.
+function gmapsUrl(place, city) {
+  const p = obj(place);
+  const words = [str(p.localName) || str(p.name), str(p.area, 60) || str(city, 60)].filter(Boolean);
+  return GMAPS_SEARCH + encodeURIComponent(words.join(' '));
+}
+
+// What OpenStreetMap knows, in the shape the preview shows it. Coverage varies wildly: a well-known
+// sight carries plenty, a small restaurant often just a name.
+const DIET = { 'diet:vegetarian': 'vegetarian', 'diet:vegan': 'vegan', 'diet:halal': 'halal', 'diet:kosher': 'kosher' };
+function detailsFromTags(tags, osm) {
+  const t = obj(tags);
+  const val = (...keys) => { for (const k of keys) if (str(t[k])) return str(t[k], 200); return ''; };
+  const diet = [];
+  for (const [k, word] of Object.entries(DIET)) if (/^(yes|only)$/i.test(str(t[k]))) diet.push(word);
+  const website = val('website', 'contact:website', 'url');
+  const wiki = str(t.wikipedia, 120);
+  const links = [];
+  if (/^https?:\/\//i.test(website)) links.push({ url: website, label: 'Its own site' });
+  if (/^[a-z-]+:.+/i.test(wiki)) {
+    const [lang, title] = wiki.split(/:(.+)/);
+    links.push({ url: 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_')), label: 'Wikipedia' });
+  }
+  const page = osmUrl(osm);
+  if (page) links.push({ url: page, label: 'OpenStreetMap' });
+  return {
+    hours: hoursFromOsm(t.opening_hours),
+    hoursChecked: str(t['check_date:opening_hours'], 20),
+    cuisine: val('cuisine').replace(/;/g, ', '),
+    phone: val('phone', 'contact:phone'),
+    website,
+    reservation: val('reservation'),
+    takeaway: val('takeaway'),
+    wheelchair: val('wheelchair'),
+    fee: val('fee'),
+    description: val('description'),
+    diet,
+    links: normLinks(links),
+    tagCount: Object.keys(t).length,
+  };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -883,6 +983,8 @@ const Core = {
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
   osmDays, osmSpans, parseOsmHours, hoursFromOsm,
+  PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,
+  osmUrl, gmapsUrl, kindFromTags, whereOf,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
