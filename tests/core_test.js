@@ -136,5 +136,25 @@ ok(m.t.places['example-temple'].dayId === '2026-11-25', 'and its places follow i
 ok(C.normalise(m.t).issues.length === 0, 'with nothing left pointing at the old date');
 ok(!C.setDayDate(m.t, '2026-11-25', '2026-11-22').ok, 'but not onto a date the trip already has');
 
+console.log('\n== Writing a block ==');
+const demoTrip = C.normalise(demoEnv.trip).trip;
+const block = C.writeBlock(demoTrip, 'save', '2026-09-25T10:04:12Z');
+const lines = block.trimEnd().split('\n');
+ok(lines[0] === '--- BEGIN day-planner/2 ---', 'it starts with the fixed line: ' + lines[0]);
+ok(lines[lines.length - 1] === '--- END day-planner/2 ---', 'and ends with the fixed one: ' + lines[lines.length - 1]);
+ok(lines.length === 3, 'with the whole trip on one line between them');
+const env = JSON.parse(lines[1]);
+ok(env.schema === 'day-planner/2' && env.kind === 'save', 'the header names the schema and the kind');
+ok(env.tripId === 'example-kyoto' && env.title === 'Example · Kyoto (made up)' && env.at === '2026-09-25T10:04:12Z',
+  'and the trip, its title and when it was written');
+ok(JSON.stringify(env.trip) === JSON.stringify(demoTrip), 'the trip itself travels unchanged');
+ok(C.writeBlock(demoTrip, 'nonsense').indexOf('"kind":"save"') > 0, 'an unknown kind falls back to a save');
+
+const file = C.writeJson(demoTrip, 'save', '2026-09-25T10:04:12Z');
+ok(JSON.stringify(JSON.parse(file)) === JSON.stringify(env), 'the file holds the same envelope, without the two lines');
+ok(file.indexOf('\n  "schema"') > 0 && file.endsWith('\n'), 'laid out to be read, since a file is not pasted');
+ok(/^example-kyoto \d{4}-\d{2}-\d{2} \d{4}\.json$/.test(C.fileName(demoTrip)), 'the file is named after the trip and the moment: ' + C.fileName(demoTrip));
+ok(C.sizeText(block).indexOf('KB') > 0, 'and the planner can say how big a block is: ' + C.sizeText(block));
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

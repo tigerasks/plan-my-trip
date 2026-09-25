@@ -567,6 +567,39 @@ function setDayDate(trip, dayId, date, now) {
   return { ok: true, id: iso, text: fmtDateUK(dayId) + ' is now ' + fmtDateUK(iso) };
 }
 
+// ---------- the exchange format ----------
+// Two fixed lines around one line of JSON. The lines never vary, so the chat can print them from a
+// script and the planner can find a block in whatever text it was pasted into. The .json file holds
+// the same envelope without the lines, so it stays valid JSON for the chat to read as a file.
+const BEGIN_LINE = '--- BEGIN ' + SCHEMA + ' ---';
+const END_LINE = '--- END ' + SCHEMA + ' ---';
+const KIND_LABELS = { save: 'a saved trip', package: 'a package from the chat', handback: 'a hand-back for the chat' };
+const KINDS_INOUT = Object.keys(KIND_LABELS);
+
+function envelope(trip, kind, now) {
+  return {
+    schema: SCHEMA,
+    kind: KINDS_INOUT.includes(kind) ? kind : 'save',
+    tripId: trip.id,
+    title: trip.title,
+    at: now || new Date().toISOString(),
+    app: APP,
+    trip: clone(trip),
+  };
+}
+const writeJson = (trip, kind, now) => JSON.stringify(envelope(trip, kind, now), null, 2) + '\n';
+const writeBlock = (trip, kind, now) => BEGIN_LINE + '\n' + JSON.stringify(envelope(trip, kind, now)) + '\n' + END_LINE + '\n';
+function fileName(trip, when) {
+  const d = when || new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + ' ' + two(d.getHours()) + two(d.getMinutes());
+  return (slug(trip.id) || 'trip') + ' ' + stamp + '.json';
+}
+function sizeText(text) {
+  const bytes = typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(text).length : Buffer.byteLength(text, 'utf8');
+  return bytes < 1024 ? bytes + ' bytes' : Math.round(bytes / 1024) + ' KB';
+}
+
 const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
@@ -580,6 +613,7 @@ const Core = {
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
   reorderPlan, deletePlace, addDay, deleteDay, setDayDate,
+  BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
 };
 root.DayPlannerCore = Core;
 if (typeof module !== 'undefined' && module.exports) module.exports = Core;
