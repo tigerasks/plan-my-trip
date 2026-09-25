@@ -11,6 +11,10 @@ DEMO = json.loads((harness.HERE / 'demo-trip.json').read_text())
 BASE, stop = harness.serve()
 ck = Checks('Day planner — the skeleton')
 
+
+def C_places_has(pg, name):
+    return name in [p['name'] for p in pg.evaluate('Object.values(window.DayPlannerApp.trip.places)')]
+
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
@@ -244,6 +248,135 @@ with sync_playwright() as pw:
     pg.click('[data-act="save-day"]')
     pg.wait_for_timeout(900)
     ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
+    ctx.close()
+
+    # ---- opening a place already in the trip
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.click('.list .item >> nth=0')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith('Example Temple'), 'a place in the plan opens its card')
+    sheet = pg.inner_text('#sheet')
+    ck('Sat 21 Nov, in Do less, Balanced and Packed' in sheet, 'saying where it sits: '
+       + [l for l in sheet.split(chr(10)) if 'Sat 21 Nov' in l][0])
+    ck('How long it takes' in pg.locator('#sheet .label').all_text_contents(), 'with a section for how long it takes')
+    ck('Mon–Fri 06:00–18:00 · Sat–Sun 06:00–21:00' in sheet, 'and when it is open: '
+       + [l for l in sheet.split(chr(10)) if '06:00' in l][0])
+    ck('unverified' in sheet, 'flagged unverified, since OpenStreetMap supplied them')
+    ck('Made-up hours — check' in sheet, 'with whatever is still to be checked')
+    ck(pg.locator('#durH').get_attribute('data-value') == '1' and pg.locator('#durM').get_attribute('data-value') == '30',
+       'the duration wheels open on what it takes now')
+    ck(pg.locator('#durH .wheel-item').count() == 13 and pg.locator('#durM .wheel-item').count() == 4,
+       '0 to 12 hours, and quarter hours')
+    pg.click('#durH .wheel-item[data-v="2"]')
+    pg.click('#durM .wheel-item[data-v="45"]')
+    pg.click('[data-act="save-duration"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 165, 'and set it when you save')
+    ck('2h 45' in pg.inner_text('#panel'), 'which shows in the list straight away')
+    pg.screenshot(path=str(SHOTS / 'app_place_desktop_light.png'))
+
+    # ---- the hours editor
+    pg.click('[data-act="confirm-hours"]')
+    pg.wait_for_timeout(600)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].hours.verified") is True,
+       'confirming the hours marks them checked')
+    ck('Checked by you' in pg.inner_text('#sheet'), 'and the card says so')
+    ck(pg.locator('[data-act="confirm-hours"]').count() == 0, 'with nothing left to confirm')
+
+    pg.click('[data-act="edit-hours"]')
+    pg.wait_for_timeout(250)
+    ck(pg.locator('#hSame').is_checked() is False, 'the editor opens on the days as they differ')
+    ck(pg.locator('.seg [data-act="hours-day"]').count() == 7, 'with a day to pick')
+    ck(pg.locator('#h0oH').get_attribute('data-value') == '6', 'and the wheels on Monday\'s opening time')
+    pg.screenshot(path=str(SHOTS / 'app_hours_desktop_light.png'))
+    pg.click('[data-act="hours-day"][data-d="sat"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('#h0cH').get_attribute('data-value') == '21', 'switching day shows that day: Saturday closes at 21')
+    pg.click('#h0cH .wheel-item[data-v="20"]')
+    pg.click('#h0cM .wheel-item[data-v="30"]')
+    pg.click('[data-act="save-hours"]')
+    pg.wait_for_timeout(900)
+    hours = pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].hours")
+    ck(hours['week']['sat'] == [['06:00', '20:30']], 'a corrected day is saved on its own: ' + str(hours['week']['sat']))
+    ck(hours['week']['mon'] == [['06:00', '18:00']], 'and the others are left alone')
+    ck(hours['source'] == 'you' and hours['verified'] is True, 'hours you set are yours, and checked')
+    ck(hours['raw'] == 'Mo-Su 06:00-18:00 (invented)', 'with what OpenStreetMap said kept beside them')
+
+    # closed days, split hours and a last entry
+    pg.click('[data-act="edit-hours"]')
+    pg.wait_for_timeout(200)
+    pg.click('[data-act="hours-day"][data-d="tue"]')
+    pg.wait_for_timeout(150)
+    pg.check('#hClosed')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('#h0oH').count() == 0, 'a closed day hides its times')
+    pg.click('[data-act="hours-day"][data-d="wed"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="hours-two-spans"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('#h1oH').count() == 1, 'a second opening can be added for an afternoon closing')
+    pg.check('#hLastOn')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('#hlH').count() == 1, 'and a last entry')
+    pg.click('[data-act="save-hours"]')
+    pg.wait_for_timeout(900)
+    hours = pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].hours")
+    ck(hours['week']['tue'] == [], 'the closed day is stored as closed')
+    ck(len(hours['week']['wed']) == 2 and hours['lastEntry']['wed'] == '17:30', 'and the split day with its last entry')
+    ck('Tue closed' in pg.inner_text('#sheet'), 'which the card reads back: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'closed' in l][0])
+    # ---- moving a place about
+    ck('Remove from Balanced' in pg.inner_text('#sheet'), 'a stop in the version on screen can be taken out of it')
+    pg.click('[data-act="move-remove"]')
+    pg.wait_for_timeout(500)
+    ck('is still in Do less and Packed' in pg.inner_text('#toast'), 'and the planner says where it still is: ' + pg.inner_text('#toast'))
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-21', 'it stays on its day')
+    ck('Add to Balanced' in pg.inner_text('#sheet'), 'and can go back in')
+    pg.click('[data-act="move-add"]')
+    pg.wait_for_timeout(500)
+    ck('example-temple' in pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced"), 'back in the version')
+
+    pg.click('[data-act="move-backlog"]')
+    pg.wait_for_timeout(900)
+    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
+    ck(trip['places']['example-temple']['dayId'] is None, 'Remove to the backlog takes it off the day')
+    ck('example-temple' not in trip['days']['2026-11-21']['plans']['packed'], 'which means out of every version')
+    pg.select_option('#moveDay', '2026-11-22')
+    pg.click('[data-act="move-to-day"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].dayId") == '2026-11-22',
+       'and it can be put on another day from the same card')
+    ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which follows it there: ' + pg.inner_text('#dayFace'))
+    pg.keyboard.press('Escape')
+    pg.select_option('#daySel', '2026-11-21')
+    pg.wait_for_timeout(200)
+
+    pg.click('.list .item >> nth=3')
+    pg.wait_for_timeout(250)
+    ck('In the backlog, with no day yet' in pg.inner_text('#sheet'), 'a backlog place says so')
+    pg.keyboard.press('Escape')
+
+    # ---- deleting a place, with a way back
+    pg.click('.list .item >> nth=0')
+    pg.wait_for_timeout(250)
+    name = pg.inner_text('.sh-title').split(chr(10))[0]
+    ck('drops it from' in pg.inner_text('#sheet'), 'deleting says which versions it would empty: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Deleting' in l][0])
+    before = len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)'))
+    pg.click('[data-act="delete-place"]')
+    pg.wait_for_timeout(400)
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before - 1, 'and it goes')
+    ck(name.split(' ')[0] in pg.inner_text('#toast'), 'with a note of what went: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before, 'and Undo brings it back')
+    ck(C_places_has(pg, name), 'by name, where it was')
+
+    marked = pg.locator('.mk-plan').first.get_attribute('data-place')
+    pg.click('.mk-plan >> nth=0')
+    pg.wait_for_timeout(250)
+    ck(pg.inner_text('.sh-title').startswith(pg.evaluate('id => window.DayPlannerApp.trip.places[id].name', marked)),
+       'and a marker on the map opens that place\'s card')
     ctx.close()
 
     # ---- a day's shape

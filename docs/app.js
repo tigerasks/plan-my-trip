@@ -7,6 +7,7 @@ const M = window.DayPlannerMap;
 const Live = window.DayPlannerLive;
 const $ = (s, el) => (el || document).querySelector(s);
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const arr = (x) => (Array.isArray(x) ? x : []);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
 
 const ICON = {
@@ -247,9 +248,9 @@ function chipsHtml(p) {
 }
 function itemHtml(p, lead) {
   const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
-  return '<li><div class="item" data-place="' + esc(p.id) + '">' + lead
+  return '<li><button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
     + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
-    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></div></li>';
+    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button></li>';
 }
 function listHtml(places, lead, empty) {
   if (!places.length) return '<p class="empty-line">' + esc(empty) + '</p>';
@@ -292,6 +293,178 @@ function creditsHtml() {
     + '</p>';
 }
 
+// ---------- wheels ----------
+// One control for every number in the planner: a column you scroll or tap. Chosen over typed
+// fields because it is the same gesture on a laptop trackpad and under a thumb.
+const WHEEL_ITEM = 44;
+function wheelHtml(id, values, current, label) {
+  const at = values.findIndex((v) => String(v.value) === String(current));
+  return '<div class="wheel" id="' + id + '" role="listbox" tabindex="0" aria-label="' + esc(label) + '"'
+    + ' data-value="' + esc(values[at < 0 ? 0 : at].value) + '">'
+    + '<div class="wheel-pad"></div>'
+    + values.map((v) => '<button type="button" class="wheel-item" role="option" data-v="' + esc(v.value) + '"'
+      + ' aria-selected="' + (String(v.value) === String(current)) + '">' + esc(v.label) + '</button>').join('')
+    + '<div class="wheel-pad"></div></div>';
+}
+const wheelValue = (id) => { const el = $('#' + id); return el ? el.dataset.value : ''; };
+function wheelSet(el, index, scroll) {
+  const items = el.querySelectorAll('.wheel-item');
+  if (!items.length) return;
+  const i = Math.max(0, Math.min(items.length - 1, index));
+  el.dataset.value = items[i].dataset.v;
+  items.forEach((b, n) => b.setAttribute('aria-selected', String(n === i)));
+  if (scroll) el.scrollTop = i * WHEEL_ITEM;
+}
+// After every render the wheels have to be scrolled back to what they hold.
+function placeWheels() {
+  for (const el of document.querySelectorAll('.wheel')) {
+    const items = [...el.querySelectorAll('.wheel-item')];
+    const i = items.findIndex((b) => b.dataset.v === el.dataset.value);
+    el.scrollTop = Math.max(0, i) * WHEEL_ITEM;
+  }
+}
+const wheelTimers = new WeakMap();
+function onWheelScroll(el) {
+  clearTimeout(wheelTimers.get(el));
+  wheelTimers.set(el, setTimeout(() => wheelSet(el, Math.round(el.scrollTop / WHEEL_ITEM), false), 120));
+}
+function onWheelKey(e, el) {
+  const items = [...el.querySelectorAll('.wheel-item')];
+  const at = items.findIndex((b) => b.dataset.v === el.dataset.value);
+  const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+  if (!step) return;
+  e.preventDefault();
+  wheelSet(el, at + step, true);
+}
+const hourValues = (max) => Array.from({ length: max + 1 }, (_, h) => ({ value: h, label: String(h) + 'h' }));
+const clockValues = () => Array.from({ length: 24 }, (_, h) => ({ value: h, label: two(h) }));
+// Quarter hours, plus whatever odd minute a place arrived with, so nothing is silently rounded.
+function minuteValues(extra) {
+  const mins = [0, 15, 30, 45];
+  const odd = C.toNum(extra);
+  if (odd != null && !mins.includes(odd)) mins.push(odd);
+  return mins.sort((a, b) => a - b).map((m) => ({ value: m, label: two(m) }));
+}
+// Two wheels, a duration in minutes.
+function durationWheels(id, minutes) {
+  return '<div class="wheels">' + wheelHtml(id + 'H', hourValues(12), Math.floor(minutes / 60), 'Hours')
+    + wheelHtml(id + 'M', minuteValues(minutes % 60), minutes % 60, 'Minutes') + '</div>';
+}
+const durationOf = (id) => C.clamp((+wheelValue(id + 'H') || 0) * 60 + (+wheelValue(id + 'M') || 0), 0, C.MAX_DURATION);
+// Two wheels, a time of day.
+function timeWheels(id, hhmm) {
+  const mins = C.parseTime(hhmm);
+  const h = mins == null ? 9 : Math.floor(mins / 60) % 24;
+  const m = mins == null ? 0 : mins % 60;
+  return '<div class="wheels">' + wheelHtml(id + 'H', clockValues(), h, 'Hour')
+    + wheelHtml(id + 'M', minuteValues(m), m, 'Minutes') + '</div>';
+}
+const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
+
+function deleteNote(p) {
+  const holds = C.plansHolding(App.trip, p.id);
+  return holds.length
+    ? 'Deleting drops it from ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) + ', and off the trip altogether.'
+    : 'Deleting drops it off the trip altogether.';
+}
+
+// Moving a place about. Remove takes it out of one version only; Remove to the backlog takes it off
+// the day altogether, which means it leaves every version, and the planner says so.
+function movesHtml(p, holds) {
+  const day = currentDay();
+  const here = day && p.dayId === day.id;
+  const elsewhere = C.dayIds(App.trip).filter((id) => id !== p.dayId);
+  const btn = (act, label, cls) => '<button type="button" class="btn' + (cls ? ' ' + cls : '') + '" data-act="' + act + '">' + esc(label) + '</button>';
+  const out = [];
+  if (here && holds.includes(day.shown)) out.push(btn('move-remove', 'Remove from ' + C.PLAN_LABEL[day.shown]));
+  if (here && !holds.includes(day.shown)) out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
+  if (!p.dayId && day) {
+    out.push(btn('move-add', 'Add to ' + C.PLAN_LABEL[day.shown]));
+    out.push(btn('move-today', 'Add to ' + C.fmtDateUK(day.id)));
+  }
+  if (p.dayId) out.push(btn('move-backlog', holds.length ? 'Remove to the backlog' : 'Move to the backlog'));
+  let picker = '';
+  if (elsewhere.length) {
+    picker = '<div class="span-row" style="margin-top:10px"><span class="label">' + (p.dayId ? 'Or move to' : 'Put it on') + '</span>'
+      + '<select class="in" id="moveDay">' + elsewhere.map((id) =>
+        '<option value="' + esc(id) + '">' + esc(C.fmtDateUK(id) + (App.trip.days[id].city ? ' · ' + App.trip.days[id].city : '')) + '</option>').join('')
+      + '</select>' + btn('move-to-day', 'Move') + '</div>';
+  }
+  return (out.length ? '<div class="actions">' + out.join('') + '</div>' : '') + picker;
+}
+
+// ---------- opening hours ----------
+// Filled in from OpenStreetMap where it had them, always marked unverified until you say otherwise.
+// Confirming or correcting them is the point: from then on they are what the timeline believes.
+const HOURS_FROM = { osm: 'OpenStreetMap', chat: 'the chat', you: 'you' };
+function hoursSectionHtml(s, p, line) {
+  if (s.hours) return hoursEditorHtml(s, p);
+  return '<div class="sh-sec"><span class="label">Opening hours</span>'
+    + (p.hours
+      ? '<p class="note' + (p.hours.verified ? ' good' : ' amber') + '">' + esc(line || p.hours.raw || 'Nothing readable')
+        + '</p><p class="hint">' + esc(p.hours.verified
+          ? 'Checked by you.'
+          : 'From ' + HOURS_FROM[p.hours.source] + ', unverified.') + '</p>'
+      : '<p class="note amber">Hours unknown — check.</p>')
+    + '<div class="actions">'
+    + '<button type="button" class="btn" data-act="edit-hours">' + (p.hours ? 'Correct them' : 'Set the hours') + '</button>'
+    + (p.hours && !p.hours.verified ? '<button type="button" class="btn" data-act="confirm-hours">These are right</button>' : '')
+    + '</div></div>';
+}
+function hoursEditorHtml(s, p) {
+  const d = s.hours;
+  const day = d.same ? 'mon' : d.day;
+  const spans = d.week[day];
+  const closed = Array.isArray(spans) && spans.length === 0;
+  const first = (Array.isArray(spans) && spans[0]) || ['09:00', '18:00'];
+  const second = Array.isArray(spans) && spans[1];
+  const last = d.last[day] || '';
+  return '<div class="sh-sec"><span class="label">Opening hours</span>'
+    + '<label class="tick"><input type="checkbox" id="hSame" data-act="hours-same"' + (d.same ? ' checked' : '') + '>'
+    + '<span>Same every day</span></label>'
+    + (d.same ? '' : '<div class="seg" role="group" aria-label="Which day">' + C.WEEK.map((k) =>
+      '<button type="button" data-act="hours-day" data-d="' + k + '" aria-pressed="' + (k === day) + '">'
+      + esc(C.WEEK_LABEL[k].slice(0, 3)) + '</button>').join('') + '</div>')
+    + '<label class="tick" style="margin-top:10px"><input type="checkbox" id="hClosed" data-act="hours-closed"' + (closed ? ' checked' : '') + '>'
+    + '<span>Closed' + (d.same ? ' every day' : ' on ' + esc(C.WEEK_LABEL[day])) + '</span></label>'
+    + (closed ? '' :
+      '<div class="span-row"><span class="label">Open</span>' + timeWheels('h0o', first[0])
+      + '<span class="label">until</span>' + timeWheels('h0c', first[1]) + '</div>'
+      + (second
+        ? '<div class="span-row"><span class="label">Open again</span>' + timeWheels('h1o', second[0])
+          + '<span class="label">until</span>' + timeWheels('h1c', second[1])
+          + '<button type="button" class="mini" data-act="hours-one-span">Drop the second opening</button></div>'
+        : '<div class="actions"><button type="button" class="mini" data-act="hours-two-spans">Add a second opening, for an afternoon closing</button></div>')
+      + '<label class="tick" style="margin-top:10px"><input type="checkbox" id="hLastOn" data-act="hours-last"' + (last ? ' checked' : '') + '>'
+      + '<span>There is a last entry</span></label>'
+      + (last ? '<div class="span-row"><span class="label">Last entry</span>' + timeWheels('hl', last) + '</div>' : ''))
+    + (p.hours && p.hours.raw ? '<p class="hint">OpenStreetMap said: <code>' + esc(p.hours.raw) + '</code></p>' : '')
+    + '<div class="actions"><button type="button" class="btn primary" data-act="save-hours">Save the hours</button>'
+    + '<button type="button" class="btn" data-act="cancel-hours">Cancel</button></div></div>';
+}
+// A working copy, so switching between days keeps what you have entered.
+function hoursDraft(p) {
+  const week = {}, last = {};
+  const h = p.hours;
+  for (const k of C.WEEK) {
+    week[k] = h && Array.isArray(h.week[k]) ? h.week[k].map((x) => x.slice()) : null;
+    last[k] = h && h.lastEntry ? (h.lastEntry[k] || '') : '';
+  }
+  const known = C.WEEK.filter((k) => Array.isArray(week[k]));
+  const same = known.length !== 7 || known.every((k) => JSON.stringify(week[k]) === JSON.stringify(week[known[0]]));
+  if (!known.length) for (const k of C.WEEK) week[k] = [['09:00', '18:00']];
+  return { same, day: 'mon', week, last };
+}
+// Pull what the wheels hold into the draft before anything redraws them.
+function readHours() {
+  const d = App.ui.sheet.hours;
+  if (!d || !$('#hClosed')) return;
+  const spans = $('#hClosed').checked ? [] : [[timeOf('h0o'), timeOf('h0c')]];
+  if (!$('#hClosed').checked && $('#h1oH')) spans.push([timeOf('h1o'), timeOf('h1c')]);
+  const entry = !$('#hClosed').checked && $('#hlH') ? timeOf('hl') : '';
+  for (const k of (d.same ? C.WEEK : [d.day])) { d.week[k] = spans.map((x) => x.slice()); d.last[k] = entry; }
+}
+
 // ---------- sheets ----------
 // One panel at a time, sliding in from the right on a laptop and up from the bottom on a phone.
 function openSheet(kind, data) {
@@ -312,6 +485,7 @@ function renderSheet() {
   el.innerHTML = build ? build(s) : '';
   el.classList.toggle('open', !!build);
   el.setAttribute('aria-hidden', build ? 'false' : 'true');
+  placeWheels();
 }
 function pendingHtml(p) {
   if (!p) return '';
@@ -377,6 +551,33 @@ const SHEETS = {
     + field('pinKind', 'What is it?', '<select class="in" id="pinKind">' + C.KINDS.map((k) =>
       '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
     + addButtonsHtml('add-pin'),
+
+  // A place already in the trip: what it is, how long it takes, when it is open, where it sits.
+  place: (s) => {
+    const p = C.placeById(App.trip, s.id);
+    if (!p) return sheetHead('That place has gone');
+    const where = [C.KIND_LABEL[p.kind], p.area].filter(Boolean).join(' · ');
+    const holds = C.plansHolding(App.trip, p.id);
+    const line = p.hours ? C.hoursText(p.hours) : '';
+    return sheetHead(p.name, p.localName || '')
+      + '<p class="note">' + esc(where) + chipsHtml(p) + '</p>'
+      + '<div class="sh-sec"><span class="label">Where it sits</span><p class="note">'
+      + esc(p.dayId
+        ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
+        : 'In the backlog, with no day yet') + '</p>'
+      + movesHtml(p, holds) + '</div>'
+      + '<div class="sh-sec"><span class="label">How long it takes</span>'
+      + durationWheels('dur', p.duration)
+      + '<div class="actions"><button type="button" class="btn" data-act="save-duration">Save</button></div></div>'
+      + hoursSectionHtml(s, p, line)
+      + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
+      + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
+      + linksHtml(p, null)
+      + gmapsHtml(p)
+      + '<div class="sh-sec"><span class="label">Delete</span>'
+      + '<p class="note">' + esc(deleteNote(p)) + ' You can undo it straight afterwards.</p>'
+      + '<button type="button" class="btn danger" data-act="delete-place">Delete ' + esc(p.name) + '</button></div>';
+  },
 
   preview: (s) => {
     const p = s.place;
@@ -514,6 +715,12 @@ function addPlaceTo(place, to) {
     : to === 'plan' ? C.PLAN_LABEL[day.shown] : C.fmtDateUK(day.id)));
 }
 
+// A place that is already in the trip.
+function openPlace(id) {
+  if (!C.placeById(App.trip, id)) return;
+  openSheet('place', { id: id });
+}
+
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
 // The map's own information is on screen at once; OpenStreetMap fills in behind it, and the
 // preview works perfectly well if that never arrives.
@@ -586,7 +793,8 @@ function gmapsHtml(place) {
 }
 function linksHtml(place, details) {
   const out = [];
-  for (const l of (details ? details.links : [])) out.push([l.url, l.label]);
+  for (const l of (details ? details.links : arr(place.links))) out.push([l.url, l.label]);
+  if (!details && place.osm) out.push([C.osmUrl(place.osm), 'OpenStreetMap']);
   for (const l of App.trip.lookups) out.push([C.lookupUrl(l, place), l.label]);
   if (!out.length) return '';
   return '<div class="sh-sec"><span class="label">Look it up</span><p class="links">'
@@ -780,6 +988,93 @@ const ACTIONS = {
     if (found) openPreview(found);
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
+  place: (el) => openPlace(el.dataset.id),
+  'delete-place': () => {
+    const before = C.clone(App.trip);
+    const wasDay = App.ui.dayId;
+    const res = C.deletePlace(App.trip, App.ui.sheet.id);
+    closeSheet();
+    changed();
+    toast(res.text, { label: 'Undo', fn: () => {
+      App.trip = before;
+      App.ui.dayId = wasDay;
+      saveUi();
+      changed('Brought back');
+    } }, 9000);
+  },
+  'move-remove': () => {
+    const day = currentDay();
+    const res = C.removeFromPlan(App.trip, App.ui.sheet.id, day.shown);
+    changed(res.text);
+  },
+  'move-add': () => {
+    const day = currentDay();
+    const id = App.ui.sheet.id;
+    if (C.placeById(App.trip, id).dayId !== day.id) C.moveToDay(App.trip, id, day.id);
+    const res = C.addToPlan(App.trip, id, day.shown, C.bestSlot(App.trip, day.id, day.shown, id));
+    changed(res.text);
+  },
+  'move-today': () => { changed(C.moveToDay(App.trip, App.ui.sheet.id, currentDay().id).text); },
+  'move-backlog': () => { changed(C.moveToBacklog(App.trip, App.ui.sheet.id).text); },
+  'move-to-day': () => {
+    const to = val('moveDay');
+    const res = C.moveToDay(App.trip, App.ui.sheet.id, to);
+    if (res.ok) { App.ui.dayId = to; saveUi(); }
+    changed(res.text);
+  },
+  'edit-hours': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    App.ui.sheet.hours = hoursDraft(p);
+    render();
+  },
+  'cancel-hours': () => { App.ui.sheet.hours = null; render(); },
+  'confirm-hours': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    p.hours.verified = true;
+    changed(p.name + ': hours confirmed');
+  },
+  'hours-same': () => { readHours(); App.ui.sheet.hours.same = $('#hSame').checked; render(); },
+  'hours-day': (el) => { readHours(); App.ui.sheet.hours.day = el.dataset.d; render(); },
+  'hours-closed': () => { readHours(); render(); },
+  'hours-last': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    const on = $('#hLastOn').checked;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.last[k] = on ? (d.last[k] || '17:30') : '';
+    render();
+  },
+  'hours-two-spans': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.week[k] = (d.week[k] || []).concat([['17:00', '22:00']]);
+    render();
+  },
+  'hours-one-span': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    for (const k of (d.same ? C.WEEK : [d.day])) d.week[k] = (d.week[k] || []).slice(0, 1);
+    render();
+  },
+  'save-hours': () => {
+    readHours();
+    const d = App.ui.sheet.hours;
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    const lastEntry = {};
+    for (const k of C.WEEK) if (d.last[k]) lastEntry[k] = d.last[k];
+    p.hours = {
+      source: 'you', verified: true, raw: p.hours ? p.hours.raw : '',
+      week: d.week, lastEntry: lastEntry,
+    };
+    App.trip = C.normalise(App.trip).trip;
+    App.ui.sheet.hours = null;
+    changed(p.name + ': hours saved');
+  },
+  'save-duration': () => {
+    const p = C.placeById(App.trip, App.ui.sheet.id);
+    if (!p) return;
+    p.duration = durationOf('dur');
+    changed(p.name + ' takes ' + C.fmtDur(p.duration));
+  },
   'pin-mode': () => setPinning(!App.ui.pinning),
   gmaps: () => {
     const s = App.ui.sheet;
@@ -855,19 +1150,33 @@ function onClick(e) {
   if (!el) return;
   const fn = ACTIONS[el.dataset.act];
   if (!fn) return;
-  e.preventDefault();
+  if (el.tagName !== 'INPUT') e.preventDefault();   // a tickbox must be left to tick itself
   fn(el);
 }
 
 // ---------- boot ----------
 function boot() {
   M.onTap(onMapTap);
+  M.onPick(openPlace);
   if (!M.init('map', render)) {
     $('#mapEmpty').hidden = false;
     $('#mapEmpty').textContent = 'The street map could not be loaded. Everything else still works.';
   }
   document.addEventListener('click', onClick);
   document.addEventListener('input', (e) => { if (e.target.id === 'findBox') onFindInput(e); });
+  document.addEventListener('click', (e) => {
+    const item = e.target.closest('.wheel-item');
+    if (!item) return;
+    const wheel = item.closest('.wheel');
+    wheelSet(wheel, [...wheel.querySelectorAll('.wheel-item')].indexOf(item), true);
+  });
+  document.addEventListener('scroll', (e) => {
+    if (e.target.classList && e.target.classList.contains('wheel')) onWheelScroll(e.target);
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    const wheel = e.target.closest && e.target.closest('.wheel');
+    if (wheel) onWheelKey(e, wheel);
+  });
   $('#daySel').addEventListener('change', (e) => { App.ui.dayId = e.target.value; saveUi(); render(); });
   $('#fileIn').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
