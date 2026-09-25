@@ -254,11 +254,25 @@ with sync_playwright() as pw:
     pg.fill('#dyDate', '2026-11-21')
     pg.click('[data-act="save-day"]')
     pg.wait_for_timeout(150)
-    ck('already a day of this trip' in pg.inner_text('#sheet'), 'a date the trip already has is refused: ' + pg.inner_text('#sheet .note.bad'))
+    ck('The trip already has Sat 21 Nov' in pg.inner_text('#sheet'), 'a date the trip already has is refused: ' + pg.inner_text('#sheet .note.bad'))
     pg.fill('#dyDate', '2026-11-22')
     pg.click('[data-act="save-day"]')
     pg.wait_for_timeout(900)
     ck(len(pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')) == 2, 'both days are in the picker')
+
+    # several at once
+    pg.click('#addDayBtn')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#dyCount') == '1', 'one day is the usual case')
+    pg.fill('#dyDate', '2026-11-22')
+    pg.fill('#dyCount', '4')
+    pg.click('[data-act="save-day"]')
+    pg.wait_for_timeout(900)
+    days = pg.eval_on_selector_all('#daySel option', 'els => els.map(e => e.value)')
+    ck(days == ['2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24', '2026-11-25'],
+       'a run of days arrives at once: ' + ' '.join(days))
+    ck('1 day was already there, left as it was' in pg.inner_text('#toast'),
+       'and the day it already had is left alone: ' + pg.inner_text('#toast'))
     ctx.close()
 
     # ---- opening a place already in the trip

@@ -884,6 +884,34 @@ function addDay(trip, date, city, now) {
   touch(trip, now);
   return { ok: true, id: iso, day: d, text: fmtDateUK(iso) + ' added' };
 }
+// A run of days at once, which is how a trip is usually planned. Dates the trip already has are
+// left exactly as they are.
+function addDays(trip, date, count, city, now) {
+  const first = normDate(date);
+  if (!first) return { ok: false, text: 'That is not a date the planner can read (it wants 2026-11-21)', added: [] };
+  const n = clamp(Math.round(toNum(count) || 1), 1, 60);
+  const added = [], kept = [];
+  const at = new Date(first + 'T00:00:00Z');
+  for (let i = 0; i < n; i++) {
+    const iso = at.toISOString().slice(0, 10);
+    at.setUTCDate(at.getUTCDate() + 1);
+    if (trip.days[iso]) { kept.push(iso); continue; }
+    trip.days[iso] = normDay({ date: iso, city }, [], now || new Date().toISOString());
+    added.push(iso);
+  }
+  touch(trip, now);
+  const already = (list) => list.length === 1
+    ? '1 day was already there, left as it was'
+    : list.length + ' days were already there, left as they were';
+  return {
+    ok: added.length > 0, added, kept, id: added[0] || kept[0],
+    text: added.length
+      ? (added.length === 1 ? fmtDateUK(added[0]) + ' added' : added.length + ' days added, ' + fmtDateUK(added[0]) + ' to ' + fmtDateUK(added[added.length - 1]))
+        + (kept.length ? ' · ' + already(kept) : '')
+      : 'The trip already has ' + (kept.length === 1 ? fmtDateUK(kept[0]) : 'all ' + kept.length + ' of those days'),
+  };
+}
+
 // Deleting a day sends its ideas back to the backlog.
 function deleteDay(trip, dayId, now) {
   const d = trip.days[dayId];
@@ -1085,7 +1113,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, deletePlace, addDay, deleteDay, setDayDate, bestSlot,
+  reorderPlan, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };

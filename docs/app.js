@@ -656,10 +656,14 @@ const SHEETS = {
       + '<p class="note">' + esc(dayPlacesNote(day)) + ' You can undo it straight afterwards.</p>'
       + '<button type="button" class="btn danger" data-act="delete-day">Delete this day</button></div>';
   },
-  'add-day': (s) => sheetHead('Add a day')
+  'add-day': (s) => sheetHead('Add days')
     + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
-    + field('dyDate', 'Date', '<input class="in" type="date" id="dyDate" value="' + esc(s.date) + '">', 'One day per date.')
-    + field('dyCity', 'City', textIn('dyCity', s.city, ' maxlength="60" placeholder="Kyoto"'), 'Where the day happens. It steers the map and place search later.')
+    + '<div class="pair">'
+    + field('dyDate', 'Starting', '<input class="in" type="date" id="dyDate" value="' + esc(s.date) + '">')
+    + field('dyCount', 'How many', '<input class="in" type="number" id="dyCount" min="1" max="60" value="' + esc(s.count || 1) + '">')
+    + '</div>'
+    + field('dyCity', 'City', textIn('dyCity', s.city, ' maxlength="60" placeholder="Kyoto"'), 'Where the days happen. It steers the map and place search.')
+    + '<p class="hint">One day per date. Dates the trip already has are left exactly as they are.</p>'
     + '<div class="actions"><button type="button" class="btn primary" data-act="save-day">Add</button>'
     + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>',
   trip: () => {
@@ -886,11 +890,11 @@ const isoToday = () => { const d = new Date(); return d.getFullYear() + '-' + tw
 // The day after the last one, since trips are usually planned forwards.
 function suggestDay() {
   const ids = C.dayIds(App.trip);
-  if (!ids.length) return { date: isoToday(), city: '' };
+  if (!ids.length) return { date: isoToday(), city: '', count: 1 };
   const last = ids[ids.length - 1];
   const d = new Date(last + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + 1);
-  return { date: d.toISOString().slice(0, 10), city: App.trip.days[last].city };
+  return { date: d.toISOString().slice(0, 10), city: App.trip.days[last].city, count: 1 };
 }
 const ACTIONS = {
   trip: () => { if (App.trip) openSheet('trip'); },
@@ -926,8 +930,16 @@ const ACTIONS = {
   },
   'add-day': () => { if (App.trip) openSheet('add-day', suggestDay()); },
   'save-day': () => {
-    const res = C.addDay(App.trip, val('dyDate'), val('dyCity'));
-    if (!res.ok) { App.ui.sheet.error = res.text; App.ui.sheet.date = val('dyDate'); App.ui.sheet.city = val('dyCity'); render(); return; }
+    const s = App.ui.sheet;
+    const res = C.addDays(App.trip, val('dyDate'), val('dyCount'), val('dyCity'));
+    if (!res.ok) {
+      s.error = res.text;
+      s.date = val('dyDate');
+      s.count = val('dyCount');
+      s.city = val('dyCity');
+      render();
+      return;
+    }
     App.ui.dayId = res.id;
     saveUi();
     closeSheet();
