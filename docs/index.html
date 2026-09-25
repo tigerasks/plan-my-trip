@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Day planner. SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Day planner</title>
+<meta name="description" content="Plan the days of a trip: a backlog of ideas, days, and three plan versions.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231c1917' stroke-width='2'><path d='M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z'/><circle cx='12' cy='10' r='2.5'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button type="button" class="trip-btn" id="tripBtn"><span class="name">Day planner</span></button>
+    <label class="daypick" id="dayPick" hidden>
+      <span class="sr">Choose a day</span>
+      <select id="daySel"></select>
+      <span class="face"><span id="dayFace">No days yet</span>
+        <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+    </label>
+    <span class="grow"></span>
+    <span class="saved" id="saved"></span>
+  </header>
+  <section class="mapwrap" id="mapwrap" aria-label="Map">
+    <div class="map-empty" id="mapEmpty">The street map arrives with the next step.</div>
+  </section>
+  <main class="panel" id="panel"></main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
