@@ -20,6 +20,12 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Updated Fri 25 Sep 2026, milestone 2:** places are built. Two things worth recording. Adding to a
+plan puts a stop where it adds the least straight-line distance, not yet where it causes the fewest
+problems — that waits for the scheduler in milestone 3. And the hours editor is two wheels for every
+time, an hour and a quarter-hour, with "same every day" broken out per day when a place needs it; an
+imported time that is not on a quarter hour is kept as an extra stop on the wheel rather than rounded.
+
 **Updated Fri 25 Sep 2026, service test 3:** Transitous does have Kyoto's rail timetables — the first two runs were bus journeys. The stop-based fallback is for the bus gap, not for the city as a whole. Node ids confirmed. Photon and Overpass can both take about two seconds. Raw output now kept in `service-tests.md`.
 
 **Updated Fri 25 Sep 2026, Transitous:** building the planner sends Transitous too little traffic to be worth telling them about. The heads-up is the owner's to send, once other people are actually using the planner; while it isn't being advertised it may never be needed.

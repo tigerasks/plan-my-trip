@@ -10,9 +10,11 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
 
 **Status:**
 - The v2 design is complete and was tested against the live services on Fri 25 Sep 2026.
-- Milestone 1 is built and published: the app shell with the Liberty map, the trip, backlog and days
-  model, auto-save in the browser, and the `day-planner/2` file and text block. Places, plans and
-  travel times are still to come. The service test page, `docs/probe.html`, stays alongside it.
+- Milestones 1 and 2 are built and published: the app shell with the Liberty map, the trip, backlog
+  and days model, auto-save in the browser, the `day-planner/2` file and text block, and places —
+  search, tapping the map, dropped pins, the preview with OpenStreetMap details, the hours editor,
+  durations, moves and Delete with undo. Plans and travel times are still to come. The service test
+  page, `docs/probe.html`, stays alongside it.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -127,7 +129,7 @@ These are proposed; confirm each with the owner before starting it.
    - auto-save to browser storage;
    - Save to file and Import from file;
    - the versioned text export and import format, with begin/end lines and plain-language validation errors.
-2. **Places:**
+2. **Places — built:**
    - Photon search, tapping the map to add, dropping a pin;
    - look before you add: tapping or finding a place opens a preview first. It shows the map information (English name where available, local name kept, type), the distance from the plan, OpenStreetMap details via Overpass, the user's own look-up links, and "Check on Google Maps" opening beside the planner (a separate window on a laptop, the Maps app on a phone), then the Add buttons;
    - an hours editor per place: filled from OpenStreetMap where available and marked unverified, confirmed or corrected by the user, feeding the timeline;
