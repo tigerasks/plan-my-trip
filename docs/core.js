@@ -430,6 +430,254 @@ function plansHolding(trip, placeId) {
   return PLAN_KEYS.filter((k) => d.plans[k].includes(placeId));
 }
 
+// ---------- OpenStreetMap opening hours ----------
+// The opening_hours syntax is far bigger than anything a trip needs, and small places rarely carry
+// hours at all (two Kyoto restaurants, two misses in the service test). So this reads the common
+// shapes and admits it when it cannot: whatever is left over is kept as text for you to type in.
+const WEEK_ABBR = { mo: 'mon', tu: 'tue', we: 'wed', th: 'thu', fr: 'fri', sa: 'sat', su: 'sun' };
+const ALL_WEEK = () => { const w = {}; for (const d of WEEK) w[d] = null; return w; };
+
+function osmDays(spec) {
+  const out = [];
+  for (const part of str(spec).split(',')) {
+    const t = part.trim().toLowerCase();
+    if (!t) continue;
+    const range = /^([a-z]{2})\s*-\s*([a-z]{2})$/.exec(t);
+    if (range) {
+      const a = WEEK.indexOf(WEEK_ABBR[range[1]]), b = WEEK.indexOf(WEEK_ABBR[range[2]]);
+      if (a < 0 || b < 0) return null;
+      for (let i = a, guard = 0; guard < 7; i = (i + 1) % 7, guard++) { out.push(WEEK[i]); if (i === b) break; }
+      continue;
+    }
+    if (!WEEK_ABBR[t]) return null;
+    out.push(WEEK_ABBR[t]);
+  }
+  return out.length ? out : null;
+}
+function osmSpans(spec) {
+  const t = str(spec).toLowerCase();
+  if (t === 'off' || t === 'closed') return [];
+  const out = [];
+  for (const part of str(spec).split(',')) {
+    const m = /^\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s*$/.exec(part);
+    if (!m) return null;
+    const from = normTime(m[1]), to = normTime(m[2]);
+    if (from == null || to == null) return null;
+    out.push([from, to]);
+  }
+  return out.length ? out : null;
+}
+// Returns { week, partial } — partial when part of the string went unread — or null when none of it did.
+function parseOsmHours(text) {
+  const src = str(text, 200);
+  if (!src) return null;
+  if (/^\s*24\s*\/\s*7\s*$/.test(src)) {
+    const week = {};
+    for (const d of WEEK) week[d] = [['00:00', '23:59']];   // a minute short of midnight, and never ambiguous
+    return { week, partial: false };
+  }
+  const week = ALL_WEEK();
+  let read = 0, partial = false;
+  for (const rule of src.split(';')) {
+    const r = rule.trim();
+    if (!r) continue;
+    const m = /^([A-Za-z]{2}(?:\s*[-,]\s*[A-Za-z]{2})*)?\s*(.+)$/.exec(r);
+    const days = m && m[1] ? osmDays(m[1]) : WEEK.slice();
+    const spans = m ? osmSpans(m[2]) : null;
+    if (!days || spans == null) { partial = true; continue; }
+    for (const d of days) week[d] = spans;
+    read++;
+  }
+  return read ? { week, partial } : null;
+}
+// What the planner stores for a place whose hours came from OpenStreetMap, and whether any of the
+// string went unread. `partial` is deliberately not part of the stored hours: once you have edited
+// them it would be a stale claim, and it can always be worked out again from `raw`.
+function hoursFromOsm(text) {
+  const raw = str(text, 200);
+  if (!raw) return null;
+  const parsed = parseOsmHours(raw);
+  return {
+    hours: { source: 'osm', verified: false, raw, week: parsed ? parsed.week : ALL_WEEK(), lastEntry: {} },
+    partial: !parsed || parsed.partial,
+  };
+}
+
+// ---------- reading the map ----------
+// A tapped vector-tile feature carries the OpenStreetMap id as id × 10 + the element type.
+// Verified live for ways (Sukiya) and nodes (Pizza Little Party); relations never came up, and
+// places are rarely relations. See documentation/service-tests.md.
+const OSM_BY_DIGIT = { 1: 'node', 2: 'way', 3: 'relation' };
+function decodeFeatureId(fid) {
+  const text = String(fid == null ? '' : fid);
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if (!isFinite(n) || n > Number.MAX_SAFE_INTEGER) return null;
+  const type = OSM_BY_DIGIT[n % 10];
+  const id = Math.floor(n / 10);
+  return type && id > 0 ? { type, id } : null;
+}
+
+// The map names a place in many languages, and not always under the keys you expect: Tō-ji came
+// back with no plain `name` at all. So both names are picked from a chain, and the local one is
+// always kept — "East Temple" is not what is written on the gate.
+const firstName = (s) => str(s, 120).split(';')[0].trim();
+function namesFrom(props) {
+  const p = obj(props);
+  const pick = (keys) => { for (const k of keys) if (str(p[k])) return firstName(p[k]); return ''; };
+  const local = pick(['name', 'name:nonlatin']);
+  const english = pick(['name:en', 'name_en', 'name_int', 'name:latin']);
+  const name = english || local;
+  return { name, localName: local && local !== name ? local : '' };
+}
+
+// class and subclass come from OpenMapTiles; subclass is the OpenStreetMap tag value, so it wins.
+const KIND_BY_TAG = {
+  restaurant: 'food', fast_food: 'food', cafe: 'food', bar: 'food', pub: 'food', biergarten: 'food',
+  ice_cream: 'food', bakery: 'food', confectionery: 'food', food_court: 'food', deli: 'food',
+  museum: 'museum', art_gallery: 'museum', gallery: 'museum',
+  place_of_worship: 'culture', shrine: 'culture', temple: 'culture', church: 'culture',
+  monastery: 'culture', castle: 'culture', monument: 'culture', memorial: 'culture',
+  ruins: 'culture', archaeological_site: 'culture', historic: 'culture',
+  park: 'nature', garden: 'nature', nature_reserve: 'nature', beach: 'nature', forest: 'nature',
+  waterfall: 'nature', spring: 'nature', picnic_site: 'nature',
+  viewpoint: 'view', tower: 'view',
+  theatre: 'experience', cinema: 'experience', onsen: 'experience', spa: 'experience',
+  swimming: 'experience', aquarium: 'experience', theme_park: 'experience', zoo: 'experience',
+  stadium: 'experience', arts_centre: 'experience',
+  shop: 'shop', supermarket: 'shop', department_store: 'shop', mall: 'shop', marketplace: 'shop',
+  clothing_store: 'shop', grocery: 'shop', convenience: 'shop', gift: 'shop', books: 'shop',
+  attraction: 'sight', lighthouse: 'sight', bridge: 'sight',
+};
+function kindFrom(props) {
+  const p = obj(props);
+  return KIND_BY_TAG[str(p.subclass)] || KIND_BY_TAG[str(p.class)] || 'other';
+}
+
+// Everything a tapped feature can tell us, before any lookup. `at` is where the finger landed;
+// the feature itself carries no position in the tile.
+function fromMapFeature(feature, at) {
+  const f = obj(feature);
+  const names = namesFrom(f.properties);
+  if (!names.name) return null;
+  const osm = decodeFeatureId(f.id);
+  const point = obj(at);
+  return {
+    name: names.name,
+    localName: names.localName,
+    kind: kindFrom(f.properties),
+    lat: toNum(point.lat),
+    lng: toNum(point.lng),
+    osm,
+    added: { by: 'you', how: 'map', at: null },
+  };
+}
+// The feature under the finger: a named point of interest if there is one.
+function bestFeature(features) {
+  const named = arr(features).filter((f) => namesFrom(obj(f).properties).name);
+  return named.find((f) => obj(f).sourceLayer === 'poi') || named[0] || null;
+}
+
+// ---------- asking the outside services ----------
+// Photon, komoot's geocoder, built for search-as-you-type and biased towards where the map looks.
+// Never Nominatim: its policy forbids search-as-you-type.
+const PHOTON = 'https://photon.komoot.io/api/';
+const OVERPASS = 'https://overpass-api.de/api/interpreter';
+const OSM_PAGE = 'https://www.openstreetmap.org/';
+const GMAPS_SEARCH = 'https://www.google.com/maps/search/?api=1&query=';
+const OSM_BY_LETTER = { N: 'node', W: 'way', R: 'relation' };
+// Photon answers with an OpenStreetMap key and value rather than a map class.
+const KIND_BY_KEY = { shop: 'shop', tourism: 'sight', leisure: 'experience', natural: 'nature', historic: 'culture' };
+
+function photonUrl(query, near, limit) {
+  const p = new URLSearchParams({ q: str(query, 120), lang: 'en', limit: String(clamp(limit || 8, 1, 20)) });
+  const n = obj(near);
+  if (isNum(n.lat) && isNum(n.lng)) { p.set('lat', n.lat.toFixed(5)); p.set('lon', n.lng.toFixed(5)); }
+  return PHOTON + '?' + p.toString();
+}
+const kindFromTags = (key, value) => KIND_BY_TAG[str(value)] || KIND_BY_KEY[str(key)] || 'other';
+// Where a result is, in the words its own country uses, nearest first.
+function whereOf(p) {
+  const bits = [p.street, p.district, p.locality, p.city, p.state, p.country].map((x) => str(x, 60));
+  const out = [];
+  for (const b of bits) if (b && !out.includes(b)) out.push(b);
+  return out.slice(0, 3).join(' · ');
+}
+function parsePhoton(json, now) {
+  const out = [];
+  for (const f of arr(obj(json).features)) {
+    const p = obj(obj(f).properties);
+    const c = arr(obj(obj(f).geometry).coordinates);
+    const lat = toNum(c[1]), lng = toNum(c[0]);
+    const name = firstName(p.name);
+    if (!name || lat == null || lng == null) continue;
+    const type = OSM_BY_LETTER[str(p.osm_type).toUpperCase()];
+    const id = toNum(p.osm_id);
+    out.push({
+      name, localName: '', lat, lng,
+      kind: kindFromTags(p.osm_key, p.osm_value),
+      area: str(p.district || p.locality || p.city, 60),
+      where: whereOf(p),
+      osm: type && id ? { type, id: Math.round(id) } : null,
+      added: { by: 'you', how: 'search', at: now || null },
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+// One lookup per previewed place, straight at its id, so Overpass never has to search.
+function overpassUrl(osm) {
+  const o = normOsm(osm);
+  if (!o) return null;
+  return OVERPASS + '?data=' + encodeURIComponent('[out:json][timeout:20];' + o.type + '(' + o.id + ');out tags;');
+}
+const parseOverpass = (json) => { const el = arr(obj(json).elements)[0]; return el ? obj(el.tags) : null; };
+
+const osmUrl = (osm) => { const o = normOsm(osm); return o ? OSM_PAGE + o.type + '/' + o.id : ''; };
+// Google Maps is for reviews, photos and today's hours. It opens beside the planner and nothing
+// comes back: no Google result is ever stored or drawn on our map.
+function gmapsUrl(place, city) {
+  const p = obj(place);
+  const words = [str(p.localName) || str(p.name), str(p.area, 60) || str(city, 60)].filter(Boolean);
+  return GMAPS_SEARCH + encodeURIComponent(words.join(' '));
+}
+
+// What OpenStreetMap knows, in the shape the preview shows it. Coverage varies wildly: a well-known
+// sight carries plenty, a small restaurant often just a name.
+const DIET = { 'diet:vegetarian': 'vegetarian', 'diet:vegan': 'vegan', 'diet:halal': 'halal', 'diet:kosher': 'kosher' };
+function detailsFromTags(tags, osm) {
+  const t = obj(tags);
+  const val = (...keys) => { for (const k of keys) if (str(t[k])) return str(t[k], 200); return ''; };
+  const diet = [];
+  for (const [k, word] of Object.entries(DIET)) if (/^(yes|only)$/i.test(str(t[k]))) diet.push(word);
+  const website = val('website', 'contact:website', 'url');
+  const wiki = str(t.wikipedia, 120);
+  const links = [];
+  if (/^https?:\/\//i.test(website)) links.push({ url: website, label: 'Its own site' });
+  if (/^[a-z-]+:.+/i.test(wiki)) {
+    const [lang, title] = wiki.split(/:(.+)/);
+    links.push({ url: 'https://' + lang + '.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_')), label: 'Wikipedia' });
+  }
+  const page = osmUrl(osm);
+  if (page) links.push({ url: page, label: 'OpenStreetMap' });
+  return {
+    hours: hoursFromOsm(t.opening_hours),
+    hoursChecked: str(t['check_date:opening_hours'], 20),
+    cuisine: val('cuisine').replace(/;/g, ', '),
+    phone: val('phone', 'contact:phone'),
+    website,
+    reservation: val('reservation'),
+    takeaway: val('takeaway'),
+    wheelchair: val('wheelchair'),
+    fee: val('fee'),
+    description: val('description'),
+    diet,
+    links: normLinks(links),
+    tagCount: Object.keys(t).length,
+  };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -733,6 +981,10 @@ const Core = {
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
+  decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
+  osmDays, osmSpans, parseOsmHours, hoursFromOsm,
+  PHOTON, OVERPASS, photonUrl, parsePhoton, overpassUrl, parseOverpass, detailsFromTags,
+  osmUrl, gmapsUrl, kindFromTags, whereOf,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,

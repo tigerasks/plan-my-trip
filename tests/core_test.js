@@ -2,6 +2,7 @@
 /* Node tests for docs/core.js. Run: node tests/core_test.js */
 const C = require('../docs/core.js');
 const demoEnv = require('./demo-trip.json');
+const fix = require('./fixtures.json');
 let fails = 0;
 const ok = (cond, msg) => { if (!cond) { fails++; console.log('  ✗ FAIL:', msg); } else console.log('  ✓', msg); };
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -208,6 +209,94 @@ note = C.importNote(C.readBlock(C.writeBlock(demoTrip, 'package')), demoTrip);
 ok(/Merging a package/.test(note.lines.join(' ')), 'a package says merging comes later: ' + note.lines[2]);
 note = C.importNote(C.readBlock('nonsense'), demoTrip);
 ok(!note.confirm && note.lines[0] === why('nonsense').split(': ').slice(1).join(': '), 'and an unreadable block just shows its reason');
+
+console.log('\n== Reading the map ==');
+ok(JSON.stringify(C.decodeFeatureId('52797288601')) === '{"type":"node","id":5279728860}',
+  'a tapped id decodes to its OpenStreetMap node, as the service test confirmed');
+ok(JSON.stringify(C.decodeFeatureId(3598968102)) === '{"type":"way","id":359896810}', 'and to a way');
+ok(C.decodeFeatureId('359896810' + '3').type === 'relation', 'and to a relation');
+ok(C.decodeFeatureId('') === null && C.decodeFeatureId('abc') === null && C.decodeFeatureId('5') === null,
+  'and to nothing when the id is missing, not a number, or has no id left');
+
+const byName = {};
+for (const f of fix.mapFeatures) { const p = C.fromMapFeature(f, { lat: 35, lng: 135 }); byName[p.name] = p; }
+ok(byName['Pizza Little Party'].localName === 'ピザリトルパーティ', 'English name with the local one kept beside it');
+ok(byName['Pizza Little Party'].kind === 'food', 'a fast food place is food');
+ok(byName['East Temple'].localName === '東寺', 'a feature with no plain name still gives up its local one');
+ok(byName['East Temple'].kind === 'culture', 'a place of worship is culture');
+ok(byName['East Temple'].osm.type === 'way' && byName['East Temple'].osm.id === 359896810, 'and its OpenStreetMap way');
+ok(byName['Wasachi'].localName === '', 'a place whose names agree is not shown its own name twice');
+ok(byName['Best Breakfast Point'].kind === 'view', 'a viewpoint beats its attraction class');
+ok(byName['Odashi'].kind === 'food' && byName['Wagyu to Worldwide Kyoto Station'].kind === 'food', 'the rest land where they should');
+ok(C.fromMapFeature({ id: 1, properties: { class: 'park' } }, {}) === null, 'a feature with no name is not a place');
+ok(C.namesFrom({ name: 'A;B;C' }).name === 'A', 'alternative names are trimmed to the first');
+
+const feats = [{ sourceLayer: 'building', properties: { name: 'A block of flats' } }].concat(fix.mapFeatures.slice(0, 1));
+ok(C.bestFeature(feats).sourceLayer === 'poi', 'a point of interest wins over whatever else is under the finger');
+ok(C.bestFeature([{ properties: {} }]) === null, 'and nothing named means nothing tapped');
+
+console.log('\n== Opening hours from OpenStreetMap ==');
+const hrs = (t) => C.parseOsmHours(t);
+let h = hrs('Mo-Sa 11:00-14:00,17:00-22:00; Su off');
+ok(JSON.stringify(h.week.mon) === '[["11:00","14:00"],["17:00","22:00"]]', 'split hours read as two spans');
+ok(JSON.stringify(h.week.sun) === '[]' && !h.partial, 'a day off reads as closed, with nothing left over');
+ok(JSON.stringify(h.week.sat) === JSON.stringify(h.week.mon), 'a day range covers its whole span');
+ok(JSON.stringify(hrs('Mo-Su 06:00-18:00').week.wed) === '[["06:00","18:00"]]', 'every day, written as a range');
+ok(JSON.stringify(hrs('09:00-17:00').week.sun) === '[["09:00","17:00"]]', 'times with no days apply to every day');
+ok(JSON.stringify(hrs('Mo,We,Fr 10:00-18:00').week.wed) === '[["10:00","18:00"]]', 'a list of days');
+ok(hrs('Mo,We,Fr 10:00-18:00').week.tue === null, 'and the days it does not mention stay unknown');
+ok(hrs('24/7').week.mon[0][1] === '23:59', 'around the clock is stored as a full day');
+ok(JSON.stringify(hrs('Sa-Su 10:00-16:00').week.sun) === '[["10:00","16:00"]]', 'a range that wraps past Sunday');
+
+h = hrs('Mo-Fr 09:00-17:00; Nov-Mar Su off; PH closed');
+ok(JSON.stringify(h.week.mon) === '[["09:00","17:00"]]' && h.partial,
+  'what it can read it reads, and it owns up to the rest');
+ok(hrs('sunrise-sunset') === null && hrs('') === null, 'a string it cannot read at all gives nothing');
+
+const fromOsm = C.hoursFromOsm(fix.overpassTags.opening_hours);
+ok(fromOsm.hours.source === 'osm' && fromOsm.hours.verified === false, 'hours from the map arrive unverified');
+ok(fromOsm.hours.raw === 'Mo-Sa 11:00-14:00,17:00-22:00; Su off', 'with the original text kept beside them');
+ok(fromOsm.partial === false, 'and this one was read in full');
+const half = C.hoursFromOsm('Nov-Mar 09:00-16:00');
+ok(half.partial && half.hours.raw === 'Nov-Mar 09:00-16:00', 'an unreadable string still comes through, as text to correct');
+ok(!('partial' in C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours } } }).trip.places.x.hours),
+  'the stored hours carry no claim about how well they were read');
+ok(C.normalise({ places: { x: { name: 'X', hours: fromOsm.hours } } }).trip.places.x.hours.week.sun.length === 0,
+  'and they survive normalising into the trip');
+
+console.log('\n== Asking the outside services ==');
+const pu = C.photonUrl('nintendo museum', { lat: 34.97787, lng: 135.76039 });
+ok(pu.indexOf('https://photon.komoot.io/api/?') === 0 && /q=nintendo\+museum/.test(pu), 'a Photon query, escaped: ' + pu);
+ok(/lang=en/.test(pu) && /lat=34\.97787/.test(pu) && /lon=135\.76039/.test(pu), 'in English, biased to where the map is looking');
+ok(!/lat=/.test(C.photonUrl('kyoto')), 'and without a bias when the map has nowhere to point');
+
+const found = C.parsePhoton(fix.photon, '2026-09-25T10:00:00Z');
+ok(found.length === 2 && found[0].name === 'Nintendo Museum', 'results come back as places');
+ok(found[0].kind === 'museum' && found[1].kind === 'other', 'with a kind worked out from their OpenStreetMap tags');
+ok(found[0].lat === 34.8871 && found[0].lng === 135.8048, 'and their position the right way round');
+ok(JSON.stringify(found[0].osm) === '{"type":"way","id":263330850}', 'and their OpenStreetMap reference');
+ok(found[0].where === 'Ogura · Ogura-cho · Uji', 'said where they are, nearest first: ' + found[0].where);
+ok(found[0].added.how === 'search' && found[0].added.by === 'you', 'and remember how they were found');
+ok(C.parsePhoton({ features: [{ properties: { name: 'No position' } }] }).length === 0, 'a result with no position is dropped');
+
+ok(C.overpassUrl({ type: 'node', id: 5279728860 }).indexOf('node(5279728860)%3Bout%20tags%3B') > 0,
+  'an Overpass lookup goes straight at the id, never a search');
+ok(C.overpassUrl(null) === null, 'and there is none to make without one');
+ok(C.parseOverpass({ elements: [{ type: 'node', id: 1, tags: { a: 'b' } }] }).a === 'b', 'tags come back');
+ok(C.parseOverpass({ elements: [] }) === null, 'and nothing when the place is not there');
+
+const det = C.detailsFromTags(fix.overpassTags, { type: 'node', id: 5279728860 });
+ok(det.cuisine === 'pizza' && det.phone === '075-672-9889' && det.takeaway === 'only', 'the useful tags are picked out');
+ok(det.hours.hours.raw === fix.overpassTags.opening_hours, 'hours come through as hours');
+ok(det.links.some((l) => l.url === 'https://www.openstreetmap.org/node/5279728860'), 'with a link back to the source');
+const rich = C.detailsFromTags({ website: 'https://example.org/t', wikipedia: 'ja:東寺', 'diet:vegan': 'yes', 'diet:vegetarian': 'only' }, null);
+ok(rich.diet.join(', ') === 'vegetarian, vegan', 'diet options are read: ' + rich.diet.join(', '));
+ok(rich.links[1].url === 'https://ja.wikipedia.org/wiki/%E6%9D%B1%E5%AF%BA', 'and a Wikipedia tag becomes a link: ' + rich.links[1].url);
+ok(C.detailsFromTags({}, null).hours === null, 'a place with no hours says so plainly');
+
+ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーティ' }, 'Kyoto')
+  === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
+  'Google Maps is asked for the local name plus the city, as the service test did');
 
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

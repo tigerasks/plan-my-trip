@@ -14,6 +14,21 @@ ck = Checks('Day planner — the skeleton')
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
+    served = []
+
+    def fake_service(r):
+        u = r.request.url
+        if 'example.test/slow' in u:
+            served.append(u)
+            r.fulfill(status=200, body='{"ok":true}', headers={'Content-Type': 'application/json',
+                                                               'Access-Control-Allow-Origin': '*'})
+            return True
+        if 'example.test/broken' in u:
+            served.append(u)
+            r.fulfill(status=500, body='no', headers={'Access-Control-Allow-Origin': '*'})
+            return True
+        return False
+
     def no_maplibre(r):
         if 'maplibre-gl.js' in r.request.url:
             r.fulfill(status=200, body='', headers={'Content-Type': 'application/javascript'})
@@ -107,6 +122,35 @@ with sync_playwright() as pw:
     ctx.close()
     ctx, pg = open_page(scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_dark.png'))
+    ctx.close()
+
+    # ---- being polite to the outside services
+    ctx, pg = open_page(extra=fake_service)
+    spacing = pg.evaluate('''async () => {
+      const L = window.DayPlannerLive, at = [];
+      const mark = (u) => L.fetchJson(u).then(() => at.push(Date.now()));
+      await Promise.all([mark('https://example.test/slow?a'), mark('https://example.test/slow?b'),
+                         mark('https://example.test/slow?c')]);
+      return { calls: L.calls, gaps: at.slice(1).map((t, i) => t - at[i]) };
+    }''')
+    ck(spacing['calls'] == 3, 'three different questions make three requests')
+    ck(all(g >= 1000 for g in spacing['gaps']), 'spaced at least a second apart, as their terms ask: ' + str(spacing['gaps']))
+    again = pg.evaluate('''async () => {
+      const L = window.DayPlannerLive;
+      await L.fetchJson('https://example.test/slow?a');
+      await L.fetchJson('https://example.test/slow?a');
+      return L.calls;
+    }''')
+    ck(again == 3, 'asking the same thing again is answered from the page, not the service')
+    broke = pg.evaluate('''async () => {
+      const L = window.DayPlannerLive;
+      let why = '';
+      try { await L.fetchJson('https://example.test/broken'); } catch (e) { why = L.why(e); }
+      const after = await L.fetchJson('https://example.test/slow?d');
+      return { why, after: !!after.ok };
+    }''')
+    ck('500' in broke['why'], 'a service that fails says so in plain words: ' + broke['why'])
+    ck(broke['after'] is True, 'and the next request still goes through')
     ctx.close()
 
     # ---- the map
