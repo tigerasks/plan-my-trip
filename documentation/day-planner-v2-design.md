@@ -164,6 +164,17 @@ Priority labels (Must-do, Want, Maybe) are optional. They only come from the cha
 
 **Adding:** adding to a plan inserts the place at the best position (fewest problems, least travel); dragging adjusts.
 
+**Dragging.** Every row has a grip on its left. Dragging by it reorders a version, and carries a
+place between the plan, today's ideas and the backlog in either direction, which does the same as
+the moves above. Only the grip starts a drag, so a row can still be tapped and the list still
+scrolls under a thumb; nearing the top or bottom of the panel scrolls it, so a list that is off the
+screen can still be reached.
+
+**Acting on a place.** Everything you do to a place is on its own row, behind a menu: add it to the
+version on screen or take it out, move it to another day or the backlog, set how long it takes,
+delete it. Opening a place is for reading it — what it is, when it is open, what still needs
+checking, where to look it up — with the hours editor the one thing you can change there.
+
 **Deleting:** Delete, shown in red, drops a place entirely, from every version and from its day or the backlog, with undo.
 
 ## The three versions
