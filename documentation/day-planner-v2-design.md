@@ -66,6 +66,8 @@ The price is the live link: data moves between planner and chat as a pasted text
 **Still to verify during the build:**
 - whether OpenStreetMap's bus and rail lines are mapped well enough in a trip's region to name the line between two stops;
 - whether Transitous knows any stops in a trip's region, to tell "no timetables here" from "no connection";
+- how big a trip region's feeds are once reduced to stops, lines and frequencies, and what their
+  licences allow being republished, if the offline fallback is ever needed;
 - the local-file fallback, optional now that GitHub Pages works;
 - the exact credit lines.
 
@@ -92,6 +94,19 @@ Your own entries still win. Google's routing service itself isn't an option: as 
 The estimates calibrate themselves from the checked legs in the same city, so the "from here" numbers improve as you go.
 
 Walking legs are drawn along their real path, from the same routing requests. Other legs stay straight lines unless their routing result includes a path.
+
+**If the hosted router is ever not an option.** Transitous publishes the timetable data it collects,
+not only the routing built on top of it. The processed GTFS files sit at
+`https://api.transitous.org/gtfs/`, one per source, and can be synced over plain HTTP; their API page
+says as much: "There is no need to scrape data using the API, you may download our entire source
+dataset". So the worst case is not losing public transport altogether. A trip's region is a handful of
+feeds, and those can be reduced to what the planner actually needs — the stops near the trip's places,
+the lines serving them and their typical frequencies — then served as a small file from the same
+GitHub Pages site and refreshed by hand now and then. Two catches: the feeds carry their own licences
+(CC-BY, CC-BY-SA, ODbL and some custom terms, listed per source), so anything republished has to be
+checked feed by feed and credited; and the sizes and update cadence are unverified, so whether a
+region's worth is small enough to publish is still an open question. The whole collection certainly
+is not.
 
 ## The model
 
@@ -309,6 +324,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 12 | How to check places before adding them? | A preview with OpenStreetMap details and an hours editor; Google Maps opens beside the planner. |
 | 13 | Public transport without timetables? | A stop-based estimate. It uses all stops within 10 minutes' walk of each end, widening to 20 minutes where an end has none, with no public transport estimate if there are still none. The line is named where OpenStreetMap has it, and it's suggested only when it clearly beats walking. |
 | 14 | When does Transitous need telling about the planner? | Once other people use it. Development traffic is too small to require it, and while the planner isn't being advertised it may not be needed at all. The owner sends the message, not the planner and not the chat. |
+| 15 | What if the hosted router stops being an option? | Fall back on the dataset. Transitous publishes the timetable data it collects, and says outright that there is no need to scrape the API for it. See "If the hosted router is ever not an option". |
 
 ## Open questions
 
