@@ -11,6 +11,10 @@ DEMO = json.loads((harness.HERE / 'demo-trip.json').read_text())
 BASE, stop = harness.serve()
 ck = Checks('Day planner — the skeleton')
 
+
+def C_places_has(pg, name):
+    return name in [p['name'] for p in pg.evaluate('Object.values(window.DayPlannerApp.trip.places)')]
+
 with sync_playwright() as pw:
     br = pw.chromium.launch()
 
@@ -351,6 +355,22 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(250)
     ck('In the backlog, with no day yet' in pg.inner_text('#sheet'), 'a backlog place says so')
     pg.keyboard.press('Escape')
+
+    # ---- deleting a place, with a way back
+    pg.click('.list .item >> nth=0')
+    pg.wait_for_timeout(250)
+    name = pg.inner_text('.sh-title').split(chr(10))[0]
+    ck('drops it from' in pg.inner_text('#sheet'), 'deleting says which versions it would empty: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'Deleting' in l][0])
+    before = len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)'))
+    pg.click('[data-act="delete-place"]')
+    pg.wait_for_timeout(400)
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before - 1, 'and it goes')
+    ck(name.split(' ')[0] in pg.inner_text('#toast'), 'with a note of what went: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == before, 'and Undo brings it back')
+    ck(C_places_has(pg, name), 'by name, where it was')
 
     marked = pg.locator('.mk-plan').first.get_attribute('data-place')
     pg.click('.mk-plan >> nth=0')

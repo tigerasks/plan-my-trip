@@ -361,6 +361,13 @@ function timeWheels(id, hhmm) {
 }
 const timeOf = (id) => two(+wheelValue(id + 'H') || 0) + ':' + two(+wheelValue(id + 'M') || 0);
 
+function deleteNote(p) {
+  const holds = C.plansHolding(App.trip, p.id);
+  return holds.length
+    ? 'Deleting drops it from ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) + ', and off the trip altogether.'
+    : 'Deleting drops it off the trip altogether.';
+}
+
 // Moving a place about. Remove takes it out of one version only; Remove to the backlog takes it off
 // the day altogether, which means it leaves every version, and the planner says so.
 function movesHtml(p, holds) {
@@ -566,7 +573,10 @@ const SHEETS = {
       + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
       + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
       + linksHtml(p, null)
-      + gmapsHtml(p);
+      + gmapsHtml(p)
+      + '<div class="sh-sec"><span class="label">Delete</span>'
+      + '<p class="note">' + esc(deleteNote(p)) + ' You can undo it straight afterwards.</p>'
+      + '<button type="button" class="btn danger" data-act="delete-place">Delete ' + esc(p.name) + '</button></div>';
   },
 
   preview: (s) => {
@@ -979,6 +989,19 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => openPlace(el.dataset.id),
+  'delete-place': () => {
+    const before = C.clone(App.trip);
+    const wasDay = App.ui.dayId;
+    const res = C.deletePlace(App.trip, App.ui.sheet.id);
+    closeSheet();
+    changed();
+    toast(res.text, { label: 'Undo', fn: () => {
+      App.trip = before;
+      App.ui.dayId = wasDay;
+      saveUi();
+      changed('Brought back');
+    } }, 9000);
+  },
   'move-remove': () => {
     const day = currentDay();
     const res = C.removeFromPlan(App.trip, App.ui.sheet.id, day.shown);
