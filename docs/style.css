@@ -72,6 +72,8 @@ a { color: var(--ink-2); }
   grid-column: 1 / -1; display: flex; align-items: center; gap: 10px;
   padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--line); min-height: 52px;
 }
+/* Everything in the header has to be able to give way, or the whole page grows wider than the phone. */
+.top > * { min-width: 0; }
 .mapwrap { position: relative; background: var(--map-bg); min-width: 0; }
 #map { position: absolute; inset: 0; }
 #map.pinning, #map.pinning canvas { cursor: crosshair; }
@@ -96,7 +98,9 @@ a { color: var(--ink-2); }
   padding: 14px 14px calc(28px + env(safe-area-inset-bottom, 0px));
 }
 @media (max-width: 860px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 40dvh minmax(0, 1fr); }
+  /* minmax(0, 1fr), not 1fr: a plain 1fr track takes its minimum from its content, so one wide
+     header would push the whole page past the width of the screen. */
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 40dvh minmax(0, 1fr); }
   .mapwrap { grid-column: 1; }
   .panel { grid-column: 1; border-left: 0; border-top: 1px solid var(--line); padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px)); }
 }
@@ -107,18 +111,22 @@ a { color: var(--ink-2); }
   font-weight: 700; letter-spacing: -0.01em;
 }
 .trip-btn:hover { background: var(--hover); }
-.trip-btn .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.daypick { position: relative; display: inline-flex; align-items: center; }
+.trip-btn { flex: 0 1 auto; overflow: hidden; }
+.trip-btn .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.daypick { position: relative; display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 5em; }
 .daypick select {
   position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0;
 }
 .daypick .face {
   display: flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--line);
-  border-radius: 9px; background: var(--card); white-space: nowrap;
+  border-radius: 9px; background: var(--card); white-space: nowrap; overflow: hidden;
 }
+.daypick .face .when { overflow: hidden; text-overflow: ellipsis; }
 .daypick:hover .face { border-color: var(--faint); }
 .grow { flex: 1 1 auto; min-width: 0; }
-.saved { color: var(--faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.saved { color: var(--faint); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+/* On a phone the header has no room for it, and auto-saving needs no announcement. */
+@media (max-width: 560px) { .saved { display: none; } .daypick .face .city { display: none; } }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
   border-radius: 9px; color: var(--ink-2);
@@ -132,7 +140,7 @@ a { color: var(--ink-2); }
 .find { padding: 8px 10px; }
 .find-row { display: flex; align-items: center; gap: 8px; }
 .find-row .i { color: var(--faint); flex: none; }
-.find-row .in { border: 0; padding: 4px 0; background: none; }
+.find-row .in { flex: 1 1 auto; width: auto; min-width: 0; border: 0; padding: 4px 0; background: none; }
 .find-row .in:focus { outline: none; }
 .find .list { margin-top: 6px; border-top: 1px solid var(--line-2); }
 .hint.bad { color: var(--rose-strong); }

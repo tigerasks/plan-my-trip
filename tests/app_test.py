@@ -147,9 +147,20 @@ with sync_playwright() as pw:
     ctx.close()
 
     # ---- the same trip on a phone
-    ctx, pg = open_page(390, 844, held=DEMO)
+    ctx, pg = open_page(390, 844, held=DEMO, extra=services)
     ck(pg.locator('.seg').is_visible(), 'the version control still fits on a phone')
+    ck(pg.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'),
+       'and nothing spills off the side: %d px of content in %d px of screen'
+       % (pg.evaluate('document.documentElement.scrollWidth'), pg.evaluate('window.innerWidth')))
     pg.screenshot(path=str(SHOTS / 'app_day_phone_light.png'))
+    pg.click('.list .item >> nth=0')
+    pg.wait_for_timeout(300)
+    ck(pg.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'),
+       'nor does a place card, wheels and all')
+    pg.click('[data-act="edit-hours"]')
+    pg.wait_for_timeout(250)
+    ck(pg.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), 'nor the hours editor')
+    pg.screenshot(path=str(SHOTS / 'app_hours_phone_light.png'))
     ctx.close()
     ctx, pg = open_page(390, 844, scheme='dark', held=DEMO)
     pg.screenshot(path=str(SHOTS / 'app_day_phone_dark.png'))
