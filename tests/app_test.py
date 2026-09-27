@@ -283,7 +283,7 @@ with sync_playwright() as pw:
     sheet = pg.inner_text('#sheet')
     ck('Sat 21 Nov, in Do less, Balanced and Packed' in sheet, 'saying where it sits: '
        + [l for l in sheet.split(chr(10)) if 'Sat 21 Nov' in l][0])
-    ck('How long it takes' in pg.locator('#sheet .label').all_text_contents(), 'with a section for how long it takes')
+    ck('Duration' in pg.locator('#sheet .label').all_text_contents(), 'with a section stating how long it takes')
     ck(pg.locator('#sheet .btn.danger').count() == 0, 'and no actions on it at all')
     ck('Mon–Fri 06:00–18:00 · Sat–Sun 06:00–21:00' in sheet, 'and when it is open: '
        + [l for l in sheet.split(chr(10)) if '06:00' in l][0])
@@ -351,7 +351,7 @@ with sync_playwright() as pw:
     items = pg.locator('.menu-item').all_text_contents()
     ck(items[0] == 'Remove from Balanced', 'the row menu leads with what this version can do: ' + ' · '.join(items))
     joined = ' · '.join(items)
-    ck('Move to' in joined and 'How long it takes' in joined and 'Delete' in joined and 'Open details' in joined,
+    ck('Move to' in joined and 'Adjust duration' in joined and 'Delete' in joined and 'Open details' in joined,
        'and holds the rest of them')
     pg.screenshot(path=str(SHOTS / 'app_menu_desktop_light.png'))
     pg.click('[data-act="move-remove"]')
@@ -381,8 +381,8 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(200)
     pg.click('[data-act="menu-duration"]')
     pg.wait_for_timeout(250)
-    ck(pg.locator('#durH').count() == 1 and 'How long it takes' in pg.inner_text('.sh-title'),
-       'How long opens just the wheels, not the whole card')
+    ck(pg.locator('#durH').count() == 1 and 'Adjust duration' in pg.inner_text('.sh-title'),
+       'Adjust duration opens just the wheels, not the whole card')
     ck(pg.locator('#durH .wheel-item').count() == 13 and pg.locator('#durM .wheel-item').count() == 4,
        '0 to 12 hours, and quarter hours')
     pg.click('#durH .wheel-item[data-v="2"]')
