@@ -374,7 +374,7 @@ function menuHtml(p) {
   else if (day) out.push(menuItem('move-add', p.id, 'Add to ' + C.PLAN_LABEL[day.shown]));
   if (day && !p.dayId) out.push(menuItem('move-today', p.id, 'Add to ' + C.fmtDateUK(day.id)));
   out.push(menuItem('menu-move', p.id, 'Move to', { more: true }));
-  out.push(menuItem('menu-duration', p.id, 'How long it takes', { more: true }));
+  out.push(menuItem('menu-duration', p.id, 'Adjust duration', { more: true }));
   out.push(menuItem('place', p.id, 'Open details'));
   out.push(menuItem('delete-place', p.id, 'Delete', { danger: true }));
   return '<div class="menu" role="menu">' + out.join('') + '</div>';
@@ -697,7 +697,7 @@ const SHEETS = {
         ? C.fmtDateUK(p.dayId) + (holds.length ? ', in ' + C.joinList(holds.map((k) => C.PLAN_LABEL[k])) : ', not in any version yet')
         : 'In the backlog, with no day yet') + '</p>'
       + '</div>'
-      + '<div class="sh-sec"><span class="label">How long it takes</span><p class="note">' + esc(C.fmtDur(p.duration)) + '</p></div>'
+      + '<div class="sh-sec"><span class="label">Duration</span><p class="note">' + esc(C.fmtDur(p.duration)) + '</p></div>'
       + hoursSectionHtml(s, p, line)
       + (p.note ? '<div class="sh-sec"><span class="label">Note</span><p class="note">' + esc(p.note) + '</p></div>' : '')
       + (p.check ? '<div class="sh-sec"><span class="label">To check</span><p class="note amber">' + esc(p.check) + '</p></div>' : '')
@@ -709,7 +709,7 @@ const SHEETS = {
   duration: (s) => {
     const p = C.placeById(App.trip, s.id);
     if (!p) return sheetHead('That place has gone');
-    return sheetHead('How long it takes', p.name)
+    return sheetHead('Adjust duration', p.name)
       + durationWheels('dur', p.duration)
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-duration">Save</button>'
       + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>';
