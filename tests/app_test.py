@@ -135,8 +135,8 @@ with sync_playwright() as pw:
     heads = pg.locator('.card-head').all_inner_texts()
     ck(any('8h 02 spare' in h for h in heads), 'the heading says when it finishes: ' + [h for h in heads if 'spare' in h][0].replace(chr(10), ' '))
     ck('hours not checked yet' in pg.inner_text('.tl-issues'), 'and what is worth checking is gathered underneath')
-    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 3,
-       'labels from the chat, check flags and lunch options show as chips')
+    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 4,
+       'labels from the chat, check flags, lunch options and other versions all show as chips')
     ck('Food · 45 min · City centre' in pg.inner_text('[data-list="ideas"] .meta'),
        'an idea says what it is and how long it takes: ' + pg.inner_text('[data-list="ideas"] .meta').split(chr(10))[0])
     ck('until 10:20 · 1h 30 · Temple / culture' in pg.inner_text('.timeline .meta'),
@@ -148,6 +148,12 @@ with sync_playwright() as pw:
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Packed 3' and labels[2] == 'Ideas for today 0',
        'switching version moves places between the plan and today\'s ideas')
+    pg.click('[data-act="version"][data-v="balanced"]')
+    pg.wait_for_timeout(200)
+    ck('In Packed' in pg.inner_text('[data-list="ideas"]'),
+       'an idea says which other versions already hold it: ' + pg.inner_text('[data-list="ideas"] .nm').replace(chr(10), ' '))
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
     ck(pg.locator('[data-act="version"][data-v="packed"]').get_attribute('aria-pressed') == 'true', 'and the control follows')
     pg.click('[data-act="version"][data-v="less"]')
     pg.wait_for_timeout(900)

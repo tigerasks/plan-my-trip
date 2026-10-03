@@ -340,7 +340,7 @@ function chipsHtml(p) {
   if (p.meal) h += '<span class="chip flex">Lunch option</span>';
   return h;
 }
-function itemHtml(p, lead, kind, when) {
+function itemHtml(p, lead, kind, when, extraChips) {
   const meta = when || [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
   const also = when ? '' : (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '');
   const open = App.ui.menu && App.ui.menu.id === p.id;
@@ -348,7 +348,7 @@ function itemHtml(p, lead, kind, when) {
     + '<div class="row-main">'
     + '<span class="grip" data-drag="' + esc(p.id) + '" title="Drag to move it"></span>'
     + '<button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
-    + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
+    + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + (extraChips || '') + '</span>'
     + '<span class="meta">' + meta + also + '</span></span></button>'
     + '<button type="button" class="icon-btn row-menu" data-act="row-menu" data-id="' + esc(p.id) + '"'
     + ' aria-label="What to do with ' + esc(p.name) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + ic('dots') + '</button>'
@@ -392,10 +392,16 @@ function moveMenuHtml(p) {
 }
 const actingOn = (el) => (el && el.dataset.id) || (App.ui.sheet && App.ui.sheet.id) || '';
 function closeMenu() { App.ui.menu = null; }
-function listHtml(places, lead, empty, kind) {
+function listHtml(places, lead, empty, kind, chips) {
   const open = '<ul class="list" data-list="' + esc(kind) + '">';
   if (!places.length) return open + '<li class="empty-line">' + esc(empty) + '</li></ul>';
-  return open + places.map((p, i) => itemHtml(p, lead(i), kind)).join('') + '</ul>';
+  return open + places.map((p, i) => itemHtml(p, lead(i), kind, null, chips ? chips(p) : '')).join('') + '</ul>';
+}
+// An idea the other versions already hold says so, so that switching version holds no surprises.
+function versionChips(p) {
+  const holds = C.plansHolding(App.trip, p.id);
+  if (!holds.length) return '';
+  return '<span class="chip flex">In ' + esc(C.joinList(holds.map((k) => C.PLAN_LABEL[k]))) + '</span>';
 }
 function sectionHtml(label, count, body, extra) {
   return '<div class="card"><div class="card-head"><span class="label">' + esc(label)
@@ -466,7 +472,7 @@ function ideasHtml(day) {
   const places = C.ideasFor(App.trip, day.id, day.shown);
   return sectionHtml('Ideas for today', places.length,
     listHtml(places, () => '<span class="dot"></span>',
-      'Nothing else on this day. Ideas sit here until you put them in a version.', 'ideas'));
+      'Nothing else on this day. Ideas sit here until you put them in a version.', 'ideas', versionChips));
 }
 function backlogHtml() {
   const places = C.backlogPlaces(App.trip);
