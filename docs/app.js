@@ -417,7 +417,7 @@ function planHtml(day) {
       'Nothing in ' + C.PLAN_LABEL[day.shown] + ' yet. Drag places here, or add them from the list below.', 'plan'));
   }
   const P = C.planDay(App.trip, day.id, day.shown);
-  return sectionHtml(label, places.length, timelineHtml(P) + issuesHtml(P), summaryChipHtml(P));
+  return sectionHtml(label, places.length, timelineHtml(P) + planActionsHtml(day) + issuesHtml(P), summaryChipHtml(P));
 }
 const timeCell = (text) => '<span class="t">' + esc(text) + '</span>';
 function timelineHtml(P) {
@@ -450,6 +450,15 @@ function summaryChipHtml(P) {
   if (n) return '<span class="chip must">' + n + (n === 1 ? ' problem' : ' problems') + '</span>';
   const spare = P.summary.spare;
   return '<span class="count">' + esc(C.fmtTime(P.finish) + (spare == null ? '' : ' · ' + C.fmtDur(Math.max(0, spare)) + ' spare')) + '</span>';
+}
+// The two things you do to a whole version: tidy its order, or use it as the start of another.
+function planActionsHtml(day) {
+  const others = C.PLAN_KEYS.filter((k) => k !== day.shown);
+  return '<div class="tl-actions">'
+    + '<span class="muted">Copy to</span>'
+    + others.map((k) => '<button type="button" class="mini" data-act="copy-version" data-to="' + k + '">'
+      + esc(C.PLAN_LABEL[k]) + '</button>').join('')
+    + '</div>';
 }
 function issuesHtml(P) {
   if (!P.issues.length && !P.checks.length) return '';
@@ -1497,6 +1506,17 @@ const ACTIONS = {
       name: name, kind: val('pinKind'), lat: s.at.lat, lng: s.at.lng,
       added: { by: 'you', how: 'pin', at: null },
     }, el.dataset.to);
+  },
+  'copy-version': (el) => {
+    const day = currentDay();
+    const to = el.dataset.to;
+    const res = C.copyVersion(App.trip, day.id, day.shown, to);
+    if (!res.ok) { toast(res.text); return; }
+    changed();
+    toast(res.text, { label: 'Undo', fn: () => {
+      App.trip.days[day.id].plans[to] = res.was;
+      changed(C.PLAN_LABEL[to] + ' put back');
+    } }, 9000);
   },
   'backlog-dots': () => {
     App.ui.backlogDots = !App.ui.backlogDots;

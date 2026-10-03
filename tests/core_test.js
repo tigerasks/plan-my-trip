@@ -525,6 +525,14 @@ P = dayWith(null, 'packed').plan;
 ok(P.summary.stops === 3 && P.key === 'packed', 'each version is worked out on its own: ' + P.summary.stops + ' stops');
 ok(C.planDay(demoTrip, 'nope', 'balanced') === null, 'a day the trip has not got has no plan');
 
+console.log('\n== Copying and reordering a version ==');
+let cp = withDemo((t) => C.copyVersion(t, '2026-11-21', 'packed', 'less'));
+ok(cp.t.days['2026-11-21'].plans.less.length === 3, 'a version can be copied over another');
+ok(cp.t.days['2026-11-21'].plans.packed.length === 3, 'leaving the one you copied from alone');
+ok(/replacing what was there/.test(cp.out.text), 'and saying it replaced something: ' + cp.out.text);
+ok(cp.out.was.join() === 'example-temple', 'handing back what was there, so it can be undone');
+ok(!C.copyVersion(cp.t, '2026-11-21', 'less', 'less').ok, 'a version cannot be copied onto itself');
+
 console.log('\n== Where a new stop fits ==');
 let fit = withDemo((t) => { C.moveToDay(t, 'imaginary-museum', '2026-11-21'); return null; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'imaginary-museum') >= 0, 'a slot is always found');

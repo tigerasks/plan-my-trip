@@ -1149,6 +1149,22 @@ function moveInBacklog(trip, id, index, now) {
   touch(trip, now);
   return { ok: true, index: to, text: p.name + ' moved to the backlog' };
 }
+// Copy what is on screen into another version, as a starting point there.
+function copyVersion(trip, dayId, from, to, now) {
+  const day = obj(obj(trip).days)[dayId];
+  if (!day || !PLAN_KEYS.includes(from) || !PLAN_KEYS.includes(to) || from === to) {
+    return { ok: false, text: 'There is nothing to copy there' };
+  }
+  const was = day.plans[to].slice();
+  day.plans[to] = day.plans[from].slice();
+  touch(trip, now);
+  const n = day.plans[to].length;
+  return {
+    ok: true, was,
+    text: PLAN_LABEL[from] + ' copied to ' + PLAN_LABEL[to]
+      + (was.length ? ', replacing what was there' : '') + ' — ' + n + (n === 1 ? ' stop' : ' stops'),
+  };
+}
 function reorderPlan(trip, dayId, key, from, to, now) {
   const d = trip.days[dayId];
   if (!d || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That version is no longer here' };
@@ -1469,7 +1485,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, placeInPlan, moveInBacklog, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  reorderPlan, placeInPlan, moveInBacklog, copyVersion, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };

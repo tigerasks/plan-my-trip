@@ -181,6 +181,12 @@ button.item:hover { background: var(--hover); }
 .tl-lunch { font-size: 12.5px; color: var(--stone); }
 .timeline .row { border-top: 1px solid var(--line-2); }
 .timeline .row:first-child { border-top: 0; }
+.tl-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  border-top: 1px solid var(--line-2); margin-top: 8px; padding-top: 10px; font-size: 12.5px;
+}
+.tl-actions .mini { border: 1px solid var(--line); padding: 4px 9px; }
+.tl-actions .muted { margin-left: auto; }
 .tl-issues { border-top: 1px solid var(--line-2); margin-top: 8px; padding-top: 8px; }
 .tl-issues .reasons li.bad { color: var(--rose-strong); }
 .tl-issues .reasons li.amber { color: var(--amber-text); }

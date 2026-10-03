@@ -163,6 +163,21 @@ with sync_playwright() as pw:
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
 
+    # ---- copying a version
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
+    pg.click('[data-act="copy-version"][data-to="less"]')
+    pg.wait_for_timeout(900)
+    plans = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans")
+    ck(plans['less'] == plans['packed'] and len(plans['less']) == 3, 'a version can be copied over another')
+    ck('replacing what was there' in pg.inner_text('#toast'), 'and says what it replaced: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less") == ['example-temple'],
+       'with Undo putting the old one back')
+
+    pg.click('[data-act="version"][data-v="less"]')
+    pg.wait_for_timeout(200)
     ctx.close()
 
     # ---- the same trip on a phone
