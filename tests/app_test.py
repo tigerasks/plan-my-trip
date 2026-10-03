@@ -122,26 +122,45 @@ with sync_playwright() as pw:
     ck('Sun 22 Nov' in pg.inner_text('#dayFace'), 'which is remembered for this browser')
     pg.select_option('#daySel', '2026-11-21')
     pg.wait_for_timeout(150)
-    ck(pg.locator('.card .label').all_text_contents()[1:] == ['Plan · Balanced 2', 'Ideas for today 1', 'Backlog 2'],
+    ck(pg.locator('.card-head .label').all_text_contents()[1:] == ['Plan · Balanced 2', 'Ideas for today 1', 'Backlog 2'],
        'the panel shows the version on screen, the day\'s other ideas and the backlog')
     ck(pg.locator('.list .nm').first.inner_text().startswith('Example Temple'), 'stops come in the version\'s order')
-    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 3,
-       'labels from the chat, check flags and lunch options show as chips')
-    ck('Temple / culture · 1h 30 · Eastern hills' in pg.inner_text('.list .meta'), 'each place says what it is and how long it takes')
+    tl = pg.inner_text('.timeline')
+    ck('08:30' in tl and 'Leave Example Hotel' in tl, 'the timeline opens with when you set off')
+    ck('08:50' in tl and 'until 10:20' in tl, 'each stop says when it runs: ' + [l for l in tl.split(chr(10)) if 'until' in l][0])
+    ck('train or bus' in tl and '≈' in tl, 'with an estimate for the travel between them: '
+       + [l for l in tl.split(chr(10)) if '≈' in l][0])
+    ck('Lunch near Made-up Market' in tl, 'and lunch taken inside its window')
+    ck('12:58' in tl and 'Back at' in tl, 'ending with when you would be back')
+    heads = pg.locator('.card-head').all_inner_texts()
+    ck(any('8h 02 spare' in h for h in heads), 'the heading says when it finishes: ' + [h for h in heads if 'spare' in h][0].replace(chr(10), ' '))
+    ck('hours not checked yet' in pg.inner_text('.tl-issues'), 'and what is worth checking is gathered underneath')
+    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 4,
+       'labels from the chat, check flags, lunch options and other versions all show as chips')
+    ck('Food · 45 min · City centre' in pg.inner_text('[data-list="ideas"] .meta'),
+       'an idea says what it is and how long it takes: ' + pg.inner_text('[data-list="ideas"] .meta').split(chr(10))[0])
+    ck('until 10:20 · 1h 30 · Temple / culture' in pg.inner_text('.timeline .meta'),
+       'and a stop says when it runs: ' + pg.inner_text('.timeline .meta').split(chr(10))[0])
     pg.screenshot(path=str(SHOTS / 'app_day_desktop_light.png'))
 
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(150)
-    labels = pg.locator('.card .label').all_text_contents()
+    labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Packed 3' and labels[2] == 'Ideas for today 0',
        'switching version moves places between the plan and today\'s ideas')
+    pg.click('[data-act="version"][data-v="balanced"]')
+    pg.wait_for_timeout(200)
+    ck('In Packed' in pg.inner_text('[data-list="ideas"]'),
+       'an idea says which other versions already hold it: ' + pg.inner_text('[data-list="ideas"] .nm').replace(chr(10), ' '))
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
     ck(pg.locator('[data-act="version"][data-v="packed"]').get_attribute('aria-pressed') == 'true', 'and the control follows')
     pg.click('[data-act="version"][data-v="less"]')
     pg.wait_for_timeout(900)
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
     ck(held['trip']['days']['2026-11-21']['shown'] == 'less', 'the version you are looking at is remembered')
     ck(len(held['trip']['days']['2026-11-21']['plans']['balanced']) == 2, 'and switching never moves a place between versions')
-    labels = pg.locator('.card .label').all_text_contents()
+    labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
     pg.screenshot(path=str(SHOTS / 'app_less_desktop_light.png'))
     ctx.close()
@@ -581,12 +600,12 @@ with sync_playwright() as pw:
     ck('sends its 3 places back to the backlog' in pg.inner_text('#sheet'), 'deleting says what happens to the places on the day')
     pg.click('[data-act="delete-day"]')
     pg.wait_for_timeout(200)
-    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 5', 'the day goes, and its places land in the backlog')
+    ck(pg.locator('.card-head .label').all_text_contents()[-1] == 'Backlog 5', 'the day goes, and its places land in the backlog')
     ck('back to the backlog' in pg.inner_text('#toast'), 'with a plain account of it: ' + pg.inner_text('#toast'))
     pg.click('#toastBtn')
     pg.wait_for_timeout(900)
     ck('Thu 19 Nov' in pg.inner_text('#dayFace'), 'and Undo brings the day back: ' + pg.inner_text('#dayFace'))
-    ck(pg.locator('.card .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
+    ck(pg.locator('.card-head .label').all_text_contents()[-1] == 'Backlog 2', 'with its places on it again')
     ctx.close()
 
     # ---- searching for a place
