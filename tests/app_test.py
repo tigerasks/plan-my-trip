@@ -162,7 +162,7 @@ with sync_playwright() as pw:
     ck(len(held['trip']['days']['2026-11-21']['plans']['balanced']) == 2, 'and switching never moves a place between versions')
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
-    pg.screenshot(path=str(SHOTS / 'app_less_desktop_light.png'))
+
     ctx.close()
 
     # ---- the same trip on a phone
@@ -420,7 +420,7 @@ with sync_playwright() as pw:
     ck(pg.locator('.menu').count() == 0, 'and a click anywhere else puts it away')
 
     # ---- dragging (a tall window, so every list is on screen at once)
-    ctx, pg = open_page(1280, 1100, held=DEMO, extra=services)
+    ctx, pg = open_page(1280, 1500, held=DEMO, extra=services)
 
     def drag(source_id, target_list, target_id=None, below=False):
         """Drag a row by its grip onto a list, dropping it above or below a row in it."""

@@ -525,5 +525,15 @@ P = dayWith(null, 'packed').plan;
 ok(P.summary.stops === 3 && P.key === 'packed', 'each version is worked out on its own: ' + P.summary.stops + ' stops');
 ok(C.planDay(demoTrip, 'nope', 'balanced') === null, 'a day the trip has not got has no plan');
 
+console.log('\n== Where a new stop fits ==');
+let fit = withDemo((t) => { C.moveToDay(t, 'imaginary-museum', '2026-11-21'); return null; });
+ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'imaginary-museum') >= 0, 'a slot is always found');
+const at = C.bestSlot(fit.t, '2026-11-21', 'balanced', 'imaginary-museum');
+C.placeInPlan(fit.t, 'imaginary-museum', 'balanced', at);
+ok(C.planDay(fit.t, '2026-11-21', 'balanced').summary.errors === 0, 'and it is one that does not break the day');
+fit = withDemo((t) => { t.places['made-up-market'].fixed = '15:00'; });
+ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar') === 1,
+  'a stop slots in before a booked time rather than after it: ' + C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar'));
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

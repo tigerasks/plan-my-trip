@@ -911,7 +911,7 @@ function estimateLeg(from, to, trip) {
 // One version of one day, turned into times: when you arrive, when you can actually start, how long
 // you wait, and when you would be back. Carried over from the first planner, with its pace budgets
 // and its picking-places-for-you taken out — the three versions are yours.
-function planDay(trip, dayId, key) {
+function planDay(trip, dayId, key, order) {
   const day = obj(obj(trip).days)[dayId];
   if (!day) return null;
   const shown = PLAN_KEYS.includes(key) ? key : day.shown;
@@ -925,7 +925,8 @@ function planDay(trip, dayId, key) {
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
-  const stops = planPlaces(trip, dayId, shown);
+  const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
+    : planPlaces(trip, dayId, shown));
 
   const lunch = obj(day.lunch);
   const lunchFrom = parseTime(lunch.from), lunchTo = parseTime(lunch.to);
@@ -1014,6 +1015,14 @@ function planDay(trip, dayId, key) {
   };
 }
 
+// What a day's order costs: anything that will not work first, then time on the move, then waiting
+// about, then finishing late. Lower is better.
+function planCost(P) {
+  if (!P) return Infinity;
+  const warns = P.issues.length - P.summary.errors;
+  return P.summary.errors * 10000 + warns * 200 + P.summary.travel + P.summary.wait * 0.5
+    + (P.finish - P.startTime) * 0.01;
+}
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1073,21 +1082,16 @@ function moveToBacklog(trip, id, now) {
   touch(trip, now);
   return { ok: true, left, text: p.name + ' moved to the backlog' + (left.length ? ', and out of ' + planWords(left) : '') };
 }
-// Where a new stop fits best. Until the scheduler lands this is least added distance, measured
-// straight-line from the day's start and back to its end.
+// Where a new stop fits best: the position that causes the fewest problems and the least travel,
+// judged by running the day at each one.
 function bestSlot(trip, dayId, key, placeId) {
   const d = obj(obj(trip).days)[dayId];
-  const p = placeById(trip, placeId);
-  if (!d || !p || !hasPos(p)) return d ? d.plans[key].length : 0;
-  const stops = d.plans[key].map((id) => trip.places[id]).filter(hasPos);
-  const start = hasPos(d.start) ? d.start : null;
-  const end = d.end && hasPos(d.end) ? d.end : start;
-  const chain = [start].concat(stops, [end]);
-  let best = stops.length, bestCost = Infinity;
-  for (let i = 0; i <= stops.length; i++) {
-    const before = chain[i], after = chain[i + 1];
-    const cost = (before ? kmBetween(before, p) : 0) + (after ? kmBetween(p, after) : 0)
-      - (before && after ? kmBetween(before, after) : 0);
+  if (!d) return 0;
+  const rest = d.plans[key].filter((id) => id !== placeId);
+  let best = rest.length, bestCost = Infinity;
+  for (let i = 0; i <= rest.length; i++) {
+    const order = rest.slice(0, i).concat([placeId], rest.slice(i));
+    const cost = planCost(planDay(trip, dayId, key, order));
     if (cost < bestCost - 1e-9) { bestCost = cost; best = i; }
   }
   return best;
@@ -1465,7 +1469,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, placeInPlan, moveInBacklog, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  reorderPlan, placeInPlan, moveInBacklog, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };
