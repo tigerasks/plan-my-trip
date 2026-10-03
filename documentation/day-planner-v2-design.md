@@ -20,6 +20,15 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Updated Sat 3 Oct 2026, milestone 3:** the timeline is built. Travel in it is the planner's own
+estimate from straight-line distance, marked ≈, until milestone 4 puts real routes behind it. Lunch
+is a floating break taken at the first gap once its window opens, unless a place in the version is
+marked as a lunch option, in which case that visit is lunch and the planner says if it falls outside
+the window. Optimise order relocates stops and reverses stretches, judging an order by its problems
+first, then travel, then waiting, then how late it finishes; adding a place to a version now uses the
+same judgement rather than straight-line distance. Today's ideas carry a chip naming the versions
+that already hold them.
+
 **Changed Sat 26 Sep 2026, accommodation:** where you sleep is now a **stay** of its own — a place, a
 first night and a number of nights — rather than a start and end place typed onto every day. The days
 a stay covers take their start and end from it, and are created if the trip does not have them yet.

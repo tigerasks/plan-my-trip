@@ -10,11 +10,12 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
 
 **Status:**
 - The v2 design is complete and was tested against the live services on Fri 25 Sep 2026.
-- Milestones 1 and 2 are built and published: the app shell with the Liberty map, the trip, backlog
-  and days model, auto-save in the browser, the `day-planner/2` file and text block, and places —
-  search, tapping the map, dropped pins, the preview with OpenStreetMap details, the hours editor,
-  durations, moves and Delete with undo. Plans and travel times are still to come. The service test
-  page, `docs/probe.html`, stays alongside it.
+- Milestones 1 to 3 are built and published: the app shell with the Liberty map, the trip, stays,
+  backlog and days model, auto-save in the browser, the `day-planner/2` file and text block, places
+  (search, tapping the map, dropped pins, the preview with OpenStreetMap details, the hours editor,
+  durations, moves, dragging and Delete with undo), and plans (the timeline with times, waits and
+  conflicts, copying between versions, Optimise order). Travel times and the chat round trip are
+  still to come. The service test page, `docs/probe.html`, stays alongside it.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -136,7 +137,7 @@ These are proposed; confirm each with the owner before starting it.
    - durations: 1 h by default, 0–12 h in 15-minute steps;
    - moving places between plan, today, backlog and another day;
    - Delete, with undo.
-3. **Plans:**
+3. **Plans — built:**
    - three versions per day, with copy between them;
    - a timeline with times, waits and conflicts;
    - Optimise order;
