@@ -163,7 +163,7 @@ with sync_playwright() as pw:
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
 
-    # ---- copying a version
+    # ---- copying a version, and tidying its order
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(200)
     pg.click('[data-act="copy-version"][data-to="less"]')
@@ -176,6 +176,24 @@ with sync_playwright() as pw:
     ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less") == ['example-temple'],
        'with Undo putting the old one back')
 
+    pg.click('[data-act="copy-version"][data-to="less"]')
+    pg.wait_for_timeout(600)
+    pg.click('[data-act="version"][data-v="less"]')
+    pg.wait_for_timeout(300)
+    ck('lunch' in pg.inner_text('.timeline'), 'the lunch place is marked as lunch in the timeline')
+    ck('outside 11:30' in pg.inner_text('.tl-issues'), 'and the day says it falls outside the window: '
+       + [l for l in pg.inner_text('.tl-issues').split(chr(10)) if 'outside' in l][0])
+    pg.click('[data-act="optimise"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")
+       == ['example-temple', 'made-up-market', 'pretend-noodle-bar'], 'Optimise moves lunch into its window')
+    ck('1 problem fewer' in pg.inner_text('#toast'), 'and says what it gained: ' + pg.inner_text('#toast'))
+    ck('outside 11:30' not in pg.inner_text('#panel'), 'leaving nothing wrong with the day')
+    pg.screenshot(path=str(SHOTS / 'app_timeline_desktop_light.png'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")[1] == 'pretend-noodle-bar',
+       'and Undo puts the order back')
     pg.click('[data-act="version"][data-v="less"]')
     pg.wait_for_timeout(200)
     ctx.close()

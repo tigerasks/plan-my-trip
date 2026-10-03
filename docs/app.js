@@ -455,6 +455,8 @@ function summaryChipHtml(P) {
 function planActionsHtml(day) {
   const others = C.PLAN_KEYS.filter((k) => k !== day.shown);
   return '<div class="tl-actions">'
+    + (day.plans[day.shown].length > 2
+      ? '<button type="button" class="btn" data-act="optimise">Optimise order</button>' : '')
     + '<span class="muted">Copy to</span>'
     + others.map((k) => '<button type="button" class="mini" data-act="copy-version" data-to="' + k + '">'
       + esc(C.PLAN_LABEL[k]) + '</button>').join('')
@@ -1506,6 +1508,17 @@ const ACTIONS = {
       name: name, kind: val('pinKind'), lat: s.at.lat, lng: s.at.lng,
       added: { by: 'you', how: 'pin', at: null },
     }, el.dataset.to);
+  },
+  optimise: () => {
+    const day = currentDay();
+    const key = day.shown;
+    const res = C.optimiseOrder(App.trip, day.id, key);
+    if (!res.ok) { toast(res.text); return; }
+    changed();
+    toast(res.text, { label: 'Undo', fn: () => {
+      App.trip.days[day.id].plans[key] = res.was;
+      changed('Put back the way it was');
+    } }, 9000);
   },
   'copy-version': (el) => {
     const day = currentDay();

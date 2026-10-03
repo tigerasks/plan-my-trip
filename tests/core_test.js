@@ -533,6 +533,17 @@ ok(/replacing what was there/.test(cp.out.text), 'and saying it replaced somethi
 ok(cp.out.was.join() === 'example-temple', 'handing back what was there, so it can be undone');
 ok(!C.copyVersion(cp.t, '2026-11-21', 'less', 'less').ok, 'a version cannot be copied onto itself');
 
+let op = withDemo((t) => { C.copyVersion(t, '2026-11-21', 'packed', 'less'); return C.optimiseOrder(t, '2026-11-21', 'less'); });
+ok(op.out.ok && op.t.days['2026-11-21'].plans.less.join(' ') === 'example-temple made-up-market pretend-noodle-bar',
+  'Optimise moves the lunch place into its window: ' + op.t.days['2026-11-21'].plans.less.join(' '));
+ok(/1 problem fewer/.test(op.out.text), 'and says what it gained: ' + op.out.text);
+ok(C.planDay(op.t, '2026-11-21', 'less').issues.length === 0, 'leaving a day with nothing wrong with it');
+ok(!C.optimiseOrder(op.t, '2026-11-21', 'less').ok, 'running it again changes nothing');
+ok(/already the best order/.test(C.optimiseOrder(op.t, '2026-11-21', 'less').text), 'and says so');
+ok(!C.optimiseOrder(op.t, '2026-11-21', 'balanced').ok, 'two stops are too few to reorder');
+const kept = op.t.days['2026-11-21'].plans.less.slice().sort().join();
+ok(kept === ['example-temple', 'made-up-market', 'pretend-noodle-bar'].sort().join(), 'and it never changes what is in a version');
+
 console.log('\n== Where a new stop fits ==');
 let fit = withDemo((t) => { C.moveToDay(t, 'imaginary-museum', '2026-11-21'); return null; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'imaginary-museum') >= 0, 'a slot is always found');

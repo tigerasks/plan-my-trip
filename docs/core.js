@@ -1023,6 +1023,54 @@ function planCost(P) {
   return P.summary.errors * 10000 + warns * 200 + P.summary.travel + P.summary.wait * 0.5
     + (P.finish - P.startTime) * 0.01;
 }
+// Re-sequence a day's stops for less travel and fewer problems, without changing what is in it.
+// Relocating one stop at a time and reversing stretches, which is what the first planner did.
+function optimiseOrder(trip, dayId, key) {
+  const day = obj(obj(trip).days)[dayId];
+  if (!day) return { ok: false, text: 'That day is no longer here' };
+  const k = PLAN_KEYS.includes(key) ? key : day.shown;
+  let best = day.plans[k].slice();
+  if (best.length < 3) return { ok: false, text: 'There is nothing to reorder yet' };
+  const cost = (order) => planCost(planDay(trip, dayId, k, order));
+  const was = { order: best.slice(), cost: cost(best) };
+  let bestCost = was.cost;
+  for (let pass = 0; pass < 12; pass++) {
+    let better = false;
+    for (let i = 0; i < best.length; i++) {
+      for (let j = 0; j < best.length; j++) {
+        if (i === j) continue;
+        const next = best.slice();
+        next.splice(j, 0, next.splice(i, 1)[0]);
+        const c = cost(next);
+        if (c < bestCost - 1e-9) { best = next; bestCost = c; better = true; }
+      }
+    }
+    for (let i = 0; i < best.length - 1; i++) {
+      for (let j = i + 1; j < best.length; j++) {
+        const next = best.slice(0, i).concat(best.slice(i, j + 1).reverse(), best.slice(j + 1));
+        const c = cost(next);
+        if (c < bestCost - 1e-9) { best = next; bestCost = c; better = true; }
+      }
+    }
+    if (!better) break;
+  }
+  if (best.join() === was.order.join()) return { ok: false, was: was.order, text: 'That is already the best order I can find' };
+  day.plans[k] = best;
+  touch(trip);
+  const before = planDay(trip, dayId, k, was.order);
+  const now = planDay(trip, dayId, k);
+  const bits = [];
+  const fewer = before.issues.length - now.issues.length;
+  const saved = before.summary.travel - now.summary.travel;
+  const waited = before.summary.wait - now.summary.wait;
+  const earlier = before.finish - now.finish;
+  if (fewer > 0) bits.push(fewer + (fewer === 1 ? ' problem' : ' problems') + ' fewer');
+  if (saved > 0) bits.push(fmtDur(saved) + ' less travel');
+  if (waited > 0) bits.push(fmtDur(waited) + ' less waiting about');
+  if (!bits.length && earlier > 0) bits.push('back ' + fmtDur(earlier) + ' earlier');
+  return { ok: true, was: was.order, text: 'Reordered' + (bits.length ? ': ' + joinList(bits) : '') };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1485,7 +1533,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, placeInPlan, moveInBacklog, copyVersion, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  reorderPlan, placeInPlan, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };
