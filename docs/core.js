@@ -876,6 +876,37 @@ function startWindows(place, date) {
   return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
 }
 
+// ---------- estimating a leg ----------
+// The planner's own numbers, from the straight-line distance: instant, offline and rough, so they
+// are always marked ≈. Milestone 4 replaces them with real routes and keeps this as the fallback.
+const TRANSIT_MODEL = {
+  metro: { overhead: 10, near: 22, far: 50, detour: 1.30 },
+  city: { overhead: 12, near: 18, far: 45, detour: 1.35 },
+  sparse: { overhead: 20, near: 22, far: 45, detour: 1.35 },
+};
+const CAR_MODEL = { overhead: 6, near: 20, far: 60, detour: 1.35 };
+const MAX_WALK = 20;      // minutes: beyond this, riding wins even if it is no quicker
+const WALK_BIAS = 5;      // and below it, walking wins unless riding saves more than this
+const MODE_WORD = { walk: 'walk', transit: 'train or bus', car: 'taxi' };
+function rideMinutes(km, model) {
+  const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  return model.overhead + (km * model.detour / speed) * 60;
+}
+function estimateLeg(from, to, trip) {
+  if (!hasPos(from) || !hasPos(to)) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+  const km = kmBetween(from, to);
+  const walk = Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km)));
+  const model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
+  const ride = Math.round(rideMinutes(km, model));
+  const onFoot = walk <= MAX_WALK && walk <= ride + WALK_BIAS;
+  return {
+    mode: onFoot ? 'walk' : 'transit',
+    minutes: onFoot ? walk : ride,
+    km, estimate: true,
+    walkMinutes: walk, rideMinutes: ride,
+  };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1315,7 +1346,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows,
+  openOn, startWindows, estimateLeg, rideMinutes, TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
   addStay, updateStay, deleteStay, stayById,

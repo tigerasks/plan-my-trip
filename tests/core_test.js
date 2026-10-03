@@ -451,5 +451,25 @@ ok(JSON.stringify(slots(Object.assign({}, temple, { duration: 720 }), '2026-11-2
 ok(slots(Object.assign({}, temple, { duration: 780 }), '2026-11-23').length === 0,
   'and one longer than the opening hours has nowhere to go at all');
 
+console.log('\n== Estimating a leg ==');
+const legA = { lat: 34.9948, lng: 135.7850 }, far = { lat: 35.0269, lng: 135.7983 };
+const legB = { lat: 34.9950, lng: 135.7855 };
+let lg = C.estimateLeg(legA, legB, demoTrip);
+ok(lg.mode === 'walk' && lg.minutes <= 2, 'a few hundred metres is a walk: ' + lg.minutes + ' min');
+lg = C.estimateLeg(legA, far, demoTrip);
+ok(lg.mode === 'transit' && lg.minutes < lg.walkMinutes, 'further out, the network wins: '
+  + lg.minutes + ' min by ' + C.MODE_WORD[lg.mode] + ' against ' + lg.walkMinutes + ' on foot');
+ok(lg.estimate === true, 'and it is always marked as an estimate');
+ok(C.estimateLeg(legA, far, { transit: 'sparse' }).minutes > C.estimateLeg(legA, far, { transit: 'metro' }).minutes,
+  'a sparse network is slower than a dense metro');
+ok(C.estimateLeg(legA, {}, demoTrip).unknown === true, 'a place with no position has no estimate');
+ok(C.estimateLeg(legA, legA, demoTrip).minutes === 0, 'and standing still takes no time');
+const legs = [0.3, 1.5, 6, 35].map((km) => {
+  const to = { lat: legA.lat + km / 111, lng: legA.lng };
+  const e = C.estimateLeg(legA, to, demoTrip);
+  return km + 'km ' + C.MODE_WORD[e.mode] + ' ' + e.minutes;
+});
+ok(/35km train or bus/.test(legs.join(' · ')), 'and the numbers stay sensible across distances: ' + legs.join(' · '));
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
