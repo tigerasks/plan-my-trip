@@ -838,6 +838,44 @@ function detailsFromTags(tags, osm) {
   };
 }
 
+// ---------- when a place is open ----------
+// The stored hours are a week; a day of the trip needs them for one date. Unknown is not the same
+// as open: the timeline says so rather than quietly assuming.
+function openOn(place, date) {
+  const p = obj(place);
+  const day = weekdayOf(date);
+  if (!day) return { known: false, closed: false, spans: [], last: null };
+  if (arr(p.closed).indexOf(date) >= 0) return { known: true, closed: true, spans: [], last: null };
+  const h = obj(p.hours);
+  const week = obj(h.week)[day];
+  if (!p.hours || !Array.isArray(week)) return { known: false, closed: false, spans: [], last: null };
+  const spans = [];
+  for (const pair of week) {
+    const open = parseTime(pair[0]), close = parseTime(pair[1]);
+    if (open == null || close == null) continue;
+    spans.push([open, close <= open ? close + 1440 : close]);     // a close before the open is past midnight
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const last = parseTime(obj(h.lastEntry)[day]);
+  return { known: true, closed: spans.length === 0, spans, last: last == null ? null : last, verified: h.verified === true };
+}
+// When a visit of this length may start: opening hours, last entry and the place's own time window.
+function startWindows(place, date) {
+  const open = openOn(place, date);
+  const duration = toNum(obj(place).duration) || 0;
+  if (open.closed) return { open, slots: [] };
+  let slots = open.known && open.spans.length
+    ? open.spans.map(([a, b]) => [a, Math.min(open.last == null ? Infinity : open.last, b - duration)])
+    : [[-Infinity, Infinity]];
+  const w = normSpan(obj(place).window);
+  if (w) {
+    const from = w.from != null ? parseTime(w.from) : -Infinity;
+    const to = w.to != null ? parseTime(w.to) : Infinity;
+    slots = slots.map(([a, b]) => [Math.max(a, from), Math.min(b, to)]);
+  }
+  return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1277,6 +1315,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
+  openOn, startWindows,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
   addStay, updateStay, deleteStay, stayById,

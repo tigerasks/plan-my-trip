@@ -423,5 +423,33 @@ ok(dg.t.places['example-temple'].dayId === null, 'which takes it off its day');
 ok(dg.t.days['2026-11-21'].plans.packed.indexOf('example-temple') < 0, 'and out of every version');
 ok(C.normalise(dg.t).issues.length === 0, 'with the trip still consistent');
 
+console.log('\n== When a place is open ==');
+const temple = demoTrip.places['example-temple'];
+let o = C.openOn(temple, '2026-11-21');
+ok(o.known && !o.closed && o.spans[0][0] === 360 && o.spans[0][1] === 1260, 'Saturday hours come back as minutes: ' + JSON.stringify(o.spans));
+ok(o.last === 1230, 'with the last entry');
+ok(C.openOn(temple, '2026-11-23').spans[0][1] === 1080, 'and a weekday closes earlier');
+ok(C.openOn(demoTrip.places['made-up-market'], '2026-11-22').closed === true, 'a day it is shut reads as closed');
+ok(C.openOn(demoTrip.places['pretend-noodle-bar'], '2026-11-21').known === false, 'a place with no hours is unknown, not open');
+ok(C.openOn(temple, 'not a date').known === false, 'and so is a date that is not one');
+ok(C.openOn({ hours: { week: { sat: [['18:00', '02:00']] } } }, '2026-11-21').spans[0][1] === 1560,
+  'closing after midnight runs past the end of the day');
+ok(C.openOn({ closed: ['2026-11-21'], hours: { week: { sat: [['09:00', '17:00']] } } }, '2026-11-21').closed === true,
+  'a date it is shut beats its usual hours');
+
+console.log('\n== When a visit may start ==');
+const slots = (p, d) => C.startWindows(p, d).slots;
+ok(JSON.stringify(slots(temple, '2026-11-21')) === '[[360,1170]]',
+  'a 1h 30 visit must start early enough to fit before the last entry: ' + JSON.stringify(slots(temple, '2026-11-21')));
+ok(slots(demoTrip.places['made-up-market'], '2026-11-22').length === 0, 'a closed day leaves no slot at all');
+ok(slots(demoTrip.places['pretend-noodle-bar'], '2026-11-21')[0][0] === -Infinity,
+  'unknown hours put no limit on when you may arrive');
+const windowed = Object.assign({}, temple, { window: { from: '16:00', to: '17:00' } });
+ok(JSON.stringify(slots(windowed, '2026-11-21')) === '[[960,1020]]', 'a time window narrows it further: ' + JSON.stringify(slots(windowed, '2026-11-21')));
+ok(JSON.stringify(slots(Object.assign({}, temple, { duration: 720 }), '2026-11-23')) === '[[360,360]]',
+  'a visit that exactly fills the day has one moment to start');
+ok(slots(Object.assign({}, temple, { duration: 780 }), '2026-11-23').length === 0,
+  'and one longer than the opening hours has nowhere to go at all');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
