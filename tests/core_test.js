@@ -471,5 +471,59 @@ const legs = [0.3, 1.5, 6, 35].map((km) => {
 });
 ok(/35km train or bus/.test(legs.join(' · ')), 'and the numbers stay sensible across distances: ' + legs.join(' · '));
 
+console.log('\n== Walking a day ==');
+function dayWith(mutate, key) {
+  const raw = clone(demoEnv.trip);
+  if (mutate) mutate(raw);
+  const t = C.normalise(raw).trip;
+  return { t, plan: C.planDay(t, '2026-11-21', key || 'balanced') };
+}
+const rows = (r) => r.items.map((i) => i.type === 'travel' ? 'travel ' + i.minutes
+  : i.type === 'visit' ? C.fmtTime(i.at) + ' ' + i.name
+  : i.type === 'lunch' ? C.fmtTime(i.at) + ' Lunch'
+  : C.fmtTime(i.at) + ' ' + i.type);
+const errs = (r) => r.issues.filter((i) => i.severity === 'error').map((i) => i.text);
+
+let P = dayWith().plan;
+ok(P.items[0].type === 'start' && P.items[0].at === 510, 'the day starts when you said you would leave');
+ok(rows(P).join(' | ').indexOf('08:50 Example Temple') > 0, 'with travel before the first stop: ' + rows(P).join(' | '));
+ok(P.issues.length === 0, 'the example day has nothing wrong with it');
+ok(P.summary.visit === 150 && P.summary.travel > 0 && P.summary.spare > 0, 'and adds up: ' + JSON.stringify(P.summary));
+ok(P.items.some((i) => i.type === 'lunch' && i.at >= 690 && i.at <= 810), 'lunch lands inside its window');
+ok(P.checks.some((c) => /not checked yet/.test(c.text)), 'unverified hours come back as something to check, not an error');
+
+P = dayWith((t) => { t.days['2026-11-21'].lunch.on = false; }).plan;
+ok(!P.items.some((i) => i.type === 'lunch'), 'lunch can be switched off');
+
+P = dayWith((t) => { t.days['2026-11-21'].plans.balanced = ['example-temple', 'pretend-noodle-bar']; }).plan;
+ok(!P.items.some((i) => i.type === 'lunch') && P.items.some((i) => i.isLunch),
+  'a place marked as lunch takes the place of the break');
+ok(P.checks.some((c) => /Hours unknown/.test(c.text)), 'and a place with no hours says its times are assumed');
+
+P = dayWith((t) => { t.places['made-up-market'].fixed = '09:30'; }).plan;
+ok(/after the 09:30 you have booked/.test(errs(P).join(' ')), 'arriving after a booked time is an error: ' + errs(P)[0]);
+
+P = dayWith((t) => { t.days['2026-11-21'].start.time = '19:00'; }).plan;
+ok(/after the latest you can start/.test(errs(P).join(' ')), 'and so is arriving after the last start: ' + errs(P)[0]);
+
+P = dayWith((t) => { t.places['made-up-market'].closed = ['2026-11-21']; }).plan;
+ok(/is closed on Sat 21 Nov/.test(errs(P).join(' ')), 'a place shut that day is an error: ' + errs(P)[0]);
+
+P = dayWith((t) => { t.days['2026-11-21'].end.time = '11:00'; }).plan;
+ok(/You would be back .* after 11:00/.test(errs(P).join(' ')), 'and so is being back late: ' + errs(P)[0]);
+
+P = dayWith((t) => { t.places['example-temple'].duration = 600; }).plan;
+ok(/no part of its opening hours fits/.test(errs(P).join(' ')) || P.summary.errors > 0, 'a visit too long for the hours is an error');
+
+P = dayWith((t) => { t.places['made-up-market'].lat = null; t.places['made-up-market'].lng = null; }).plan;
+ok(P.issues.some((i) => i.severity === 'warn' && /no position/.test(i.text)), 'a place with no position is a warning, not a stop sign');
+
+P = dayWith((t) => { t.days['2026-11-21'].end = null; }).plan;
+ok(!P.items.some((i) => i.type === 'end') && P.summary.spare === null, 'an open-ended day simply stops');
+
+P = dayWith(null, 'packed').plan;
+ok(P.summary.stops === 3 && P.key === 'packed', 'each version is worked out on its own: ' + P.summary.stops + ' stops');
+ok(C.planDay(demoTrip, 'nope', 'balanced') === null, 'a day the trip has not got has no plan');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
