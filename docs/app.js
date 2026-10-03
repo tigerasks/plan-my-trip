@@ -340,15 +340,16 @@ function chipsHtml(p) {
   if (p.meal) h += '<span class="chip flex">Lunch option</span>';
   return h;
 }
-function itemHtml(p, lead, kind) {
-  const meta = [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
+function itemHtml(p, lead, kind, when) {
+  const meta = when || [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
+  const also = when ? '' : (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '');
   const open = App.ui.menu && App.ui.menu.id === p.id;
   return '<li class="row' + (open ? ' menu-open' : '') + '" data-row-id="' + esc(p.id) + '" data-from="' + esc(kind) + '">'
     + '<div class="row-main">'
     + '<span class="grip" data-drag="' + esc(p.id) + '" title="Drag to move it"></span>'
     + '<button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
     + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + '</span>'
-    + '<span class="meta">' + esc(meta) + (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '') + '</span></span></button>'
+    + '<span class="meta">' + meta + also + '</span></span></button>'
     + '<button type="button" class="icon-btn row-menu" data-act="row-menu" data-id="' + esc(p.id) + '"'
     + ' aria-label="What to do with ' + esc(p.name) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + ic('dots') + '</button>'
     + '</div>'
@@ -400,12 +401,67 @@ function sectionHtml(label, count, body, extra) {
   return '<div class="card"><div class="card-head"><span class="label">' + esc(label)
     + ' <span class="count">' + count + '</span></span>' + (extra || '') + '</div>' + body + '</div>';
 }
+// The version on screen as a schedule: when you arrive, when you can start, how long you wait,
+// and what will not work. Every travel time here is the planner's own estimate, marked ≈.
 function planHtml(day) {
   const places = C.planPlaces(App.trip, day.id, day.shown);
-  return sectionHtml('Plan · ' + C.PLAN_LABEL[day.shown], places.length,
-    listHtml(places, (i) => '<span class="num">' + (i + 1) + '</span>',
+  const label = 'Plan · ' + C.PLAN_LABEL[day.shown];
+  if (!places.length) {
+    return sectionHtml(label, 0, listHtml([], null,
       'Nothing in ' + C.PLAN_LABEL[day.shown] + ' yet. Drag places here, or add them from the list below.', 'plan'));
+  }
+  const P = C.planDay(App.trip, day.id, day.shown);
+  return sectionHtml(label, places.length, timelineHtml(P) + issuesHtml(P), summaryChipHtml(P));
 }
+const timeCell = (text) => '<span class="t">' + esc(text) + '</span>';
+function timelineHtml(P) {
+  let n = 0;
+  const out = [];
+  for (const it of P.items) {
+    if (it.type === 'start' || it.type === 'end') {
+      out.push('<li class="tl-mark">' + timeCell(C.fmtTime(it.at))
+        + '<span>' + (it.type === 'start' ? 'Leave ' : 'Back at ')
+        + esc(it.name || (it.type === 'start' ? 'where the day starts' : 'where it ends')) + '</span></li>');
+    } else if (it.type === 'travel') {
+      out.push('<li class="tl-leg">' + timeCell('')
+        + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
+    } else if (it.type === 'lunch') {
+      out.push('<li class="tl-lunch">' + timeCell(C.fmtTime(it.at))
+        + '<span>Lunch' + (it.near ? ' near ' + esc(it.near) : '') + ' · ' + esc(C.fmtDur(it.until - it.at)) + '</span></li>');
+    } else if (it.type === 'visit') {
+      n++;
+      const bits = ['until ' + C.fmtTime(it.until), C.fmtDur(it.place.duration), C.KIND_LABEL[it.place.kind]];
+      let meta = bits.filter(Boolean).map(esc).join(' · ');
+      if (it.waited > 4) meta += ' <span class="amber">· waited ' + esc(C.fmtDur(it.waited)) + '</span>';
+      if (it.isLunch) meta += ' <span class="sep">·</span> lunch';
+      out.push(itemHtml(it.place, timeCell(C.fmtTime(it.at)) + '<span class="num">' + n + '</span>', 'plan', meta));
+    }
+  }
+  return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
+}
+function summaryChipHtml(P) {
+  const n = P.summary.errors;
+  if (n) return '<span class="chip must">' + n + (n === 1 ? ' problem' : ' problems') + '</span>';
+  const spare = P.summary.spare;
+  return '<span class="count">' + esc(C.fmtTime(P.finish) + (spare == null ? '' : ' · ' + C.fmtDur(Math.max(0, spare)) + ' spare')) + '</span>';
+}
+function issuesHtml(P) {
+  if (!P.issues.length && !P.checks.length) return '';
+  const rows = P.issues.map((i) =>
+    '<li class="' + (i.severity === 'error' ? 'bad' : 'amber') + '">' + esc(i.text) + '</li>').join('');
+  const byPlace = {};
+  for (const c of P.checks) {
+    byPlace[c.id] = byPlace[c.id] || { name: c.name, texts: [] };
+    if (byPlace[c.id].texts.indexOf(c.text) < 0) byPlace[c.id].texts.push(c.text);
+  }
+  const checks = Object.values(byPlace)
+    .map((c) => '<li>' + esc(c.name + ': ' + c.texts.map(lower).join('; ')) + '</li>').join('');
+  return '<div class="tl-issues">'
+    + (rows ? '<span class="label">What will not work</span><ul class="reasons">' + rows + '</ul>' : '')
+    + (checks ? '<span class="label" style="margin-top:8px;display:block">Worth checking</span><ul class="reasons">' + checks + '</ul>' : '')
+    + '</div>';
+}
+const lower = (t) => (t && /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
 function ideasHtml(day) {
   const places = C.ideasFor(App.trip, day.id, day.shown);
   return sectionHtml('Ideas for today', places.length,
