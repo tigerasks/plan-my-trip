@@ -838,6 +838,182 @@ function detailsFromTags(tags, osm) {
   };
 }
 
+// ---------- when a place is open ----------
+// The stored hours are a week; a day of the trip needs them for one date. Unknown is not the same
+// as open: the timeline says so rather than quietly assuming.
+function openOn(place, date) {
+  const p = obj(place);
+  const day = weekdayOf(date);
+  if (!day) return { known: false, closed: false, spans: [], last: null };
+  if (arr(p.closed).indexOf(date) >= 0) return { known: true, closed: true, spans: [], last: null };
+  const h = obj(p.hours);
+  const week = obj(h.week)[day];
+  if (!p.hours || !Array.isArray(week)) return { known: false, closed: false, spans: [], last: null };
+  const spans = [];
+  for (const pair of week) {
+    const open = parseTime(pair[0]), close = parseTime(pair[1]);
+    if (open == null || close == null) continue;
+    spans.push([open, close <= open ? close + 1440 : close]);     // a close before the open is past midnight
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const last = parseTime(obj(h.lastEntry)[day]);
+  return { known: true, closed: spans.length === 0, spans, last: last == null ? null : last, verified: h.verified === true };
+}
+// When a visit of this length may start: opening hours, last entry and the place's own time window.
+function startWindows(place, date) {
+  const open = openOn(place, date);
+  const duration = toNum(obj(place).duration) || 0;
+  if (open.closed) return { open, slots: [] };
+  let slots = open.known && open.spans.length
+    ? open.spans.map(([a, b]) => [a, Math.min(open.last == null ? Infinity : open.last, b - duration)])
+    : [[-Infinity, Infinity]];
+  const w = normSpan(obj(place).window);
+  if (w) {
+    const from = w.from != null ? parseTime(w.from) : -Infinity;
+    const to = w.to != null ? parseTime(w.to) : Infinity;
+    slots = slots.map(([a, b]) => [Math.max(a, from), Math.min(b, to)]);
+  }
+  return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
+}
+
+// ---------- estimating a leg ----------
+// The planner's own numbers, from the straight-line distance: instant, offline and rough, so they
+// are always marked ≈. Milestone 4 replaces them with real routes and keeps this as the fallback.
+const TRANSIT_MODEL = {
+  metro: { overhead: 10, near: 22, far: 50, detour: 1.30 },
+  city: { overhead: 12, near: 18, far: 45, detour: 1.35 },
+  sparse: { overhead: 20, near: 22, far: 45, detour: 1.35 },
+};
+const CAR_MODEL = { overhead: 6, near: 20, far: 60, detour: 1.35 };
+const MAX_WALK = 20;      // minutes: beyond this, riding wins even if it is no quicker
+const WALK_BIAS = 5;      // and below it, walking wins unless riding saves more than this
+const MODE_WORD = { walk: 'walk', transit: 'train or bus', car: 'taxi' };
+function rideMinutes(km, model) {
+  const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  return model.overhead + (km * model.detour / speed) * 60;
+}
+function estimateLeg(from, to, trip) {
+  if (!hasPos(from) || !hasPos(to)) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+  const km = kmBetween(from, to);
+  const walk = Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km)));
+  const model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
+  const ride = Math.round(rideMinutes(km, model));
+  const onFoot = walk <= MAX_WALK && walk <= ride + WALK_BIAS;
+  return {
+    mode: onFoot ? 'walk' : 'transit',
+    minutes: onFoot ? walk : ride,
+    km, estimate: true,
+    walkMinutes: walk, rideMinutes: ride,
+  };
+}
+
+// ---------- walking a day ----------
+// One version of one day, turned into times: when you arrive, when you can actually start, how long
+// you wait, and when you would be back. Carried over from the first planner, with its pace budgets
+// and its picking-places-for-you taken out — the three versions are yours.
+function planDay(trip, dayId, key) {
+  const day = obj(obj(trip).days)[dayId];
+  if (!day) return null;
+  const shown = PLAN_KEYS.includes(key) ? key : day.shown;
+  const date = day.date;
+  const start = dayStart(trip, dayId);
+  const end = dayEnd(trip, dayId);
+  const startTime = parseTime(start.time);
+  let endBy = end ? parseTime(end.time) : null;
+  if (endBy != null && endBy <= startTime) endBy += 1440;
+
+  const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
+  const issues = [], checks = [];
+  const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
+  const stops = planPlaces(trip, dayId, shown);
+
+  const lunch = obj(day.lunch);
+  const lunchFrom = parseTime(lunch.from), lunchTo = parseTime(lunch.to);
+  const mealStop = stops.find((p) => p.meal) || null;
+  let lunchLeft = lunch.on === true && !mealStop;
+
+  let t = startTime, prev = start, travel = 0, wait = 0, visit = 0;
+  const takeLunch = () => {
+    lunchLeft = false;
+    const from = Math.max(t, lunchFrom);
+    if (from > lunchTo) flag('warn', 'Lunch would start ' + fmtTime(from) + ', after ' + hhmm(lunchTo), 'lunch');
+    wait += from - t;
+    items.push({ type: 'lunch', at: from, until: from + lunch.duration, waited: from - t, near: prev.name });
+    t = from + lunch.duration;
+  };
+
+  for (const p of stops) {
+    if (lunchLeft && t >= lunchFrom) takeLunch();
+    const leg = estimateLeg(prev, p, trip);
+    if (leg.unknown) flag('warn', p.name + ' has no position, so the time to get there is unknown', p.id);
+    travel += leg.minutes;
+    const arrive = t + leg.minutes;
+    const when = startWindows(p, date);
+    const fixed = parseTime(p.fixed);
+    let at = arrive;
+    if (when.open.closed) {
+      flag('error', p.name + ' is closed on ' + fmtDateUK(date), p.id);
+    } else if (fixed != null) {
+      at = Math.max(arrive, fixed);
+      if (arrive > fixed) flag('error', p.name + ': you would arrive ' + fmtTime(arrive) + ', after the ' + hhmm(fixed) + ' you have booked', p.id);
+    } else if (!when.slots.length) {
+      flag('error', p.name + ': no part of its opening hours fits a ' + fmtDur(p.duration) + ' visit', p.id);
+    } else {
+      const slot = when.slots.find(([, hi]) => arrive <= hi);
+      if (slot) at = Math.max(arrive, slot[0]);
+      else {
+        const latest = when.slots[when.slots.length - 1][1];
+        flag('error', p.name + ': you would arrive ' + fmtTime(arrive) + ', after the latest you can start (' + hhmm(latest) + ')', p.id);
+      }
+    }
+    if (!when.open.known) checks.push({ id: p.id, name: p.name, text: 'Hours unknown, so these times assume it is open' });
+    else if (!when.open.verified) checks.push({ id: p.id, name: p.name, text: 'Hours not checked yet' });
+    if (p.check) checks.push({ id: p.id, name: p.name, text: p.check });
+
+    const waited = at - arrive;
+    wait += waited;
+    visit += p.duration;
+    items.push(Object.assign({ type: 'travel' }, leg));
+    items.push({
+      type: 'visit', id: p.id, name: p.name, place: p, leg,
+      arrive, at, until: at + p.duration, waited,
+      isLunch: mealStop === p,
+    });
+    if (mealStop === p && lunchFrom != null && (at < lunchFrom || at > lunchTo)) {
+      flag('warn', p.name + ' is this day\'s lunch, but it starts ' + fmtTime(at) + ', outside ' + hhmm(lunchFrom) + '–' + hhmm(lunchTo), p.id);
+    }
+    t = at + p.duration;
+    prev = p;
+  }
+  if (lunchLeft) {
+    if (lunchFrom != null && t > lunchTo) flag('warn', 'There is no gap for lunch between ' + hhmm(lunchFrom) + ' and ' + hhmm(lunchTo), 'lunch');
+    else if (lunchFrom != null) takeLunch();
+  }
+
+  let finish = t;
+  if (end) {
+    const leg = estimateLeg(prev, end, trip);
+    travel += leg.minutes;
+    finish = t + leg.minutes;
+    items.push(Object.assign({ type: 'travel' }, leg));
+    items.push({ type: 'end', name: end.name, at: finish, place: end });
+    if (endBy != null && finish > endBy) {
+      flag('error', 'You would be back ' + fmtTime(finish) + ', ' + fmtDur(finish - endBy) + ' after ' + hhmm(endBy), 'end');
+    }
+  }
+  const legs = items.filter((i) => i.type === 'travel');
+  return {
+    dayId, date, key: shown, items, issues, checks,
+    start, end, startTime, endBy, finish,
+    summary: {
+      stops: stops.length, travel, wait, visit,
+      spare: endBy == null ? null : endBy - finish,
+      estimated: legs.filter((l) => l.estimate && l.minutes > 0).length,
+      errors: issues.filter((i) => i.severity === 'error').length,
+    },
+  };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1277,6 +1453,8 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
+  openOn, startWindows, estimateLeg, rideMinutes, TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
   addStay, updateStay, deleteStay, stayById,
