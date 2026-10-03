@@ -162,7 +162,40 @@ with sync_playwright() as pw:
     ck(len(held['trip']['days']['2026-11-21']['plans']['balanced']) == 2, 'and switching never moves a place between versions')
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
-    pg.screenshot(path=str(SHOTS / 'app_less_desktop_light.png'))
+
+    # ---- copying a version, and tidying its order
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(200)
+    pg.click('[data-act="copy-version"][data-to="less"]')
+    pg.wait_for_timeout(900)
+    plans = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans")
+    ck(plans['less'] == plans['packed'] and len(plans['less']) == 3, 'a version can be copied over another')
+    ck('replacing what was there' in pg.inner_text('#toast'), 'and says what it replaced: ' + pg.inner_text('#toast'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less") == ['example-temple'],
+       'with Undo putting the old one back')
+
+    pg.click('[data-act="copy-version"][data-to="less"]')
+    pg.wait_for_timeout(600)
+    pg.click('[data-act="version"][data-v="less"]')
+    pg.wait_for_timeout(300)
+    ck('lunch' in pg.inner_text('.timeline'), 'the lunch place is marked as lunch in the timeline')
+    ck('outside 11:30' in pg.inner_text('.tl-issues'), 'and the day says it falls outside the window: '
+       + [l for l in pg.inner_text('.tl-issues').split(chr(10)) if 'outside' in l][0])
+    pg.click('[data-act="optimise"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")
+       == ['example-temple', 'made-up-market', 'pretend-noodle-bar'], 'Optimise moves lunch into its window')
+    ck('1 problem fewer' in pg.inner_text('#toast'), 'and says what it gained: ' + pg.inner_text('#toast'))
+    ck('outside 11:30' not in pg.inner_text('#panel'), 'leaving nothing wrong with the day')
+    pg.screenshot(path=str(SHOTS / 'app_timeline_desktop_light.png'))
+    pg.click('#toastBtn')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")[1] == 'pretend-noodle-bar',
+       'and Undo puts the order back')
+    pg.click('[data-act="version"][data-v="less"]')
+    pg.wait_for_timeout(200)
     ctx.close()
 
     # ---- the same trip on a phone
@@ -420,7 +453,7 @@ with sync_playwright() as pw:
     ck(pg.locator('.menu').count() == 0, 'and a click anywhere else puts it away')
 
     # ---- dragging (a tall window, so every list is on screen at once)
-    ctx, pg = open_page(1280, 1100, held=DEMO, extra=services)
+    ctx, pg = open_page(1280, 1500, held=DEMO, extra=services)
 
     def drag(source_id, target_list, target_id=None, below=False):
         """Drag a row by its grip onto a list, dropping it above or below a row in it."""

@@ -911,7 +911,7 @@ function estimateLeg(from, to, trip) {
 // One version of one day, turned into times: when you arrive, when you can actually start, how long
 // you wait, and when you would be back. Carried over from the first planner, with its pace budgets
 // and its picking-places-for-you taken out — the three versions are yours.
-function planDay(trip, dayId, key) {
+function planDay(trip, dayId, key, order) {
   const day = obj(obj(trip).days)[dayId];
   if (!day) return null;
   const shown = PLAN_KEYS.includes(key) ? key : day.shown;
@@ -925,7 +925,8 @@ function planDay(trip, dayId, key) {
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
-  const stops = planPlaces(trip, dayId, shown);
+  const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
+    : planPlaces(trip, dayId, shown));
 
   const lunch = obj(day.lunch);
   const lunchFrom = parseTime(lunch.from), lunchTo = parseTime(lunch.to);
@@ -1014,6 +1015,62 @@ function planDay(trip, dayId, key) {
   };
 }
 
+// What a day's order costs: anything that will not work first, then time on the move, then waiting
+// about, then finishing late. Lower is better.
+function planCost(P) {
+  if (!P) return Infinity;
+  const warns = P.issues.length - P.summary.errors;
+  return P.summary.errors * 10000 + warns * 200 + P.summary.travel + P.summary.wait * 0.5
+    + (P.finish - P.startTime) * 0.01;
+}
+// Re-sequence a day's stops for less travel and fewer problems, without changing what is in it.
+// Relocating one stop at a time and reversing stretches, which is what the first planner did.
+function optimiseOrder(trip, dayId, key) {
+  const day = obj(obj(trip).days)[dayId];
+  if (!day) return { ok: false, text: 'That day is no longer here' };
+  const k = PLAN_KEYS.includes(key) ? key : day.shown;
+  let best = day.plans[k].slice();
+  if (best.length < 3) return { ok: false, text: 'There is nothing to reorder yet' };
+  const cost = (order) => planCost(planDay(trip, dayId, k, order));
+  const was = { order: best.slice(), cost: cost(best) };
+  let bestCost = was.cost;
+  for (let pass = 0; pass < 12; pass++) {
+    let better = false;
+    for (let i = 0; i < best.length; i++) {
+      for (let j = 0; j < best.length; j++) {
+        if (i === j) continue;
+        const next = best.slice();
+        next.splice(j, 0, next.splice(i, 1)[0]);
+        const c = cost(next);
+        if (c < bestCost - 1e-9) { best = next; bestCost = c; better = true; }
+      }
+    }
+    for (let i = 0; i < best.length - 1; i++) {
+      for (let j = i + 1; j < best.length; j++) {
+        const next = best.slice(0, i).concat(best.slice(i, j + 1).reverse(), best.slice(j + 1));
+        const c = cost(next);
+        if (c < bestCost - 1e-9) { best = next; bestCost = c; better = true; }
+      }
+    }
+    if (!better) break;
+  }
+  if (best.join() === was.order.join()) return { ok: false, was: was.order, text: 'That is already the best order I can find' };
+  day.plans[k] = best;
+  touch(trip);
+  const before = planDay(trip, dayId, k, was.order);
+  const now = planDay(trip, dayId, k);
+  const bits = [];
+  const fewer = before.issues.length - now.issues.length;
+  const saved = before.summary.travel - now.summary.travel;
+  const waited = before.summary.wait - now.summary.wait;
+  const earlier = before.finish - now.finish;
+  if (fewer > 0) bits.push(fewer + (fewer === 1 ? ' problem' : ' problems') + ' fewer');
+  if (saved > 0) bits.push(fmtDur(saved) + ' less travel');
+  if (waited > 0) bits.push(fmtDur(waited) + ' less waiting about');
+  if (!bits.length && earlier > 0) bits.push('back ' + fmtDur(earlier) + ' earlier');
+  return { ok: true, was: was.order, text: 'Reordered' + (bits.length ? ': ' + joinList(bits) : '') };
+}
+
 // ---------- changing the model ----------
 // Every move goes through these, so the invariants normalise() guarantees keep holding as you work.
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -1073,21 +1130,16 @@ function moveToBacklog(trip, id, now) {
   touch(trip, now);
   return { ok: true, left, text: p.name + ' moved to the backlog' + (left.length ? ', and out of ' + planWords(left) : '') };
 }
-// Where a new stop fits best. Until the scheduler lands this is least added distance, measured
-// straight-line from the day's start and back to its end.
+// Where a new stop fits best: the position that causes the fewest problems and the least travel,
+// judged by running the day at each one.
 function bestSlot(trip, dayId, key, placeId) {
   const d = obj(obj(trip).days)[dayId];
-  const p = placeById(trip, placeId);
-  if (!d || !p || !hasPos(p)) return d ? d.plans[key].length : 0;
-  const stops = d.plans[key].map((id) => trip.places[id]).filter(hasPos);
-  const start = hasPos(d.start) ? d.start : null;
-  const end = d.end && hasPos(d.end) ? d.end : start;
-  const chain = [start].concat(stops, [end]);
-  let best = stops.length, bestCost = Infinity;
-  for (let i = 0; i <= stops.length; i++) {
-    const before = chain[i], after = chain[i + 1];
-    const cost = (before ? kmBetween(before, p) : 0) + (after ? kmBetween(p, after) : 0)
-      - (before && after ? kmBetween(before, after) : 0);
+  if (!d) return 0;
+  const rest = d.plans[key].filter((id) => id !== placeId);
+  let best = rest.length, bestCost = Infinity;
+  for (let i = 0; i <= rest.length; i++) {
+    const order = rest.slice(0, i).concat([placeId], rest.slice(i));
+    const cost = planCost(planDay(trip, dayId, key, order));
     if (cost < bestCost - 1e-9) { bestCost = cost; best = i; }
   }
   return best;
@@ -1144,6 +1196,22 @@ function moveInBacklog(trip, id, index, now) {
   trip.backlog.splice(to, 0, id);
   touch(trip, now);
   return { ok: true, index: to, text: p.name + ' moved to the backlog' };
+}
+// Copy what is on screen into another version, as a starting point there.
+function copyVersion(trip, dayId, from, to, now) {
+  const day = obj(obj(trip).days)[dayId];
+  if (!day || !PLAN_KEYS.includes(from) || !PLAN_KEYS.includes(to) || from === to) {
+    return { ok: false, text: 'There is nothing to copy there' };
+  }
+  const was = day.plans[to].slice();
+  day.plans[to] = day.plans[from].slice();
+  touch(trip, now);
+  const n = day.plans[to].length;
+  return {
+    ok: true, was,
+    text: PLAN_LABEL[from] + ' copied to ' + PLAN_LABEL[to]
+      + (was.length ? ', replacing what was there' : '') + ' — ' + n + (n === 1 ? ' stop' : ' stops'),
+  };
 }
 function reorderPlan(trip, dayId, key, from, to, now) {
   const d = trip.days[dayId];
@@ -1465,7 +1533,7 @@ const Core = {
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, placeInPlan, moveInBacklog, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  reorderPlan, placeInPlan, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };
