@@ -33,7 +33,6 @@ const WEEK_LABEL = {
 const MAX_DURATION = 720;          // 12 hours
 const DURATION_STEP = 15;
 const DEFAULT_DURATION = 60;
-const DEFAULT_LUNCH = { from: '11:30', to: '13:30', duration: 60, on: true };
 
 // ---------- small utils ----------
 const isNum = (x) => typeof x === 'number' && isFinite(x);
@@ -306,7 +305,6 @@ function normPlace(raw, issues, now) {
   p.window = normSpan(r.window);
   p.hours = normHours(r.hours, issues, p.name);
   p.closed = arr(r.closed).map(normDate).filter(Boolean).slice(0, 60);
-  p.meal = r.meal === true;
   p.booked = r.booked === true;
   p.priority = PRIORITIES.includes(r.priority) ? r.priority : null;
   p.price = normPrice(r.price);
@@ -331,13 +329,6 @@ function normDay(raw, issues, now) {
   if (!d.start.time) d.start.time = '08:30';
   d.end = r.end === null ? null : (normPoint(r.end, '') || { name: '', lat: null, lng: null, time: null });
   if (d.end && !d.end.time) d.end.time = '21:00';
-  const l = obj(r.lunch);
-  d.lunch = {
-    from: normTime(l.from) || DEFAULT_LUNCH.from,
-    to: normTime(l.to) || DEFAULT_LUNCH.to,
-    duration: clamp(Math.round((toNum(l.duration) == null ? DEFAULT_LUNCH.duration : toNum(l.duration)) / DURATION_STEP) * DURATION_STEP, 0, 240),
-    on: l.on !== false,
-  };
   d.plans = {};
   for (const k of PLAN_KEYS) d.plans[k] = arr(obj(r.plans)[k]).map(cleanId).filter(Boolean);
   d.shown = PLAN_KEYS.includes(r.shown) ? r.shown : 'balanced';
@@ -933,23 +924,9 @@ function planDay(trip, dayId, key, order) {
   const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
     : planPlaces(trip, dayId, shown));
 
-  const lunch = obj(day.lunch);
-  const lunchFrom = parseTime(lunch.from), lunchTo = parseTime(lunch.to);
-  const mealStop = stops.find((p) => p.meal) || null;
-  let lunchLeft = lunch.on === true && !mealStop;
-
   let t = startTime, prev = start, travel = 0, wait = 0, visit = 0;
-  const takeLunch = () => {
-    lunchLeft = false;
-    const from = Math.max(t, lunchFrom);
-    if (from > lunchTo) flag('warn', 'Lunch would start ' + fmtTime(from) + ', after ' + hhmm(lunchTo), 'lunch');
-    wait += from - t;
-    items.push({ type: 'lunch', at: from, until: from + lunch.duration, waited: from - t, near: prev.name });
-    t = from + lunch.duration;
-  };
 
   for (const p of stops) {
-    if (lunchLeft && t >= lunchFrom) takeLunch();
     const leg = estimateLeg(prev, p, trip);
     // An unknown leg has an end without a position. Say which one: blaming the destination for a
     // day that has no starting point sends you looking in the wrong place.
@@ -988,19 +965,10 @@ function planDay(trip, dayId, key, order) {
     items.push({
       type: 'visit', id: p.id, name: p.name, place: p, leg,
       arrive, at, until: at + p.duration, waited,
-      isLunch: mealStop === p,
     });
-    if (mealStop === p && lunchFrom != null && (at < lunchFrom || at > lunchTo)) {
-      flag('warn', p.name + ' is this day\'s lunch, but it starts ' + fmtTime(at) + ', outside ' + hhmm(lunchFrom) + '–' + hhmm(lunchTo), p.id);
-    }
     t = at + p.duration;
     prev = p;
   }
-  if (lunchLeft) {
-    if (lunchFrom != null && t > lunchTo) flag('warn', 'There is no gap for lunch between ' + hhmm(lunchFrom) + ' and ' + hhmm(lunchTo), 'lunch');
-    else if (lunchFrom != null) takeLunch();
-  }
-
   let finish = t;
   if (end) {
     const leg = estimateLeg(prev, end, trip);
@@ -1528,7 +1496,7 @@ const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
   TRANSIT_TYPES, TRANSIT_LABEL, ADDED_BY, ADDED_HOW, HOURS_SOURCES, OSM_TYPES,
-  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION, DEFAULT_LUNCH,
+  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION,
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,

@@ -225,9 +225,6 @@ function dayHtml(day) {
     + (end
       ? '<div class="day-line"><span class="t">' + esc(end.time) + '</span><span' + (end.name ? '>Back at ' + esc(end.name) : ' class="muted">Where the day ends is not set yet') + '</span></div>'
       : '<div class="day-line"><span class="t">—</span><span class="muted">Open-ended day</span></div>')
-    + (day.lunch.on
-      ? '<div class="day-line"><span class="t">Lunch</span><span class="muted">' + esc(C.fmtDur(day.lunch.duration)) + ', between ' + esc(day.lunch.from) + ' and ' + esc(day.lunch.to) + '</span></div>'
-      : '')
     + (day.note ? '<p class="hint">' + esc(day.note) + '</p>' : '')
     + versionsHtml(day)
     + '</div>';
@@ -337,7 +334,6 @@ function chipsHtml(p) {
   else if (p.priority) h += '<span class="chip flex">' + esc(C.PRIORITY_LABEL[p.priority]) + '</span>';
   if (p.booked) h += '<span class="chip booked">Booked</span>';
   if (p.check) h += '<span class="chip check">Check</span>';
-  if (p.meal) h += '<span class="chip flex">Lunch option</span>';
   return h;
 }
 function itemHtml(p, lead, kind, when, extraChips) {
@@ -433,15 +429,11 @@ function timelineHtml(P) {
     } else if (it.type === 'travel') {
       out.push('<li class="tl-leg">' + timeCell('')
         + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
-    } else if (it.type === 'lunch') {
-      out.push('<li class="tl-lunch">' + timeCell(C.fmtTime(it.at))
-        + '<span>Lunch' + (it.near ? ' near ' + esc(it.near) : '') + ' · ' + esc(C.fmtDur(it.until - it.at)) + '</span></li>');
     } else if (it.type === 'visit') {
       n++;
       const bits = ['until ' + C.fmtTime(it.until), C.fmtDur(it.place.duration), C.KIND_LABEL[it.place.kind]];
       let meta = bits.filter(Boolean).map(esc).join(' · ');
       if (it.waited > 4) meta += ' <span class="amber">· waited ' + esc(C.fmtDur(it.waited)) + '</span>';
-      if (it.isLunch) meta += ' <span class="sep">·</span> lunch';
       out.push(itemHtml(it.place, timeCell(C.fmtTime(it.at)) + '<span class="num">' + n + '</span>', 'plan', meta));
     }
   }
@@ -846,14 +838,6 @@ const SHEETS = {
       + '</div>'
       + '<p class="hint">Leave the time back empty for an open-ended day. Where the day starts and ends comes from '
       + 'the accommodation, which is set at the top of the day.</p></div>'
-      + '<div class="sh-sec"><span class="label">Lunch</span>'
-      + '<label class="tick" style="margin-top:8px"><input type="checkbox" id="edLunchOn"' + (day.lunch.on ? ' checked' : '') + '><span>Keep a lunch break</span></label>'
-      + '<div class="pair">'
-      + field('edLunchFrom', 'Between', timeIn('edLunchFrom', day.lunch.from))
-      + field('edLunchTo', 'And', timeIn('edLunchTo', day.lunch.to))
-      + field('edLunchFor', 'For', '<select class="in" id="edLunchFor">' + [30, 45, 60, 75, 90, 120].map((n) =>
-        '<option value="' + n + '"' + (n === day.lunch.duration ? ' selected' : '') + '>' + esc(C.fmtDur(n)) + '</option>').join('') + '</select>')
-      + '</div></div>'
       + field('edNote', 'Note', '<textarea class="in" id="edNote" maxlength="2000" placeholder="Anything about this day worth remembering">' + esc(day.note) + '</textarea>')
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-day-shape">Save</button>'
       + '<button type="button" class="btn" data-act="close-sheet">Cancel</button></div>'
@@ -1355,12 +1339,6 @@ const ACTIONS = {
     if (!backBy) day.end = null;
     else if (day.end) day.end.time = backBy;
     else day.end = { name: '', lat: null, lng: null, time: backBy };
-    day.lunch = {
-      on: $('#edLunchOn').checked,
-      from: val('edLunchFrom') || day.lunch.from,
-      to: val('edLunchTo') || day.lunch.to,
-      duration: +val('edLunchFor'),
-    };
     day.note = val('edNote');
     App.trip = C.normalise(App.trip).trip;
     saveUi();
