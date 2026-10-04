@@ -489,16 +489,11 @@ ok(P.items[0].type === 'start' && P.items[0].at === 510, 'the day starts when yo
 ok(rows(P).join(' | ').indexOf('08:50 Example Temple') > 0, 'with travel before the first stop: ' + rows(P).join(' | '));
 ok(P.issues.length === 0, 'the example day has nothing wrong with it');
 ok(P.summary.visit === 150 && P.summary.travel > 0 && P.summary.spare > 0, 'and adds up: ' + JSON.stringify(P.summary));
-ok(P.items.some((i) => i.type === 'lunch' && i.at >= 690 && i.at <= 810), 'lunch lands inside its window');
 ok(P.checks.some((c) => /not checked yet/.test(c.text)), 'unverified hours come back as something to check, not an error');
-
-P = dayWith((t) => { t.days['2026-11-21'].lunch.on = false; }).plan;
-ok(!P.items.some((i) => i.type === 'lunch'), 'lunch can be switched off');
+ok(!P.items.some((i) => i.type === 'lunch'), 'the planner never puts a meal in the day for you');
 
 P = dayWith((t) => { t.days['2026-11-21'].plans.balanced = ['example-temple', 'pretend-noodle-bar']; }).plan;
-ok(!P.items.some((i) => i.type === 'lunch') && P.items.some((i) => i.isLunch),
-  'a place marked as lunch takes the place of the break');
-ok(P.checks.some((c) => /Hours unknown/.test(c.text)), 'and a place with no hours says its times are assumed');
+ok(P.checks.some((c) => /Hours unknown/.test(c.text)), 'a place with no hours says its times are assumed');
 
 P = dayWith((t) => { t.places['made-up-market'].fixed = '09:30'; }).plan;
 ok(/after the 09:30 you have booked/.test(errs(P).join(' ')), 'arriving after a booked time is an error: ' + errs(P)[0]);
@@ -543,9 +538,7 @@ ok(cp.out.was.join() === 'example-temple', 'handing back what was there, so it c
 ok(!C.copyVersion(cp.t, '2026-11-21', 'less', 'less').ok, 'a version cannot be copied onto itself');
 
 let op = withDemo((t) => { C.copyVersion(t, '2026-11-21', 'packed', 'less'); return C.optimiseOrder(t, '2026-11-21', 'less'); });
-ok(op.out.ok && op.t.days['2026-11-21'].plans.less.join(' ') === 'example-temple made-up-market pretend-noodle-bar',
-  'Optimise moves the lunch place into its window: ' + op.t.days['2026-11-21'].plans.less.join(' '));
-ok(/1 problem fewer/.test(op.out.text), 'and says what it gained: ' + op.out.text);
+ok(op.out.ok || /already the best order/.test(op.out.text), 'Optimise either improves the order or says it cannot: ' + op.out.text);
 ok(C.planDay(op.t, '2026-11-21', 'less').issues.length === 0, 'leaving a day with nothing wrong with it');
 ok(!C.optimiseOrder(op.t, '2026-11-21', 'less').ok, 'running it again changes nothing');
 ok(/already the best order/.test(C.optimiseOrder(op.t, '2026-11-21', 'less').text), 'and says so');

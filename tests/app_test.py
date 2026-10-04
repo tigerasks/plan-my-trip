@@ -130,13 +130,12 @@ with sync_playwright() as pw:
     ck('08:50' in tl and 'until 10:20' in tl, 'each stop says when it runs: ' + [l for l in tl.split(chr(10)) if 'until' in l][0])
     ck('train or bus' in tl and '≈' in tl, 'with an estimate for the travel between them: '
        + [l for l in tl.split(chr(10)) if '≈' in l][0])
-    ck('Lunch near Made-up Market' in tl, 'and lunch taken inside its window')
-    ck('12:58' in tl and 'Back at' in tl, 'ending with when you would be back')
+    ck('11:58' in tl and 'Back at' in tl, 'ending with when you would be back, an hour earlier now nothing invents lunch')
     heads = pg.locator('.card-head').all_inner_texts()
-    ck(any('8h 02 spare' in h for h in heads), 'the heading says when it finishes: ' + [h for h in heads if 'spare' in h][0].replace(chr(10), ' '))
+    ck(any('9h 02 spare' in h for h in heads), 'the heading says when it finishes: ' + [h for h in heads if 'spare' in h][0].replace(chr(10), ' '))
     ck('hours not checked yet' in pg.inner_text('.tl-issues'), 'and what is worth checking is gathered underneath')
-    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 4,
-       'labels from the chat, check flags, lunch options and other versions all show as chips')
+    ck(pg.locator('.chip.must').count() == 1 and pg.locator('.chip.check').count() == 2 and pg.locator('.chip.flex').count() == 3,
+       'labels from the chat, check flags and other versions all show as chips')
     ck('Food · 45 min · City centre' in pg.inner_text('[data-list="ideas"] .meta'),
        'an idea says what it is and how long it takes: ' + pg.inner_text('[data-list="ideas"] .meta').split(chr(10))[0])
     ck('until 10:20 · 1h 30 · Temple / culture' in pg.inner_text('.timeline .meta'),
@@ -180,20 +179,13 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(600)
     pg.click('[data-act="version"][data-v="less"]')
     pg.wait_for_timeout(300)
-    ck('lunch' in pg.inner_text('.timeline'), 'the lunch place is marked as lunch in the timeline')
-    ck('outside 11:30' in pg.inner_text('.tl-issues'), 'and the day says it falls outside the window: '
-       + [l for l in pg.inner_text('.tl-issues').split(chr(10)) if 'outside' in l][0])
     pg.click('[data-act="optimise"]')
     pg.wait_for_timeout(900)
-    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")
-       == ['example-temple', 'made-up-market', 'pretend-noodle-bar'], 'Optimise moves lunch into its window')
-    ck('1 problem fewer' in pg.inner_text('#toast'), 'and says what it gained: ' + pg.inner_text('#toast'))
-    ck('outside 11:30' not in pg.inner_text('#panel'), 'leaving nothing wrong with the day')
+    ck(len(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")) == 3,
+       'Optimise leaves the same three stops in the version')
     pg.screenshot(path=str(SHOTS / 'app_timeline_desktop_light.png'))
-    pg.click('#toastBtn')
-    pg.wait_for_timeout(900)
-    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.less")[1] == 'pretend-noodle-bar',
-       'and Undo puts the order back')
+    ck('Reordered' in pg.inner_text('#toast') or 'best order' in pg.inner_text('#toast'),
+       'and says what it did: ' + pg.inner_text('#toast'))
     pg.click('[data-act="version"][data-v="less"]')
     pg.wait_for_timeout(200)
     ctx.close()
@@ -597,11 +589,9 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(200)
     ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edCity') == 'Kyoto',
        'the day sheet opens on what the day holds')
-    ck(pg.input_value('#edLunchFrom') == '11:30' and pg.input_value('#edLunchFor') == '60', 'lunch included')
     pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
     pg.fill('#edStartTime', '07:45')
     pg.fill('#edEndTime', '')
-    pg.uncheck('#edLunchOn')
     pg.fill('#edNote', 'Made-up day, made-up note.')
     pg.click('[data-act="save-day-shape"]')
     pg.wait_for_timeout(900)
