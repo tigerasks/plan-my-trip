@@ -478,16 +478,11 @@ function normTrip(raw, now) {
     t.places[p.id] = p;
   }
 
-  // plan versions hold order only: every id must be a place of that same day, listed once
+  // Plan versions hold order only: every id must be a place of that same day. A place may appear
+  // more than once — you might pass back through a station in the evening.
   for (const d of Object.values(t.days)) {
     for (const k of PLAN_KEYS) {
-      const seen = new Set();
-      d.plans[k] = d.plans[k].filter((id) => {
-        const p = t.places[id];
-        if (!p || p.dayId !== d.id || seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      });
+      d.plans[k] = d.plans[k].filter((id) => { const p = t.places[id]; return p && p.dayId === d.id; });
     }
   }
 
@@ -1067,13 +1062,14 @@ function freeId(trip, wanted, fallback) {
   while (trip.places[base + '-' + k]) k++;
   return base + '-' + k;
 }
+// Taking a place off a day takes out every copy of it in every version.
 function takeOutOfPlans(trip, id, dayId) {
   const d = trip.days[dayId];
   if (!d) return [];
   const left = [];
   for (const k of PLAN_KEYS) {
-    const i = d.plans[k].indexOf(id);
-    if (i >= 0) { d.plans[k].splice(i, 1); left.push(k); }
+    const kept = d.plans[k].filter((x) => x !== id);
+    if (kept.length !== d.plans[k].length) { d.plans[k] = kept; left.push(k); }
   }
   return left;
 }
@@ -1114,7 +1110,7 @@ function moveToBacklog(trip, id, now) {
 function bestSlot(trip, dayId, key, placeId) {
   const d = obj(obj(trip).days)[dayId];
   if (!d) return 0;
-  const rest = d.plans[key].filter((id) => id !== placeId);
+  const rest = d.plans[key];
   let best = rest.length, bestCost = Infinity;
   for (let i = 0; i <= rest.length; i++) {
     const order = rest.slice(0, i).concat([placeId], rest.slice(i));
@@ -1127,32 +1123,44 @@ function addToPlan(trip, id, key, index, now) {
   const p = placeById(trip, id);
   if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not on a day' };
   const list = trip.days[p.dayId].plans[key];
-  if (list.includes(id)) return { ok: false, text: p.name + ' is already in ' + PLAN_LABEL[key] };
+  const again = list.includes(id);
   const at = index == null ? list.length : clamp(Math.round(index), 0, list.length);
   list.splice(at, 0, id);
   touch(trip, now);
-  return { ok: true, text: p.name + ' added to ' + PLAN_LABEL[key] };
+  return {
+    ok: true, at,
+    text: p.name + (again ? ' added to ' + PLAN_LABEL[key] + ' again, as stop ' + (at + 1)
+      : ' added to ' + PLAN_LABEL[key]),
+  };
 }
-// Remove takes a place out of one version only; it stays on the day and in any other version.
-function removeFromPlan(trip, id, key, now) {
+// Remove takes one stop out of one version; the place stays on the day, in any other version, and
+// at any other point in this one.
+function removeStop(trip, dayId, key, at, now) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That version is no longer here' };
+  const list = d.plans[key];
+  const i = Math.round(at);
+  if (!(i >= 0 && i < list.length)) return { ok: false, text: 'That stop is no longer there' };
+  const id = list[i];
   const p = placeById(trip, id);
-  if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not in a plan' };
-  const list = trip.days[p.dayId].plans[key];
-  const i = list.indexOf(id);
-  if (i < 0) return { ok: false, text: p.name + ' is not in ' + PLAN_LABEL[key] };
   list.splice(i, 1);
   touch(trip, now);
-  const still = plansHolding(trip, id);
-  return { ok: true, still, text: p.name + ' left ' + PLAN_LABEL[key] + (still.length ? ', and is still in ' + planWords(still) : '') };
+  const again = list.indexOf(id);
+  const still = plansHolding(trip, id).filter((k) => k !== key);
+  const name = p ? p.name : id;
+  const rest = [];
+  if (again >= 0) rest.push('still stop ' + (again + 1) + ' here');
+  if (still.length) rest.push('still in ' + planWords(still));
+  return { ok: true, id, still, text: name + ' left ' + PLAN_LABEL[key] + (rest.length ? ', and is ' + joinList(rest) : '') };
 }
-// Put a place at a position in a version, whether or not it is already in it. One operation for
-// both dragging a stop up the list and dragging one in from somewhere else.
-function placeInPlan(trip, id, key, index, now) {
+// Put a place at a position in a version. `from` is the stop being moved, or null to add one more.
+// One operation for dragging a stop up its own list and for dragging one in from somewhere else.
+function placeInPlan(trip, id, key, index, from, now) {
   const p = placeById(trip, id);
   if (!p || !p.dayId || !PLAN_KEYS.includes(key)) return { ok: false, text: 'That place is not on a day' };
   const list = trip.days[p.dayId].plans[key];
-  const at = list.indexOf(id);
-  if (at >= 0) list.splice(at, 1);
+  const at = from == null ? -1 : Math.round(from);
+  if (at >= 0 && at < list.length && list[at] === id) list.splice(at, 1);
   const to = clamp(Math.round(index == null ? list.length : index), 0, list.length);
   list.splice(to, 0, id);
   touch(trip, now);
@@ -1511,8 +1519,8 @@ const Core = {
   osmUrl, gmapsUrl, lookupUrl, kindFromTags, whereOf,
   newTrip, newDay,
   dayIds, dayList, placeById, dayPlaces, planPlaces, ideasFor, backlogPlaces, plansHolding,
-  clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan, removeFromPlan,
-  reorderPlan, placeInPlan, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
+  clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan,
+  reorderPlan, placeInPlan, removeStop, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
   findPayload, readBlock, summarise, importNote,
 };

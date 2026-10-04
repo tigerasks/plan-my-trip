@@ -336,30 +336,40 @@ function chipsHtml(p) {
   if (p.check) h += '<span class="chip check">Check</span>';
   return h;
 }
-function itemHtml(p, lead, kind, when, extraChips) {
-  const meta = when || [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
-  const also = when ? '' : (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '');
-  const open = App.ui.menu && App.ui.menu.id === p.id;
-  return '<li class="row' + (open ? ' menu-open' : '') + '" data-row-id="' + esc(p.id) + '" data-from="' + esc(kind) + '">'
+// `at` is which stop of a version this row is, since the same place can be two of them.
+function itemHtml(p, o) {
+  const meta = o.when || [C.KIND_LABEL[p.kind], C.fmtDur(p.duration), p.area].filter(Boolean).join(' · ');
+  const also = o.when ? '' : (p.localName ? ' <span class="sep">·</span> ' + esc(p.localName) : '');
+  const key = o.at == null ? p.id : p.id + '#' + o.at;
+  const open = App.ui.menu && App.ui.menu.key === key;
+  const where = ' data-id="' + esc(p.id) + '"' + (o.at == null ? '' : ' data-at="' + o.at + '"');
+  return '<li class="row' + (open ? ' menu-open' : '') + '" data-row-key="' + esc(key) + '"'
+    + ' data-row-id="' + esc(p.id) + '" data-from="' + esc(o.kind) + '">'
     + '<div class="row-main">'
-    + '<span class="grip" data-drag="' + esc(p.id) + '" title="Drag to move it"></span>'
-    + '<button type="button" class="item" data-act="place" data-id="' + esc(p.id) + '">' + lead
-    + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + (extraChips || '') + '</span>'
+    + '<span class="grip" data-drag="' + esc(key) + '" title="Drag to move it"></span>'
+    + '<button type="button" class="item" data-act="place"' + where + '>' + (o.lead || '')
+    + '<span class="body"><span class="nm">' + esc(p.name) + chipsHtml(p) + (o.chips || '') + '</span>'
     + '<span class="meta">' + meta + also + '</span></span></button>'
-    + '<button type="button" class="icon-btn row-menu" data-act="row-menu" data-id="' + esc(p.id) + '"'
+    + '<button type="button" class="icon-btn row-menu" data-act="row-menu" data-key="' + esc(key) + '"' + where
     + ' aria-label="What to do with ' + esc(p.name) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + ic('dots') + '</button>'
     + '</div>'
     + (open ? menuHtml(p) : '')
     + '</li>';
 }
+const rowId = (key) => String(key).split('#')[0];
+const rowAt = (key) => { const bits = String(key).split('#'); return bits.length > 1 ? +bits[1] : null; };
 
 // ---------- the row menu ----------
 // Everything you do to a place is here, one tap from the list. The card behind the row is for
 // reading: what a place is, when it is open, what still needs checking.
-const menuItem = (act, id, label, extra) =>
-  '<button type="button" class="menu-item' + (extra && extra.danger ? ' danger' : '') + '" role="menuitem"'
-  + ' data-act="' + act + '" data-id="' + esc(id) + '"' + (extra && extra.day ? ' data-day="' + esc(extra.day) + '"' : '')
-  + '>' + esc(label) + (extra && extra.more ? '<span class="chev">›</span>' : '') + '</button>';
+function menuItem(act, id, label, extra) {
+  const m = App.ui.menu;
+  return '<button type="button" class="menu-item' + (extra && extra.danger ? ' danger' : '') + '" role="menuitem"'
+    + ' data-act="' + act + '" data-id="' + esc(id) + '" data-key="' + esc(m.key) + '"'
+    + (m.at == null ? '' : ' data-at="' + m.at + '"')
+    + (extra && extra.day ? ' data-day="' + esc(extra.day) + '"' : '')
+    + '>' + esc(label) + (extra && extra.more ? '<span class="chev">›</span>' : '') + '</button>';
+}
 
 function menuHtml(p) {
   const day = currentDay();
@@ -367,7 +377,8 @@ function menuHtml(p) {
   const here = day && p.dayId === day.id;
   if (App.ui.menu.level === 'move') return moveMenuHtml(p);
   const out = [];
-  if (day && here && holds.includes(day.shown)) out.push(menuItem('move-remove', p.id, 'Remove from ' + C.PLAN_LABEL[day.shown]));
+  if (App.ui.menu.at != null) out.push(menuItem('move-remove', p.id, 'Remove from ' + C.PLAN_LABEL[day.shown]));
+  else if (day && here && holds.includes(day.shown)) out.push(menuItem('move-add', p.id, 'Add to ' + C.PLAN_LABEL[day.shown] + ' again'));
   else if (day) out.push(menuItem('move-add', p.id, 'Add to ' + C.PLAN_LABEL[day.shown]));
   if (day && !p.dayId) out.push(menuItem('move-today', p.id, 'Add to ' + C.fmtDateUK(day.id)));
   out.push(menuItem('menu-move', p.id, 'Move to', { more: true }));
@@ -391,7 +402,7 @@ function closeMenu() { App.ui.menu = null; }
 function listHtml(places, lead, empty, kind, chips) {
   const open = '<ul class="list" data-list="' + esc(kind) + '">';
   if (!places.length) return open + '<li class="empty-line">' + esc(empty) + '</li></ul>';
-  return open + places.map((p, i) => itemHtml(p, lead(i), kind, null, chips ? chips(p) : '')).join('') + '</ul>';
+  return open + places.map((p, i) => itemHtml(p, { lead: lead(i), kind, chips: chips ? chips(p) : '' })).join('') + '</ul>';
 }
 // An idea the other versions already hold says so, so that switching version holds no surprises.
 function versionChips(p) {
@@ -434,7 +445,10 @@ function timelineHtml(P) {
       const bits = ['until ' + C.fmtTime(it.until), C.fmtDur(it.place.duration), C.KIND_LABEL[it.place.kind]];
       let meta = bits.filter(Boolean).map(esc).join(' · ');
       if (it.waited > 4) meta += ' <span class="amber">· waited ' + esc(C.fmtDur(it.waited)) + '</span>';
-      out.push(itemHtml(it.place, timeCell(C.fmtTime(it.at)) + '<span class="num">' + n + '</span>', 'plan', meta));
+      out.push(itemHtml(it.place, {
+        lead: timeCell(C.fmtTime(it.at)) + '<span class="num">' + n + '</span>',
+        kind: 'plan', when: meta, at: n - 1,
+      }));
     }
   }
   return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
@@ -1006,12 +1020,12 @@ function linksHtml(place, details) {
 // Pointer events rather than the browser's own drag and drop, which never worked under a thumb.
 // Only the grip starts a drag, so tapping a row still opens it and the list still scrolls.
 const Drag = {
-  id: null, from: '', row: null, ghost: null, moved: false, start: null,
-  target: null,      // { list, rowId, before }
+  key: null, from: '', row: null, ghost: null, moved: false, start: null,
+  target: null,      // { list, rowKey, before }
   scroller: 0, step: 0, last: null,
 
-  begin(e, id, from, row) {
-    this.id = id;
+  begin(e, key, from, row) {
+    this.key = key;
     this.from = from;
     this.row = row;
     this.moved = false;
@@ -1063,7 +1077,7 @@ const Drag = {
       const box = row.getBoundingClientRect();
       before = y < box.top + box.height / 2;
     }
-    this.mark({ list: list.dataset.list, rowId: row && row !== this.row ? row.dataset.rowId : '', before });
+    this.mark({ list: list.dataset.list, rowKey: row && row !== this.row ? row.dataset.rowKey : '', before });
   },
   mark(target) {
     this.target = target;
@@ -1072,8 +1086,8 @@ const Drag = {
     if (!target) return;
     const list = document.querySelector('[data-list="' + target.list + '"]');
     if (list) list.classList.add('drop-in');
-    if (!target.rowId) return;
-    const row = document.querySelector('.row[data-row-id="' + target.rowId + '"]');
+    if (!target.rowKey) return;
+    const row = document.querySelector('.row[data-row-key="' + CSS.escape(target.rowKey) + '"]');
     if (row) row.classList.add(target.before ? 'drop-before' : 'drop-after');
   },
   finish() {
@@ -1086,9 +1100,9 @@ const Drag = {
     this.last = null;
     if (this.ghost) this.ghost.remove();
     document.body.classList.remove('dragging');
-    const out = this.moved ? { id: this.id, from: this.from, target: this.target } : null;
+    const out = this.moved ? { key: this.key, from: this.from, target: this.target } : null;
     this.mark(null);   // after reading it: clearing the marks clears the target with them
-    this.id = null; this.row = null; this.ghost = null; this.moved = false; this.target = null;
+    this.key = null; this.row = null; this.ghost = null; this.moved = false; this.target = null;
     return out;
   },
 };
@@ -1101,7 +1115,7 @@ function onDragDown(e) {
   Drag.begin(e, grip.dataset.drag, row.dataset.from, row);
 }
 function onDragMove(e) {
-  if (!Drag.id) return;
+  if (!Drag.key) return;
   if (!Drag.moved) {
     if (Math.abs(e.clientX - Drag.start.x) + Math.abs(e.clientY - Drag.start.y) < 6) return;
     Drag.lift();
@@ -1115,32 +1129,34 @@ function onDragEnd() {
   else render();
 }
 // Where a stop lands in a list, once the one being dragged is out of the way.
-function dropIndex(ids, target, dragged) {
-  const rest = ids.filter((id) => id !== dragged);
-  if (!target.rowId) return rest.length;
-  const at = rest.indexOf(target.rowId);
+function dropIndex(keys, target, dragged) {
+  const rest = keys.filter((k) => k !== dragged);
+  if (!target.rowKey) return rest.length;
+  const at = rest.indexOf(target.rowKey);
   if (at < 0) return rest.length;
   return target.before ? at : at + 1;
 }
 function applyDrop(drop) {
   const day = currentDay();
   const to = drop.target.list;
-  const p = C.placeById(App.trip, drop.id);
+  const id = rowId(drop.key), at = rowAt(drop.key);
+  const p = C.placeById(App.trip, id);
   if (!p) { render(); return; }
   if (to === 'plan' && day) {
-    if (p.dayId !== day.id) C.moveToDay(App.trip, drop.id, day.id);
-    const ids = day.plans[day.shown];
-    changed(C.placeInPlan(App.trip, drop.id, day.shown, dropIndex(ids, drop.target, drop.id)).text);
+    if (p.dayId !== day.id) C.moveToDay(App.trip, id, day.id);
+    const keys = day.plans[day.shown].map((x, i) => x + '#' + i);
+    const index = dropIndex(keys, drop.target, drop.key);
+    changed(C.placeInPlan(App.trip, id, day.shown, index, drop.from === 'plan' ? at : null).text);
     return;
   }
   if (to === 'ideas' && day) {
-    if (p.dayId !== day.id) { changed(C.moveToDay(App.trip, drop.id, day.id).text); return; }
-    if (drop.from === 'plan') { changed(C.removeFromPlan(App.trip, drop.id, day.shown).text); return; }
+    if (p.dayId !== day.id) { changed(C.moveToDay(App.trip, id, day.id).text); return; }
+    if (drop.from === 'plan') { changed(C.removeStop(App.trip, day.id, day.shown, at).text); return; }
     render();
     return;
   }
   if (to === 'backlog') {
-    changed(C.moveInBacklog(App.trip, drop.id, dropIndex(App.trip.backlog, drop.target, drop.id)).text);
+    changed(C.moveInBacklog(App.trip, id, dropIndex(App.trip.backlog, drop.target, drop.key)).text);
     return;
   }
   render();
@@ -1387,17 +1403,20 @@ const ACTIONS = {
     } }, 9000);
   },
   'row-menu': (el) => {
-    const id = el.dataset.id;
-    App.ui.menu = App.ui.menu && App.ui.menu.id === id ? null : { id: id, level: 'main' };
+    const key = el.dataset.key;
+    App.ui.menu = App.ui.menu && App.ui.menu.key === key
+      ? null
+      : { key, id: el.dataset.id, at: el.dataset.at == null ? null : +el.dataset.at, level: 'main' };
     render();
   },
-  'menu-move': (el) => { App.ui.menu = { id: el.dataset.id, level: 'move' }; render(); },
-  'menu-main': (el) => { App.ui.menu = { id: el.dataset.id, level: 'main' }; render(); },
+  'menu-move': () => { App.ui.menu.level = 'move'; render(); },
+  'menu-main': () => { App.ui.menu.level = 'main'; render(); },
   'menu-duration': (el) => { closeMenu(); openSheet('duration', { id: el.dataset.id }); },
   'move-remove': (el) => {
     const day = currentDay();
+    const at = el.dataset.at == null ? null : +el.dataset.at;
     closeMenu();
-    changed(C.removeFromPlan(App.trip, actingOn(el), day.shown).text);
+    changed(C.removeStop(App.trip, day.id, day.shown, at).text);
   },
   'move-add': (el) => {
     const day = currentDay();
