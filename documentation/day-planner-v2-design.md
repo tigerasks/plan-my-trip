@@ -26,10 +26,7 @@ place you add like any other, and it may well be an attraction you intend to eat
 on a day and the `meal` key on a place are both gone.
 
 **Updated Sat 3 Oct 2026, milestone 3:** the timeline is built. Travel in it is the planner's own
-estimate from straight-line distance, marked ≈, until milestone 4 puts real routes behind it. Lunch
-is a floating break taken at the first gap once its window opens, unless a place in the version is
-marked as a lunch option, in which case that visit is lunch and the planner says if it falls outside
-the window. Optimise order relocates stops and reverses stretches, judging an order by its problems
+estimate from straight-line distance, marked ≈, until milestone 4 puts real routes behind it. Optimise order relocates stops and reverses stretches, judging an order by its problems
 first, then travel, then waiting, then how late it finishes; adding a place to a version now uses the
 same judgement rather than straight-line distance. Today's ideas carry a chip naming the versions
 that already hold them.

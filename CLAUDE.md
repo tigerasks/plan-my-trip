@@ -97,7 +97,7 @@ This follows the owner's trip-planning style.
 ## Reusing v1
 
 **Reuse from `core.js`:**
-- the schedule simulation: times, waits, opening hours and last entry, fixed times, time windows, meal windows, back-by time;
+- the schedule simulation: times, waits, opening hours and last entry, fixed times, time windows, back-by time;
 - the travel estimate model, which becomes the fallback and self-calibrates per city;
 - date, duration and money formatting (`fmtDateUK`, `fmtDur`, `fmtMoney`; its fixed CHF target becomes the user's optional preferred currency);
 - the normalisation patterns;
