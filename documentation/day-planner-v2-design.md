@@ -20,6 +20,11 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Changed Sun 4 Oct 2026, no more lunch window:** a day no longer has one, and a place is no longer
+marked as a lunch option. The planner never puts a meal in a day for you — somewhere to eat is a
+place you add like any other, and it may well be an attraction you intend to eat at. The `lunch` key
+on a day and the `meal` key on a place are both gone.
+
 **Updated Sat 3 Oct 2026, milestone 3:** the timeline is built. Travel in it is the planner's own
 estimate from straight-line distance, marked ≈, until milestone 4 puts real routes behind it. Lunch
 is a floating break taken at the first gap once its window opens, unless a place in the version is
@@ -150,7 +155,7 @@ A trip has a backlog and days. Every place lives in exactly one spot: the backlo
 |---|---|
 | Trip | Title, time zone label, default transit type, optional preferred currency, backlog, stays, days |
 | Stay | Where you sleep: a place with its position, the date of the first night, and how many nights |
-| Day | Date, city, the times it starts and ends, lunch window, ideas for today, three plan versions |
+| Day | Date, city, the times it starts and ends, ideas for today, three plan versions |
 | Plan version | Do less, Balanced or Packed: which places, in which order |
 | Place | Name, position, type, area, duration, fixed time or time window, opening hours with their source (OpenStreetMap, you or the chat), the OpenStreetMap id where known, check flag, notes, links, who added it (chat or you) and how (search, map, pin), and a priority label only if the chat's import gave it one |
 
@@ -191,7 +196,7 @@ checking, where to look it up — with the hours editor the one thing you can ch
 Each day opens on Balanced. The versions are yours: they hold what you put in them, or what a chat package proposed, and the planner never adds or removes places on its own.
 
 - **Copying.** "Copy to Do less" or "Copy to Packed" takes the version on screen as the starting point there.
-- **Timeline.** For the version on screen, the planner works out times, waits and conflicts: opening hours, fixed times, and when you need to be back.
+- **Timeline.** For the version on screen, the planner works out times, waits and conflicts: opening hours, fixed times, and when you need to be back. Nothing is ever added to a day that you did not put there.
 - **Optimise order** re-sequences your stops for less travel and fewer conflicts, without changing what's in them.
 - **Must-do labels** stay visible wherever the place is, so a must-do sitting outside a plan stands out. Nothing is enforced.
 - **Hand-back** sends the version you pick, optionally with the other two as alternatives.
@@ -225,8 +230,6 @@ At the bottom are the three buttons: Add to plan, Add to today, Add to backlog. 
 
 **Durations** are adjustable for every place, whether you added it or it came from the chat's package with its own duration: from 0 to 12 hours, plus 0, 15, 30 or 45 minutes. The timeline adapts straight away.
 
-**Lunch options:** food places can be marked as one.
-
 *Not now:* an embedded Google map, a "What's here" list of everything in view, Wikipedia summaries, and a hand-off to the chat for researching shortlisted places.
 
 ## Map
@@ -242,8 +245,7 @@ At the bottom are the three buttons: Add to plan, Add to today, Add to backlog. 
 
 A day gets:
 - a date and a city;
-- the time you set off and the time you want to be back, or no time back for an open-ended day;
-- a lunch window.
+- the time you set off and the time you want to be back, or no time back for an open-ended day.
 
 Days are added one at a time or as a run of them, which is how a trip is usually laid out. Dates the
 trip already has are never touched.
@@ -304,8 +306,8 @@ date:
 |---|---|
 | `trip` | `id`, `title`, `tzLabel`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt` |
 | `stay` | `id`, `name`, `localName`, `lat`, `lng`, `area`, `from` (the first night), `nights`, `note`, `osm` |
-| `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `lunch`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs`. `start` and `end` carry the day's times; their place is only a fallback for when no stay covers the day |
-| `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `meal`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |
+| `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs`. `start` and `end` carry the day's times; their place is only a fallback for when no stay covers the day |
+| `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |
 | `hours` | `source` (`osm`, `you` or `chat`), `verified`, `raw` (the text it came from), `week` (seven days, each a list of open–close pairs, `[]` for closed, absent for unknown), `lastEntry` |
 | `added` | `by` (`you` or `chat`), `how` (`search`, `map`, `pin` or `package`), `at` |
 
