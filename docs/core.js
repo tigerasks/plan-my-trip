@@ -911,6 +911,9 @@ function estimateLeg(from, to, trip) {
 // One version of one day, turned into times: when you arrive, when you can actually start, how long
 // you wait, and when you would be back. Carried over from the first planner, with its pace budgets
 // and its picking-places-for-you taken out — the three versions are yours.
+// Where a day begins and ends comes from the accommodation, so that is where to send someone who
+// has not set it — once, however many legs it leaves unknown.
+const ADD_A_STAY = ' — add where you are staying, at the top of the day';
 function planDay(trip, dayId, key, order) {
   const day = obj(obj(trip).days)[dayId];
   if (!day) return null;
@@ -925,6 +928,8 @@ function planDay(trip, dayId, key, order) {
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
+  let advised = false;
+  const advice = () => (advised ? '' : ((advised = true), ADD_A_STAY));
   const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
     : planPlaces(trip, dayId, shown));
 
@@ -946,7 +951,12 @@ function planDay(trip, dayId, key, order) {
   for (const p of stops) {
     if (lunchLeft && t >= lunchFrom) takeLunch();
     const leg = estimateLeg(prev, p, trip);
-    if (leg.unknown) flag('warn', p.name + ' has no position, so the time to get there is unknown', p.id);
+    // An unknown leg has an end without a position. Say which one: blaming the destination for a
+    // day that has no starting point sends you looking in the wrong place.
+    if (leg.unknown) {
+      if (!hasPos(p)) flag('warn', p.name + ' has no position, so the time to get there is unknown', p.id);
+      else if (prev === start) flag('warn', 'Where the day starts is not set, so the time to ' + p.name + ' is unknown' + advice(), 'start');
+    }
     travel += leg.minutes;
     const arrive = t + leg.minutes;
     const when = startWindows(p, date);
@@ -994,6 +1004,7 @@ function planDay(trip, dayId, key, order) {
   let finish = t;
   if (end) {
     const leg = estimateLeg(prev, end, trip);
+    if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
     items.push(Object.assign({ type: 'travel' }, leg));

@@ -516,7 +516,16 @@ P = dayWith((t) => { t.places['example-temple'].duration = 600; }).plan;
 ok(/no part of its opening hours fits/.test(errs(P).join(' ')) || P.summary.errors > 0, 'a visit too long for the hours is an error');
 
 P = dayWith((t) => { t.places['made-up-market'].lat = null; t.places['made-up-market'].lng = null; }).plan;
-ok(P.issues.some((i) => i.severity === 'warn' && /no position/.test(i.text)), 'a place with no position is a warning, not a stop sign');
+ok(P.issues.some((i) => i.severity === 'warn' && /Made-up Market has no position/.test(i.text)),
+  'a place with no position is named, as a warning rather than a stop sign: ' + P.issues[0].text);
+
+P = dayWith((t) => { t.days['2026-11-21'].start = { time: '08:30' }; t.days['2026-11-21'].end = { time: '21:00' }; }).plan;
+ok(/Where the day starts is not set, so the time to Example Temple is unknown/.test(P.issues.map((i) => i.text).join(' ')),
+  'a day with no starting point blames itself, not the first stop: ' + P.issues[0].text);
+ok(/add where you are staying/.test(P.issues[0].text), 'and says what to do about it');
+ok(/Where the day ends is not set/.test(P.issues[1].text), 'the far end says the same: ' + P.issues[1].text);
+ok(!/add where you are staying/.test(P.issues[1].text), 'without repeating the advice');
+ok(P.issues.every((i) => i.severity === 'warn'), 'neither stops the day being planned');
 
 P = dayWith((t) => { t.days['2026-11-21'].end = null; }).plan;
 ok(!P.items.some((i) => i.type === 'end') && P.summary.spare === null, 'an open-ended day simply stops');

@@ -425,9 +425,11 @@ function timelineHtml(P) {
   const out = [];
   for (const it of P.items) {
     if (it.type === 'start' || it.type === 'end') {
+      // With no accommodation set there is no place to name, and the warnings below say why.
       out.push('<li class="tl-mark">' + timeCell(C.fmtTime(it.at))
-        + '<span>' + (it.type === 'start' ? 'Leave ' : 'Back at ')
-        + esc(it.name || (it.type === 'start' ? 'where the day starts' : 'where it ends')) + '</span></li>');
+        + (it.name
+          ? '<span>' + (it.type === 'start' ? 'Leave ' : 'Back at ') + esc(it.name) + '</span>'
+          : '<span class="muted">' + (it.type === 'start' ? 'Set off' : 'Back') + '</span>') + '</li>');
     } else if (it.type === 'travel') {
       out.push('<li class="tl-leg">' + timeCell('')
         + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
