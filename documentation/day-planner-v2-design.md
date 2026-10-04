@@ -20,6 +20,12 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Changed Sun 4 Oct 2026, adding where you want it:** every gap in a version has a plus, and the
+ideas and the backlog have one at the top. A plus opens a panel listing the trip's own places first —
+the day's, including ones already in the version, and the backlog — then whatever a search turns up.
+A search result in the panel beside the map now behaves like any other row: tapping it moves the map
+to it, and its menu holds the three ways to add it and "Open details".
+
 **Changed Sun 4 Oct 2026, a place can be a stop twice:** a version may list the same place more than
 once, so you can go back somewhere later in the day. It is one place with one set of hours and one
 duration; each appearance is its own stop, removed on its own, and taking the place off the day takes
@@ -178,7 +184,8 @@ Priority labels (Must-do, Want, Maybe) are optional. They only come from the cha
 - **Remove** takes a place out of this version only, so it can still be in another version.
 - **Remove to backlog** takes it off the day altogether, so it leaves all three versions. The planner says so when that affects another version.
 
-**Adding:** adding to a plan inserts the place at the best position (fewest problems, least travel); dragging adjusts.
+**Adding:** adding to a plan without saying where inserts the place at the best position (fewest
+problems, least travel); the plus between two stops puts it exactly there; dragging adjusts.
 
 **Dragging.** Every row has a grip on its left. Dragging by it reorders a version, and carries a
 place between the plan, today's ideas and the backlog in either direction, which does the same as

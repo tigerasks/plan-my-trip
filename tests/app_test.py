@@ -498,6 +498,53 @@ with sync_playwright() as pw:
 
     ctx, pg = open_page(held=DEMO, extra=services)
 
+    # ---- the plus buttons
+    ck(pg.locator('.timeline .plus').count() == 3, 'a plus sits between the stops and at each end')
+    ck(pg.locator('[data-list="ideas"] .plus').count() == 1 and pg.locator('[data-list="backlog"] .plus').count() == 1,
+       'and one at the top of the ideas and the backlog')
+    pg.click('.timeline .plus >> nth=1')
+    pg.wait_for_timeout(300)
+    ck('as stop 2' in pg.inner_text('#sheet'), 'the plus says where it would put it: ' + pg.inner_text('.sh-sub'))
+    mine = pg.locator('#sheet .list .nm').all_text_contents()
+    ck('Pretend Noodle Bar' in mine and 'Imaginary Museum' in mine,
+       'the trip\'s own places come first, day and backlog: ' + ' · '.join(mine))
+    ck(any('adding it again is a second visit' in m for m in pg.locator('#sheet .meta').all_text_contents()),
+       'and a place already in the version says what adding it again means')
+    pg.screenshot(path=str(SHOTS / 'app_addstop_desktop_light.png'))
+    pg.click('#sheet [data-act="add-mine"][data-id="pretend-noodle-bar"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced")
+       == ['example-temple', 'pretend-noodle-bar', 'made-up-market'],
+       'picking one puts it exactly where the plus was: '
+       + ' '.join(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced")))
+
+    # the same place a second time, from the plus
+    pg.click('.timeline .plus >> nth=0')
+    pg.wait_for_timeout(300)
+    ck(any('second visit' in m for m in pg.locator('#sheet .meta').all_text_contents()),
+       'a stop already in the version is offered again')
+    pg.click('#sheet [data-act="add-mine"][data-id="example-temple"]')
+    pg.wait_for_timeout(900)
+    order = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced")
+    ck(order == ['example-temple', 'example-temple', 'pretend-noodle-bar', 'made-up-market'],
+       'and goes in a second time, where the plus was: ' + ' '.join(order))
+    ck('again, as stop 1' in pg.inner_text('#toast'), 'with the planner saying so: ' + pg.inner_text('#toast'))
+
+    # searching from the panel
+    pg.click('[data-list="backlog"] .plus')
+    pg.wait_for_timeout(300)
+    ck('Add to the backlog' in pg.inner_text('.sh-title'), 'the backlog plus adds to the backlog')
+    pg.fill('#asQ', 'nintendo museum')
+    pg.wait_for_timeout(1600)
+    ck(pg.locator('#asResults .nm').count() == 2, 'typing searches outside the trip as well')
+    pg.click('#asResults [data-act="add-found-here"] >> nth=0')
+    pg.wait_for_timeout(900)
+    ck('nintendo-museum' in pg.evaluate('window.DayPlannerApp.trip.backlog'),
+       'and a found place can be added straight to the backlog')
+    ctx.close()
+
+    ctx, pg = open_page(held=DEMO, extra=services)
+
     # ---- the same place twice in one version
     pg.click('.row-menu >> nth=0')
     pg.wait_for_timeout(200)

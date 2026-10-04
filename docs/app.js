@@ -419,7 +419,8 @@ function moveMenuHtml(p) {
 const actingOn = (el) => (el && el.dataset.id) || (App.ui.sheet && App.ui.sheet.id) || '';
 function closeMenu() { App.ui.menu = null; }
 function listHtml(places, lead, empty, kind, chips) {
-  const open = '<ul class="list" data-list="' + esc(kind) + '">';
+  const plus = kind === 'plan' ? '' : plusRow(kind, null, kind === 'backlog' ? 'Add to the backlog' : 'Add an idea');
+  const open = '<ul class="list" data-list="' + esc(kind) + '">' + plus;
   if (!places.length) return open + '<li class="empty-line">' + esc(empty) + '</li></ul>';
   return open + places.map((p, i) => itemHtml(p, { lead: lead(i), kind, chips: chips ? chips(p) : '' })).join('') + '</ul>';
 }
@@ -446,6 +447,12 @@ function planHtml(day) {
   return sectionHtml(label, places.length, timelineHtml(P) + planActionsHtml(day) + issuesHtml(P), summaryChipHtml(P));
 }
 const timeCell = (text) => '<span class="t">' + esc(text) + '</span>';
+// A plus between every pair of stops, and one at the top of each of the other lists: somewhere
+// obvious to put a place that is not there yet.
+const plusRow = (to, at, label) =>
+  '<li class="tl-plus"><button type="button" class="plus" data-act="add-stop" data-to="' + esc(to) + '"'
+  + (at == null ? '' : ' data-at="' + at + '"') + ' aria-label="' + esc(label) + '">'
+  + '<span class="sign">+</span><span class="word">' + esc(label) + '</span></button></li>';
 function timelineHtml(P) {
   let n = 0;
   const out = [];
@@ -460,6 +467,7 @@ function timelineHtml(P) {
       out.push('<li class="tl-leg">' + timeCell('')
         + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
     } else if (it.type === 'visit') {
+      out.push(plusRow('plan', n, n ? 'Add a stop here' : 'Add a stop at the start'));
       n++;
       const bits = ['until ' + C.fmtTime(it.until), C.fmtDur(it.place.duration), C.KIND_LABEL[it.place.kind]];
       let meta = bits.filter(Boolean).map(esc).join(' · ');
@@ -470,6 +478,7 @@ function timelineHtml(P) {
       }));
     }
   }
+  out.push(plusRow('plan', n, 'Add a stop at the end'));
   return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
 }
 function summaryChipHtml(P) {
@@ -734,6 +743,77 @@ function addButtonsHtml(act) {
       : '<button type="button" class="btn primary" data-act="' + act + '" data-to="backlog">Add to the backlog</button>')
     + '</div></div>';
 }
+// What of the trip you could put here: the day's own places (so a station can be a stop twice)
+// and the backlog, minus whatever is already where you are adding to.
+function addableHere(s) {
+  const day = currentDay();
+  const q = C.str(s.q).toLowerCase();
+  const out = [];
+  const add = (p, note) => { if (!q || p.name.toLowerCase().indexOf(q) >= 0 || p.localName.toLowerCase().indexOf(q) >= 0) out.push({ id: p.id, name: p.name, note }); };
+  if (day && s.to !== 'backlog') {
+    for (const p of C.dayPlaces(App.trip, day.id)) {
+      if (s.to === 'ideas' && p.dayId === day.id) continue;
+      const holds = C.plansHolding(App.trip, p.id);
+      add(p, holds.includes(day.shown) ? 'already a stop — adding it again is a second visit'
+        : [C.KIND_LABEL[p.kind], 'on this day'].join(' · '));
+    }
+  }
+  for (const p of C.backlogPlaces(App.trip)) add(p, [C.KIND_LABEL[p.kind], 'backlog'].join(' · '));
+  return out.slice(0, 20);
+}
+const addRow = (id, name, note, act) =>
+  '<li><div class="item"><span class="dot"></span><span class="body"><span class="nm">' + esc(name) + '</span>'
+  + '<span class="meta">' + esc(note || '') + '</span></span>'
+  + '<button type="button" class="btn" data-act="' + act + '" data-id="' + esc(id) + '">Add</button></div></li>';
+function addFoundHtml(s) {
+  if (s.findError) return '<p class="hint bad">' + esc(s.findError) + '</p>';
+  if (s.busy) return '<p class="hint">Looking…</p>';
+  if (!s.results) return '';
+  if (!s.results.length) return '<p class="hint">Nothing found by that name.</p>';
+  return '<div class="sh-sec"><span class="label">Found</span><ul class="list">'
+    + s.results.map((p, i) => addRow(String(i), p.name, [C.KIND_LABEL[p.kind], p.where].filter(Boolean).join(' · '), 'add-found-here')).join('')
+    + '</ul></div>';
+}
+let addFindSeq = 0;
+let addFindTimer = 0;
+function onAddInput(e) {
+  const s = App.ui.sheet;
+  if (!s) return;
+  s.q = e.target.value;
+  render();                                   // the trip's own places filter as you type
+  const box = $('#asQ');
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  clearTimeout(addFindTimer);
+  addFindTimer = setTimeout(runAddFind, 400);
+}
+function runAddFind() {
+  const s = App.ui.sheet;
+  if (!s || s.kind !== 'add-stop') return;
+  const q = C.str(s.q);
+  const mine = ++addFindSeq;
+  if (q.length < 3) { s.busy = false; s.results = null; s.findError = ''; renderAddFound(); return; }
+  s.busy = true;
+  s.findError = '';
+  renderAddFound();
+  Live.fetchJson(C.photonUrl(q, M.centre())).then(
+    (json) => {
+      if (mine !== addFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = C.parsePhoton(json, new Date().toISOString()).slice(0, 6);
+      renderAddFound();
+    },
+    (err) => {
+      if (mine !== addFindSeq || !App.ui.sheet) return;
+      App.ui.sheet.busy = false;
+      App.ui.sheet.results = null;
+      App.ui.sheet.findError = 'Place search ' + Live.why(err) + '.';
+      renderAddFound();
+    });
+}
+function renderAddFound() {
+  const el = $('#asResults');
+  if (el) el.innerHTML = addFoundHtml(App.ui.sheet);
+}
 function lookupRowsHtml(list) {
   const rows = list.concat([{ label: '', url: '' }]).slice(0, 6);
   return rows.map((l, i) =>
@@ -761,6 +841,26 @@ const SHEETS = {
     + field('pinKind', 'What is it?', '<select class="in" id="pinKind">' + C.KINDS.map((k) =>
       '<option value="' + k + '"' + (k === (s.pinKind || 'other') ? ' selected' : '') + '>' + esc(C.KIND_LABEL[k]) + '</option>').join('') + '</select>')
     + addButtonsHtml('add-pin'),
+
+  // Adding a place to one spot: the trip's own places first, since the one you want is often
+  // already here, then anything the search turns up.
+  'add-stop': (s) => {
+    const day = currentDay();
+    const where = s.to === 'plan'
+      ? (s.at == null ? C.PLAN_LABEL[day.shown] : C.PLAN_LABEL[day.shown] + ', as stop ' + (s.at + 1))
+      : s.to === 'ideas' ? C.fmtDateUK(day.id) : 'the backlog';
+    const mine = addableHere(s);
+    return sheetHead(s.to === 'backlog' ? 'Add to the backlog' : 'Add a stop', 'Into ' + where)
+      + '<div class="find-row" style="margin-bottom:10px">' + ic('search')
+      + '<input class="in" id="asQ" type="search" autocomplete="off" aria-label="Search for a place"'
+      + ' placeholder="Search, or pick one below" value="' + esc(s.q || '') + '">'
+      + '</div>'
+      + (mine.length
+        ? '<div class="sh-sec"><span class="label">Already in this trip</span>'
+          + '<ul class="list">' + mine.map((p) => addRow(p.id, p.name, p.note, 'add-mine')).join('') + '</ul></div>'
+        : '')
+      + '<div id="asResults">' + addFoundHtml(s) + '</div>';
+  },
 
   // Where you sleep, entered once per booking rather than once per day.
   stay: (s) => {
@@ -931,6 +1031,23 @@ function setPinning(on) {
 // A pin is a place the map does not know about: a meeting point, a shop with no label, a view.
 function openPin(at) {
   openSheet('pin', { at: at });
+}
+
+// Put something where the plus was: a place the trip already has, or one just found.
+function putHere(id, found) {
+  const s = App.ui.sheet;
+  const day = currentDay();
+  if (found) {
+    const made = C.addPlace(App.trip, found, s.to === 'backlog' || !day ? null : day.id);
+    id = made.id;
+  }
+  const p = C.placeById(App.trip, id);
+  if (!p) { closeSheet(); return; }
+  if (s.to === 'backlog') { closeSheet(); changed(C.moveInBacklog(App.trip, id, null).text); return; }
+  if (p.dayId !== day.id) C.moveToDay(App.trip, id, day.id);
+  if (s.to === 'ideas') { closeSheet(); changed(p.name + ' added to ' + C.fmtDateUK(day.id)); return; }
+  closeSheet();
+  changed(C.addToPlan(App.trip, id, day.shown, s.at).text);
 }
 
 function addPlaceTo(place, to) {
@@ -1529,6 +1646,16 @@ const ACTIONS = {
     closeSheet();
     changed(p.name + ' takes ' + C.fmtDur(p.duration));
   },
+  'add-stop': (el) => openSheet('add-stop', {
+    to: el.dataset.to,
+    at: el.dataset.at == null ? null : +el.dataset.at,
+    q: '', results: null, busy: false, findError: '',
+  }),
+  'add-mine': (el) => { putHere(el.dataset.id, null); },
+  'add-found-here': (el) => {
+    const found = (App.ui.sheet.results || [])[+el.dataset.id];
+    if (found) putHere(null, found);
+  },
   'pin-mode': () => setPinning(!App.ui.pinning),
   gmaps: () => {
     const s = App.ui.sheet;
@@ -1649,6 +1776,7 @@ function boot() {
   document.addEventListener('input', (e) => {
     if (e.target.id === 'findBox') onFindInput(e);
     if (e.target.id === 'stName') onStayInput(e);
+    if (e.target.id === 'asQ') onAddInput(e);
   });
   document.addEventListener('click', (e) => {
     const item = e.target.closest('.wheel-item');
