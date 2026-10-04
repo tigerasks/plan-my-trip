@@ -46,8 +46,8 @@ ok(/not in this trip/.test(r.issues.join(' ')), 'and says so: ' + r.issues[0]);
 ok(!r.trip.days['2026-11-21'].plans.balanced.includes('example-temple'), 'and leaves the version it was in');
 
 r = repaired((t) => { t.days['2026-11-21'].plans.balanced.push('example-garden', 'made-up-market', 'ghost'); });
-ok(r.trip.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple made-up-market',
-  'a version drops another day\'s places, repeats and unknown ids: ' + r.trip.days['2026-11-21'].plans.balanced.join(' '));
+ok(r.trip.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple made-up-market made-up-market',
+  'a version drops another day\'s places and unknown ids, but keeps a repeat: ' + r.trip.days['2026-11-21'].plans.balanced.join(' '));
 
 r = repaired((t) => { t.backlog = ['nowhere-viewpoint', 'nowhere-viewpoint', 'example-temple']; });
 ok(r.trip.backlog.join(' ') === 'nowhere-viewpoint imaginary-museum', 'the backlog ends up as exactly the places with no day');
@@ -99,15 +99,34 @@ ok(C.ideasFor(m.t, '2026-11-22', 'balanced').map((p) => p.name).join() === 'Imag
 m = withDemo((t) => C.moveToDay(t, 'example-temple', '2026-11-22'));
 ok(m.t.days['2026-11-21'].plans.packed.join(' ') === 'pretend-noodle-bar made-up-market', 'moving to another day takes it out of the old day\'s versions');
 
-m = withDemo((t) => C.removeFromPlan(t, 'made-up-market', 'balanced'));
-ok(m.out.ok && m.t.days['2026-11-21'].plans.packed.includes('made-up-market'), 'Remove takes a place out of one version only');
+m = withDemo((t) => C.removeStop(t, '2026-11-21', 'balanced', 1));
+ok(m.out.ok && m.t.days['2026-11-21'].plans.packed.includes('made-up-market'), 'Remove takes a stop out of one version only');
 ok(m.out.text === 'Made-up Market left Balanced, and is still in Packed', 'and says where it still is: ' + m.out.text);
 ok(m.t.places['made-up-market'].dayId === '2026-11-21', 'and it stays on the day');
+ok(!C.removeStop(m.t, '2026-11-21', 'balanced', 9).ok, 'a stop that is not there cannot be removed');
 
 m = withDemo((t) => C.addToPlan(t, 'pretend-noodle-bar', 'balanced', 1));
 ok(m.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple pretend-noodle-bar made-up-market', 'a place can be added to a version at a chosen position');
-ok(!C.addToPlan(m.t, 'pretend-noodle-bar', 'balanced').ok, 'but not twice');
-ok(!C.addToPlan(m.t, 'imaginary-museum', 'balanced').ok, 'and not from the backlog');
+ok(!C.addToPlan(m.t, 'imaginary-museum', 'balanced').ok, 'but not from the backlog');
+
+console.log('\n== The same place twice ==');
+m = withDemo((t) => C.addToPlan(t, 'example-temple', 'balanced', 2));
+ok(m.out.ok && m.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple made-up-market example-temple',
+  'a place can be a stop twice, for when you go back: ' + m.t.days['2026-11-21'].plans.balanced.join(' '));
+ok(/added to Balanced again, as stop 3/.test(m.out.text), 'and it says so: ' + m.out.text);
+ok(C.planDay(m.t, '2026-11-21', 'balanced').summary.stops === 3, 'the timeline counts it twice');
+ok(C.normalise(m.t).trip.days['2026-11-21'].plans.balanced.length === 3, 'and normalising keeps both');
+
+let twice = { t: m.t, out: C.removeStop(m.t, '2026-11-21', 'balanced', 0) };
+ok(twice.t.days['2026-11-21'].plans.balanced.join(' ') === 'made-up-market example-temple',
+  'removing one of them leaves the other: ' + twice.t.days['2026-11-21'].plans.balanced.join(' '));
+ok(/still stop 2 here/.test(twice.out.text), 'and says the place is still in the day: ' + twice.out.text);
+
+m = withDemo((t) => { C.addToPlan(t, 'example-temple', 'balanced', 2); return C.placeInPlan(t, 'example-temple', 'balanced', 0, 2); });
+ok(m.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple example-temple made-up-market',
+  'dragging the second copy moves that copy, not the first: ' + m.t.days['2026-11-21'].plans.balanced.join(' '));
+m = withDemo((t) => { C.addToPlan(t, 'example-temple', 'balanced', 2); return C.moveToBacklog(t, 'example-temple'); });
+ok(m.t.days['2026-11-21'].plans.balanced.join(' ') === 'made-up-market', 'taking it off the day takes out every copy');
 
 m = withDemo((t) => C.reorderPlan(t, '2026-11-21', 'packed', 2, 0));
 ok(m.t.days['2026-11-21'].plans.packed.join(' ') === 'made-up-market example-temple pretend-noodle-bar', 'stops can be reordered inside a version');
@@ -404,16 +423,16 @@ ok(/days are still in the trip/.test(st.out.text), 'and says so: ' + st.out.text
 ok(C.normalise(st.t).issues.length === 0, 'with the trip still consistent');
 
 console.log('\n== Dragging things about ==');
-let dg = withDemo((t) => C.placeInPlan(t, 'made-up-market', 'packed', 0));
+let dg = withDemo((t) => C.placeInPlan(t, 'made-up-market', 'packed', 0, 2));
 ok(dg.t.days['2026-11-21'].plans.packed.join(' ') === 'made-up-market example-temple pretend-noodle-bar',
   'a stop can be dropped higher up its own version: ' + dg.t.days['2026-11-21'].plans.packed.join(' '));
 ok(dg.out.moved && dg.out.text === 'Made-up Market moved to stop 1', 'and says where it landed: ' + dg.out.text);
-dg = withDemo((t) => C.placeInPlan(t, 'pretend-noodle-bar', 'balanced', 1));
+dg = withDemo((t) => C.placeInPlan(t, 'pretend-noodle-bar', 'balanced', 1, null));
 ok(dg.t.days['2026-11-21'].plans.balanced.join(' ') === 'example-temple pretend-noodle-bar made-up-market',
   'an idea can be dropped straight into a version at a position');
 ok(!dg.out.moved && /added to Balanced as stop 2/.test(dg.out.text), 'and says it is new there: ' + dg.out.text);
-ok(C.placeInPlan(dg.t, 'pretend-noodle-bar', 'balanced', 99).index === 2, 'a position past the end lands at the end');
-ok(!C.placeInPlan(dg.t, 'imaginary-museum', 'balanced', 0).ok, 'a backlog place cannot be dropped into a version directly');
+ok(C.placeInPlan(dg.t, 'pretend-noodle-bar', 'balanced', 99, 1).index === 2, 'a position past the end lands at the end');
+ok(!C.placeInPlan(dg.t, 'imaginary-museum', 'balanced', 0, null).ok, 'a backlog place cannot be dropped into a version directly');
 
 dg = withDemo((t) => C.moveInBacklog(t, 'nowhere-viewpoint', 0));
 ok(dg.t.backlog.join(' ') === 'nowhere-viewpoint imaginary-museum', 'the backlog can be reordered');

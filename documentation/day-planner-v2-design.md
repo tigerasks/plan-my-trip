@@ -20,6 +20,11 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Changed Sun 4 Oct 2026, a place can be a stop twice:** a version may list the same place more than
+once, so you can go back somewhere later in the day. It is one place with one set of hours and one
+duration; each appearance is its own stop, removed on its own, and taking the place off the day takes
+out every copy.
+
 **Changed Sun 4 Oct 2026, no more lunch window:** a day no longer has one, and a place is no longer
 marked as a lunch option. The planner never puts a meal in a day for you — somewhere to eat is a
 place you add like any other, and it may well be an attraction you intend to eat at. The `lunch` key
@@ -311,7 +316,8 @@ date:
 Three rules hold at all times, and the planner repairs anything that breaks them on the way in:
 
 - a place's `dayId` says where it lives — a day, or `null` for the backlog;
-- `plans` hold order only, and may only name places of their own day, once each;
+- `plans` hold order only, and may only name places of their own day — a place may appear more than
+  once, for a station you pass back through, and each appearance is its own stop;
 - the backlog is exactly the places with no day.
 
 "Ideas for today" is worked out, never stored: the day's places that the version on screen does not
