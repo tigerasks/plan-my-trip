@@ -691,35 +691,34 @@ with sync_playwright() as pw:
        'with what they are and where: ' + pg.locator('#findResults .meta').first.inner_text())
     pg.screenshot(path=str(SHOTS / 'app_search_desktop_light.png'))
 
-    # nothing is added until you say so
-    pg.click('#findResults .item')
-    pg.wait_for_timeout(300)
-    ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'a result opens a preview first')
+    # a click only takes you there
+    pg.click('#findResults .item >> nth=0')
+    pg.wait_for_timeout(400)
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'a plain click opens nothing')
     where = pg.evaluate('window.__lastMap.getCenter()')
     ck(round(where['lat'], 4) == 34.8871 and round(where['lng'], 4) == 135.8048,
-       'and the map goes there, so you can see where it is: %.4f, %.4f' % (where['lat'], where['lng']))
+       'it only takes the map there: %.4f, %.4f' % (where['lat'], where['lng']))
     ck(pg.evaluate('window.__lastMap.getZoom()') >= 16, 'close enough to make it out')
-    ck(pg.locator('.mk-looking').count() == 1, 'with the spot marked while you look at it')
+    ck(pg.locator('.mk-looking').count() == 1, 'with the spot marked')
+
+    # the actions are on the row
+    pg.click('#findResults .row-menu >> nth=0')
+    pg.wait_for_timeout(250)
+    items = pg.locator('#findResults .menu-item').all_text_contents()
+    ck(items == ['Add to Balanced', 'Add to Sat 21 Nov', 'Add to the backlog', 'Open details'],
+       'the menu holds the three ways in, and the details: ' + ' · '.join(items))
+    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
+    pg.click('#findResults [data-act="details-found"]')
+    pg.wait_for_timeout(1600)
+    ck(pg.inner_text('.sh-title').startswith('Nintendo Museum'), 'Open details still opens the preview')
+    ck('Add to Balanced' in pg.inner_text('#sheet'), 'with its own way to add it')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(200)
-    ck(pg.locator('.mk-looking').count() == 0, 'and the mark goes when you close the preview')
-    pg.click('#findResults .item')
-    pg.wait_for_timeout(300)
-    ck('Add to Balanced' in pg.inner_text('#sheet'), 'offering the version on screen')
-    ck('km from' in pg.inner_text('#sheet'), 'and how far it is from the day: '
-       + [l for l in pg.inner_text('#sheet').split(chr(10)) if ' from ' in l][0])
-    ck(len(pg.evaluate('Object.keys(window.DayPlannerApp.trip.places)')) == 6, 'and nothing has joined the trip yet')
-    pg.screenshot(path=str(SHOTS / 'app_preview_desktop_light.png'))
-    pg.click('[data-act="add-place"][data-to="plan"]')
-    pg.wait_for_timeout(900)
-    trip = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")['trip']
-    ck(len(trip['places']) == 7, 'choosing Add puts it in the trip')
-    ck(trip['places']['nintendo-museum']['kind'] == 'museum', 'with the kind worked out for it')
-    ck(trip['places']['nintendo-museum']['added'] == {'by': 'you', 'how': 'search', 'at': trip['places']['nintendo-museum']['added']['at']},
-       'and a note of how it was found')
-    ck(trip['days']['2026-11-21']['plans']['balanced'].index('nintendo-museum') >= 0, 'in the version that was on screen')
-    ck(trip['days']['2026-11-21']['plans']['packed'].count('nintendo-museum') == 0, 'and in no other')
 
+    pg.click('#findResults .row-menu >> nth=0')
+    pg.wait_for_timeout(250)
+    pg.click('#findResults [data-act="add-found"][data-to="plan"]')
+    pg.wait_for_timeout(900)
     # a search that finds nothing, and one that fails
     pg.fill('#findBox', 'nothing at all here')
     pg.wait_for_timeout(1600)

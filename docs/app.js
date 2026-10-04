@@ -29,7 +29,7 @@ const App = {
   trip: null,            // the one trip this browser holds, already normalised
   ui: {
     dayId: null, sheet: null, backlogDots: true,
-    find: { q: '', busy: false, results: null, error: '' },   // the search box
+    find: { q: '', busy: false, results: null, error: '', menu: null, at: null },   // the search box
     menu: null,                                               // the row menu that is open
     pinning: false,                                           // the next tap drops a pin
   },   // what is on screen; never part of what gets exported
@@ -169,15 +169,34 @@ function findResultsHtml() {
   if (f.busy) return '<p class="hint">Looking…</p>';
   if (!f.results) return '';
   if (!f.results.length) return '<p class="hint">Nothing found. Try a different spelling, or the name as it is written locally.</p>';
-  return '<ul class="list">' + f.results.map((p, i) =>
-    '<li><button type="button" class="item" data-act="preview-found" data-i="' + i + '">'
-    + '<span class="dot"></span><span class="body"><span class="nm">' + esc(p.name) + '</span>'
-    + '<span class="meta">' + esc([C.KIND_LABEL[p.kind], p.where].filter(Boolean).join(' · ')) + '</span></span></button></li>').join('')
-    + '</ul>';
+  // A result is somewhere to look at first. Tapping it moves the map; the menu is where adding
+  // it, and reading about it, live.
+  return '<ul class="list">' + f.results.map((p, i) => {
+    const open = f.menu === i;
+    return '<li class="row' + (open ? ' menu-open' : '') + (f.at === i ? ' looking' : '') + '">'
+      + '<div class="row-main">'
+      + '<button type="button" class="item" data-act="look-found" data-i="' + i + '">'
+      + '<span class="dot"></span><span class="body"><span class="nm">' + esc(p.name) + '</span>'
+      + '<span class="meta">' + esc([C.KIND_LABEL[p.kind], p.where].filter(Boolean).join(' · ')) + '</span></span></button>'
+      + '<button type="button" class="icon-btn row-menu" data-act="found-menu" data-i="' + i + '"'
+      + ' aria-label="What to do with ' + esc(p.name) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' + ic('dots') + '</button>'
+      + '</div>' + (open ? foundMenuHtml(i) : '') + '</li>';
+  }).join('') + '</ul>';
 }
 function renderResults() {
   const el = $('#findResults');
   if (el) el.innerHTML = findResultsHtml();
+}
+function foundMenuHtml(i) {
+  const day = currentDay();
+  const item = (act, label, to) => '<button type="button" class="menu-item" role="menuitem" data-act="' + act
+    + '" data-i="' + i + '"' + (to ? ' data-to="' + to + '"' : '') + '>' + esc(label) + '</button>';
+  return '<div class="menu" role="menu">'
+    + (day ? item('add-found', 'Add to ' + C.PLAN_LABEL[day.shown], 'plan') : '')
+    + (day ? item('add-found', 'Add to ' + C.fmtDateUK(day.id), 'day') : '')
+    + item('add-found', 'Add to the backlog', 'backlog')
+    + item('details-found', 'Open details')
+    + '</div>';
 }
 let findSeq = 0;
 let findTimer = 0;
@@ -1378,9 +1397,31 @@ const ACTIONS = {
       changed('Day brought back');
     } }, 9000);
   },
-  'preview-found': (el) => {
+  'look-found': (el) => {
+    const i = +el.dataset.i;
+    const found = (App.ui.find.results || [])[i];
+    if (!found) return;
+    App.ui.find.at = i;
+    App.ui.find.menu = null;
+    M.lookAt(found);
+    renderResults();
+  },
+  'found-menu': (el) => {
+    const i = +el.dataset.i;
+    App.ui.find.menu = App.ui.find.menu === i ? null : i;
+    renderResults();
+  },
+  'add-found': (el) => {
     const found = (App.ui.find.results || [])[+el.dataset.i];
-    if (found) openPreview(found, true);
+    if (!found) return;
+    App.ui.find.menu = null;
+    addPlaceTo(found, el.dataset.to);
+  },
+  'details-found': (el) => {
+    const found = (App.ui.find.results || [])[+el.dataset.i];
+    if (!found) return;
+    App.ui.find.menu = null;
+    openPreview(found, true);
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => { closeMenu(); openPlace(el.dataset.id); },
@@ -1585,9 +1626,12 @@ function onClick(e) {
   const act = el ? el.dataset.act : '';
   const fn = ACTIONS[act];
   // A click anywhere else puts the row menu away.
-  const closing = App.ui.menu && !e.target.closest('.menu') && act !== 'row-menu';
+  const outside = !e.target.closest('.menu');
+  const closing = App.ui.menu && outside && act !== 'row-menu';
   if (closing) closeMenu();
-  if (!fn) { if (closing) render(); return; }
+  const closingFind = App.ui.find.menu != null && outside && act !== 'found-menu';
+  if (closingFind) App.ui.find.menu = null;
+  if (!fn) { if (closing) render(); else if (closingFind) renderResults(); return; }
   if (el.tagName !== 'INPUT') e.preventDefault();   // a tickbox must be left to tick itself
   fn(el);
 }
