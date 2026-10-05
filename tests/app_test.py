@@ -254,6 +254,21 @@ with sync_playwright() as pw:
     ck([t for t in pg.locator('.mk-plan').all_text_contents()] == ['1', '2'], 'stops carry their order')
     ck(pg.locator('.mk-anchor').count() == 1, 'and where the day starts is marked')
     ck(pg.evaluate('window.__fitted.length') == 4, 'the view is fitted around everything on the day')
+
+    # the day's thread
+    line = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(line) == 4, 'the stops are joined in order, out from the hotel and back: %d points' % len(line))
+    ck(line[0] == line[-1], 'a day that ends where it started closes the loop')
+    ck(round(line[0][1], 4) == 34.9858 and round(line[1][1], 4) == 34.9948,
+       'starting at the hotel, then stop 1: ' + str([round(c[1], 4) for c in line]))
+    layer = pg.evaluate("window.__lastMap.getLayer('day-route-line')")
+    ck(layer['paint']['line-dasharray'] == [1.6, 1.6], 'drawn dashed, since a straight line is not a real route')
+    pg.click('[data-act="version"][data-v="packed"]')
+    pg.wait_for_timeout(250)
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")) == 5,
+       'and it follows the version on screen')
+    pg.click('[data-act="version"][data-v="balanced"]')
+    pg.wait_for_timeout(250)
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(200)
     ck(pg.locator('.mk-plan').count() == 3 and pg.locator('.mk-idea').count() == 0, 'switching version renumbers the map')
