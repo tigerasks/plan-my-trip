@@ -17,8 +17,10 @@ python3 -m venv .venv
 ## Running
 
 ```sh
-.venv/bin/python tests/probe_test.py    # the service test page, docs/probe.html
-.venv/bin/python tests/app_test.py      # the planner, docs/index.html
+.venv/bin/python tests/probe_test.py          # the service test page, docs/probe.html
+.venv/bin/python tests/probe_transit_test.py  # the public transport probe, docs/probe-transit.html
+.venv/bin/python tests/app_test.py            # the planner, docs/index.html
+node tests/core_test.js                       # the model, in Node
 ```
 
 Both print a `PASS`/`FAIL` line per check. `app_test.py` exits non-zero when anything fails or the
@@ -37,6 +39,7 @@ opening `docs/probe.html` in a browser by hand.
 | `harness.py` | local server, MapLibre stub, offline routing, PASS/FAIL bookkeeping |
 | `maplibre_stub.js` | stand-in for MapLibre GL JS; extend it when the app uses more of the library |
 | `probe_test.py` | walk-through of the service test page |
+| `probe_transit_test.py` | walk-through of the public transport probe |
 | `app_test.py` | walk-through of the planner |
 | `demo-trip.json` | an obviously fake trip used as test data |
 | `core_test.js` | Node tests for `docs/core.js`, run with `node tests/core_test.js` |
