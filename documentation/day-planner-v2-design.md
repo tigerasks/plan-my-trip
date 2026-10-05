@@ -243,7 +243,9 @@ At the bottom are the three buttons: Add to plan, Add to today, Add to backlog. 
 
 ## Map
 
-- **Plans** show as numbered stops joined in order.
+- **Plans** show as numbered stops joined in order, out from where the day starts and back to where
+  it ends. The thread is dashed while it is only straight lines between places; the real paths of
+  milestone 4 are drawn solid, so the map says which it is the way ≈ does in the timeline.
 - **Today's ideas** show as hollow markers.
 - **The backlog** shows as faint dots you can switch off. The point is to spot backlog ideas near today's route.
 - **Tapping** anything opens its card.
