@@ -448,15 +448,22 @@ function planHtml(day) {
 }
 const timeCell = (text) => '<span class="t">' + esc(text) + '</span>';
 // A plus between every pair of stops, and one at the top of each of the other lists: somewhere
-// obvious to put a place that is not there yet.
-const plusRow = (to, at, label) =>
+// obvious to put a place that is not there yet. The words are always on show — an option you have
+// to go looking for with the mouse is one you do not know you have.
+const plusRow = (to, at, word, aria) =>
   '<li class="tl-plus"><button type="button" class="plus" data-act="add-stop" data-to="' + esc(to) + '"'
-  + (at == null ? '' : ' data-at="' + at + '"') + ' aria-label="' + esc(label) + '">'
-  + '<span class="sign">+</span><span class="word">' + esc(label) + '</span></button></li>';
+  + (at == null ? '' : ' data-at="' + at + '"') + ' aria-label="' + esc(aria || word) + '">'
+  + '<span class="sign">+</span><span class="word">' + esc(word) + '</span></button></li>';
 function timelineHtml(P) {
-  let n = 0;
+  let n = 0, tailDone = false;
   const out = [];
-  for (const it of P.items) {
+  P.items.forEach((it, i) => {
+    // The last plus belongs before the journey home, not after it.
+    const next = P.items[i + 1];
+    if (it.type === 'travel' && next && next.type === 'end') {
+      out.push(plusRow('plan', n, 'Add a stop', 'Add a stop at the end'));
+      tailDone = true;
+    }
     if (it.type === 'start' || it.type === 'end') {
       // With no accommodation set there is no place to name, and the warnings below say why.
       out.push('<li class="tl-mark">' + timeCell(C.fmtTime(it.at))
@@ -467,7 +474,7 @@ function timelineHtml(P) {
       out.push('<li class="tl-leg">' + timeCell('')
         + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
     } else if (it.type === 'visit') {
-      out.push(plusRow('plan', n, n ? 'Add a stop here' : 'Add a stop at the start'));
+      out.push(plusRow('plan', n, 'Add a stop', n ? 'Add a stop after stop ' + n : 'Add a stop at the start'));
       n++;
       const bits = ['until ' + C.fmtTime(it.until), C.fmtDur(it.place.duration), C.KIND_LABEL[it.place.kind]];
       let meta = bits.filter(Boolean).map(esc).join(' · ');
@@ -477,8 +484,8 @@ function timelineHtml(P) {
         kind: 'plan', when: meta, at: n - 1,
       }));
     }
-  }
-  out.push(plusRow('plan', n, 'Add a stop at the end'));
+  });
+  if (!tailDone) out.push(plusRow('plan', n, 'Add a stop', 'Add a stop at the end'));
   return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
 }
 function summaryChipHtml(P) {
