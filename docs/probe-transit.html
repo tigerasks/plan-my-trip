@@ -67,7 +67,8 @@
     </section>
 
     <section class="step"><h2>4 · Run the checks</h2>
-      <p class="hint">Five requests, a second apart: one journey, two stop look-ups, two map queries.</p>
+      <p class="hint">Seven requests, a second apart: one journey, four stop look-ups, two map queries.
+        A map query that times out is tried once more.</p>
       <div class="row" style="margin-top:8px"><button type="button" id="go" class="primary" disabled>Run the checks</button>
         <button type="button" id="again" disabled>Keep this run, start another</button></div>
       <div class="res" id="r-run"></div>
@@ -92,7 +93,7 @@
 (() => {
   'use strict';
   const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-  const R = { probe: 'day-planner transit probe 1', ranAt: new Date().toISOString(), page: {}, runs: [] };
+  const R = { probe: 'day-planner transit probe 2', ranAt: new Date().toISOString(), page: {}, runs: [] };
   const $ = (id) => document.getElementById(id);
   const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -113,9 +114,17 @@
     const res = await fetch(url);
     return { res, ms: Math.round(performance.now() - t0) };
   }
-  async function getJson(url) {
+  // Overpass answers 504 or 429 when it is busy, which says nothing about the data. One retry.
+  async function getJson(url, retries) {
     const { res, ms } = await politeFetch(url);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      if ((res.status === 504 || res.status === 429 || res.status === 502) && (retries || 0) < 1) {
+        await sleep(4000);
+        const again = await getJson(url, (retries || 0) + 1);
+        return { data: again.data, ms: again.ms, retried: true };
+      }
+      throw new Error('HTTP ' + res.status);
+    }
     return { data: await res.json(), ms };
   }
 
@@ -223,21 +232,34 @@
       };
     } catch (e) { return { ok: false, time, error: errText(e) }; }
   }
-  async function stopsNear(point, label) {
+  // Asked twice: once for stops, once for anything at all. An empty answer to the first means
+  // something quite different depending on whether the second is empty too.
+  async function askPlaces(point, params) {
+    const qs = new URLSearchParams(Object.assign({ place: point.lat.toFixed(6) + ',' + point.lng.toFixed(6), numResults: '10' }, params));
     for (const path of ['/api/v1/reverse-geocode', '/api/v6/reverse-geocode']) {
-      const qs = new URLSearchParams({ place: point.lat.toFixed(6) + ',' + point.lng.toFixed(6), type: 'STOP', numResults: '10' });
       try {
         const { data, ms } = await getJson('https://api.transitous.org' + path + '?' + qs);
-        const list = Array.isArray(data) ? data : (data.places || data.results || []);
-        return {
-          ok: true, path, ms, end: label, count: list.length,
-          stops: list.slice(0, 8).map((x) => ({ name: String(x.name || '').slice(0, 60), type: x.type || null, id: x.id ? String(x.id).slice(0, 40) : null })),
-        };
+        const list = Array.isArray(data) ? data : (data.places || data.results || data.matches || []);
+        return { path, ms, shape: Array.isArray(data) ? 'array' : 'object:' + Object.keys(data || {}).slice(0, 6).join(','), list };
       } catch (e) {
-        if (!/HTTP 40/.test(String(e.message))) return { ok: false, path, end: label, error: errText(e) };
+        if (!/HTTP 40/.test(String(e.message))) throw e;
       }
     }
-    return { ok: false, end: label, error: 'no reverse-geocode endpoint answered (tried v1 and v6)' };
+    throw new Error('no reverse-geocode endpoint answered (tried v1 and v6)');
+  }
+  const placeOut = (x) => ({ name: String(x.name || '').slice(0, 60), type: x.type || null, id: x.id ? String(x.id).slice(0, 40) : null });
+  async function stopsNear(point, label) {
+    try {
+      const stops = await askPlaces(point, { type: 'STOP' });
+      const any = await askPlaces(point, {});
+      return {
+        ok: true, path: stops.path, ms: stops.ms, end: label, shape: stops.shape,
+        count: stops.list.length, stops: stops.list.slice(0, 8).map(placeOut),
+        anythingCount: any.list.length,
+        anything: any.list.slice(0, 8).map(placeOut),
+        anyTypes: Array.from(new Set(any.list.map((x) => x.type).filter(Boolean))),
+      };
+    } catch (e) { return { ok: false, end: label, error: errText(e) }; }
   }
   async function mapTransit(point, label) {
     const q = '[out:json][timeout:25];('
@@ -280,8 +302,12 @@
     }
     for (const s of run.stops) {
       bits.push(s.ok
-        ? (s.count ? ok('Stops near ' + s.end + ': ' + s.count + ' — ' + esc(s.stops.map((x) => x.name).join(', ').slice(0, 90)))
-          : hm('Stops near ' + s.end + ': none that Transitous knows'))
+        ? (s.count
+          ? ok('Stops near ' + s.end + ': ' + s.count + ' — ' + esc(s.stops.map((x) => x.name).join(', ').slice(0, 90)))
+          : hm('Stops near ' + s.end + ': none — and ' + (s.anythingCount
+            ? s.anythingCount + ' other thing' + (s.anythingCount === 1 ? '' : 's') + ' it does know ('
+              + esc(s.anyTypes.join(', ') || 'no type given') + '), so the question reached it'
+            : 'nothing at all, so it knows this patch of the world not at all')))
         : no('Stop look-up at ' + s.end + ' failed: ' + esc(s.error)));
     }
     for (const m of run.map) {
