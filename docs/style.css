@@ -194,12 +194,9 @@ button.item:hover { background: var(--hover); }
   color: var(--faint); font-size: 11.5px; border-radius: 7px;
 }
 .plus .sign { width: 46px; text-align: center; font-size: 14px; line-height: 1; }
-.plus .word { opacity: 0; transition: opacity .12s; }
 .plus:hover { color: var(--ink-2); background: var(--hover); }
-.plus:hover .word, .plus:focus-visible .word { opacity: 1; }
 .list > .tl-plus > .plus { padding-left: 2px; }
 .list > .tl-plus > .plus .sign { width: 26px; }
-@media (hover: none) { .plus .word { opacity: 1; } }
 .tl-issues { border-top: 1px solid var(--line-2); margin-top: 8px; padding-top: 8px; }
 .tl-issues .reasons li.bad { color: var(--rose-strong); }
 .tl-issues .reasons li.amber { color: var(--amber-text); }
