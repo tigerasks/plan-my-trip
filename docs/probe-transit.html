@@ -1,0 +1,331 @@
+<!doctype html>
+<!-- Day planner · public transport probe. SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day planner · public transport probe</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='.9em' font-size='22'>🚌</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.css">
+<style>
+  :root { --bg: #f5f5f4; --card: #fff; --ink: #1c1917; --muted: #78716c; --faint: #a8a29e; --line: #e7e5e4; --green: #166534; --rose: #be123c; --amber: #b45309; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 430px; height: 100%; }
+  #map { position: relative; min-height: 300px; background: #e9e7e4; }
+  .panel { overflow-y: auto; padding: 18px 18px 28px; border-left: 1px solid var(--line); }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; height: auto; } #map { height: 46vh; } .panel { border-left: 0; } }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lead { color: var(--muted); margin: 0 0 14px; font-size: 13px; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .step h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); }
+  input[type=datetime-local] { flex: 0 0 auto; }
+  button { font: inherit; font-weight: 700; padding: 7px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--faint); }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .res { font-size: 12.5px; margin-top: 8px; }
+  .res:empty { display: none; }
+  .res ul { margin: 4px 0 0; padding-left: 18px; }
+  .res li { margin-bottom: 2px; }
+  .ok { color: var(--green); } .bad { color: var(--rose); } .warn { color: var(--amber); }
+  .ends { display: grid; grid-template-columns: 18px 1fr; gap: 4px 8px; align-items: baseline; font-size: 12.5px; margin-top: 8px; }
+  .pip { width: 18px; height: 18px; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .pip.a { background: #1c1917; } .pip.b { background: #be123c; }
+  textarea { width: 100%; min-height: 180px; margin-top: 8px; font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--line); border-radius: 9px; padding: 8px; }
+  .credits { font-size: 11px; color: var(--faint); margin-top: 12px; line-height: 1.55; }
+  .credits a { color: var(--muted); }
+  .mk { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); color: #fff; font: 700 11px/16px -apple-system, sans-serif; text-align: center; }
+  .mk.a { background: #1c1917; } .mk.b { background: #be123c; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="map" aria-label="Probe map"></div>
+  <aside class="panel">
+    <h1>Public transport probe</h1>
+    <p class="lead">Four questions the travel-times work depends on, none of which the documentation answers.
+      Run it once for a journey only a bus can do, then again for one a train can, and paste the whole block into the chat.</p>
+
+    <section class="step"><h2>1 · This page</h2><div class="res" id="r-env"></div></section>
+
+    <section class="step"><h2>2 · The two ends</h2>
+      <div class="row"><input id="qa" value="Daisen-in Kyoto" aria-label="Where from"></div>
+      <div class="row" style="margin-top:6px"><input id="qb" value="Kinkaku-ji Kyoto" aria-label="Where to"></div>
+      <div class="row" style="margin-top:6px"><button type="button" id="find" class="primary">Find these two</button>
+        <span class="hint" style="margin:0">or tap the map: first tap sets A, second sets B</span></div>
+      <div class="ends" id="r-ends"></div>
+    </section>
+
+    <section class="step"><h2>3 · When</h2>
+      <div class="row"><input type="datetime-local" id="when"></div>
+      <p class="hint">Timetables are usually only published a few months ahead, so keep this close to today.</p>
+    </section>
+
+    <section class="step"><h2>4 · Run the checks</h2>
+      <p class="hint">Five requests, a second apart: one journey, two stop look-ups, two map queries.</p>
+      <div class="row" style="margin-top:8px"><button type="button" id="go" class="primary" disabled>Run the checks</button>
+        <button type="button" id="again" disabled>Keep this run, start another</button></div>
+      <div class="res" id="r-run"></div>
+    </section>
+
+    <section class="step"><h2>5 · Results</h2>
+      <p class="hint">Copy everything below into the chat.</p>
+      <div class="row" style="margin-top:8px"><button type="button" id="copy" class="primary">Copy results</button></div>
+      <textarea id="out" readonly aria-label="Results"></textarea>
+    </section>
+
+    <p class="credits">
+      Map: <a href="https://openfreemap.org/">OpenFreeMap</a> · <a href="https://www.openmaptiles.org/">© OpenMapTiles</a> · Data <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a><br>
+      Search: <a href="https://photon.komoot.io/">Photon by komoot</a> · Map data: <a href="https://wiki.openstreetmap.org/wiki/Overpass_API">Overpass API</a><br>
+      Public transport: <a href="https://transitous.org/">Transitous</a> · <a href="https://transitous.org/sources/">data sources</a><br>
+      Personal, non-commercial test page · code licensed AGPL-3.0 · <a href="https://github.com/tigerasks">github.com/tigerasks</a>
+    </p>
+  </aside>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script>
+(() => {
+  'use strict';
+  const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+  const R = { probe: 'day-planner transit probe 1', ranAt: new Date().toISOString(), page: {}, runs: [] };
+  const $ = (id) => document.getElementById(id);
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
+  const show = (id, html) => { $(id).innerHTML = html; };
+  const ok = (t) => '<b class="ok">✓</b> ' + t;
+  const no = (t) => '<b class="bad">✗</b> ' + t;
+  const hm = (t) => '<b class="warn">•</b> ' + t;
+  const r5 = (x) => Math.round(x * 1e5) / 1e5;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const errText = (e) => { const m = (e && e.message) || String(e); return /Failed to fetch|NetworkError|Load failed/i.test(m) ? 'blocked or unreachable (' + m + ')' : m; };
+
+  let lastCall = 0;
+  async function politeFetch(url) {
+    const wait = lastCall + 1100 - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCall = Date.now();
+    const t0 = performance.now();
+    const res = await fetch(url);
+    return { res, ms: Math.round(performance.now() - t0) };
+  }
+  async function getJson(url) {
+    const { res, ms } = await politeFetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return { data: await res.json(), ms };
+  }
+
+  // ---------- the page ----------
+  R.page.origin = location.origin;
+  R.page.secureContext = window.isSecureContext;
+  R.page.browser = navigator.userAgent;
+  show('r-env', ok('Served from ' + esc(location.origin)));
+
+  // ---------- the map ----------
+  let map = null, A = null, B = null, marks = {};
+  const two = (n) => String(n).padStart(2, '0');
+  function defaultWhen() {
+    const d = new Date(Date.now() + 86400000);
+    d.setHours(10, 0, 0, 0);
+    return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + 'T' + two(d.getHours()) + ':' + two(d.getMinutes());
+  }
+  $('when').value = defaultWhen();
+
+  function setEnd(which, point) {
+    if (which === 'a') A = point; else B = point;
+    if (map && window.maplibregl && window.maplibregl.Marker) {
+      if (marks[which]) marks[which].remove();
+      const el = document.createElement('div');
+      el.className = 'mk ' + which;
+      el.textContent = which.toUpperCase();
+      marks[which] = new window.maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([point.lng, point.lat]).addTo(map);
+    }
+    drawEnds();
+    $('go').disabled = !(A && B);
+  }
+  function drawEnds() {
+    const line = (which, p) => p
+      ? '<span class="pip ' + which + '">' + which.toUpperCase() + '</span><span>' + esc(p.name) + ' · ' + r5(p.lat) + ', ' + r5(p.lng) + '</span>'
+      : '<span class="pip ' + which + '">' + which.toUpperCase() + '</span><span class="hint" style="margin:0">not set</span>';
+    show('r-ends', line('a', A) + line('b', B));
+  }
+  drawEnds();
+
+  try {
+    map = new window.maplibregl.Map({ container: 'map', style: STYLE, center: [135.7455, 35.0405], zoom: 12 });
+    map.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    let next = 'a';
+    map.on('click', (e) => {
+      setEnd(next, { name: 'tapped ' + next.toUpperCase(), lat: e.lngLat.lat, lng: e.lngLat.lng, from: 'tap' });
+      next = next === 'a' ? 'b' : 'a';
+    });
+  } catch (err) {
+    show('r-env', no('The map could not start: ' + esc(errText(err))) + ' The checks still work if you tap nothing.');
+  }
+
+  // ---------- 2 · find the ends ----------
+  async function findOne(q) {
+    const url = 'https://photon.komoot.io/api/?' + new URLSearchParams({ q, limit: '1', lang: 'en', lat: '35.0116', lon: '135.7681' });
+    const { data } = await getJson(url);
+    const f = data && data.features && data.features[0];
+    if (!f) return null;
+    const c = f.geometry.coordinates, p = f.properties || {};
+    return { name: p.name || q, lat: c[1], lng: c[0], from: 'search', osm: (p.osm_type || '') + (p.osm_id || '') };
+  }
+  $('find').onclick = async () => {
+    $('find').disabled = true;
+    show('r-ends', '<span class="hint" style="margin:0">Looking…</span>');
+    try {
+      const a = await findOne($('qa').value.trim());
+      const b = await findOne($('qb').value.trim());
+      if (a) setEnd('a', a);
+      if (b) setEnd('b', b);
+      if (map && a && b) map.fitBounds([[Math.min(a.lng, b.lng), Math.min(a.lat, b.lat)], [Math.max(a.lng, b.lng), Math.max(a.lat, b.lat)]], { padding: 80, duration: 0 });
+      if (!a || !b) show('r-ends', no('One of them was not found. Tap the map instead.'));
+    } catch (err) {
+      show('r-ends', no('Search failed: ' + esc(errText(err))));
+    }
+    $('find').disabled = false;
+    drawEnds();
+  };
+
+  // ---------- the four checks ----------
+  const LEG_KEYS = ['mode', 'duration', 'routeShortName', 'routeLongName', 'displayName', 'headsign',
+    'agencyName', 'routeType', 'routeColor', 'tripId', 'routeId', 'distance'];
+  function legOut(l) {
+    const out = {};
+    for (const k of LEG_KEYS) if (l[k] != null && l[k] !== '') out[k] = typeof l[k] === 'string' ? l[k].slice(0, 80) : l[k];
+    out.fromStop = l.from && l.from.name ? String(l.from.name).slice(0, 60) : null;
+    out.toStop = l.to && l.to.name ? String(l.to.name).slice(0, 60) : null;
+    out.legGeometry = l.legGeometry && l.legGeometry.points
+      ? { length: l.legGeometry.length == null ? null : l.legGeometry.length, chars: String(l.legGeometry.points).length }
+      : null;
+    out.keysSent = Object.keys(l).slice(0, 40);
+    return out;
+  }
+  async function journey(time) {
+    const qs = new URLSearchParams({ fromPlace: A.lat.toFixed(6) + ',' + A.lng.toFixed(6), toPlace: B.lat.toFixed(6) + ',' + B.lng.toFixed(6), time });
+    try {
+      const { data, ms } = await getJson('https://api.transitous.org/api/v6/plan?' + qs);
+      const its = Array.isArray(data.itineraries) ? data.itineraries : [];
+      const withTransit = its.filter((it) => (it.legs || []).some((l) => l.mode && l.mode !== 'WALK'));
+      const best = withTransit[0] || null;
+      return {
+        ok: true, ms, time, itineraries: its.length, withTransit: withTransit.length,
+        direct: Array.isArray(data.direct) ? data.direct.length : null,
+        modes: Array.from(new Set(withTransit.flatMap((it) => (it.legs || []).map((l) => l.mode)))),
+        bestLegs: best ? (best.legs || []).map(legOut) : null,
+        bestMinutes: best && best.startTime && best.endTime ? Math.round((Date.parse(best.endTime) - Date.parse(best.startTime)) / 60000) : null,
+      };
+    } catch (e) { return { ok: false, time, error: errText(e) }; }
+  }
+  async function stopsNear(point, label) {
+    for (const path of ['/api/v1/reverse-geocode', '/api/v6/reverse-geocode']) {
+      const qs = new URLSearchParams({ place: point.lat.toFixed(6) + ',' + point.lng.toFixed(6), type: 'STOP', numResults: '10' });
+      try {
+        const { data, ms } = await getJson('https://api.transitous.org' + path + '?' + qs);
+        const list = Array.isArray(data) ? data : (data.places || data.results || []);
+        return {
+          ok: true, path, ms, end: label, count: list.length,
+          stops: list.slice(0, 8).map((x) => ({ name: String(x.name || '').slice(0, 60), type: x.type || null, id: x.id ? String(x.id).slice(0, 40) : null })),
+        };
+      } catch (e) {
+        if (!/HTTP 40/.test(String(e.message))) return { ok: false, path, end: label, error: errText(e) };
+      }
+    }
+    return { ok: false, end: label, error: 'no reverse-geocode endpoint answered (tried v1 and v6)' };
+  }
+  async function mapTransit(point, label) {
+    const q = '[out:json][timeout:25];('
+      + 'node(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[highway=bus_stop];'
+      + 'relation(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
+      + ');out tags 60;';
+    try {
+      const { data, ms } = await getJson('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
+      const els = data.elements || [];
+      const stops = els.filter((e) => e.type === 'node');
+      const routes = els.filter((e) => e.type === 'relation');
+      return {
+        ok: true, ms, end: label, within: '800 m',
+        busStops: stops.length,
+        stopNames: stops.slice(0, 6).map((e) => String((e.tags && (e.tags['name:en'] || e.tags.name)) || '(no name)').slice(0, 50)),
+        routeRelations: routes.length,
+        routesWithRef: routes.filter((e) => e.tags && e.tags.ref).length,
+        routes: routes.slice(0, 8).map((e) => ({
+          ref: e.tags && e.tags.ref ? String(e.tags.ref).slice(0, 20) : null,
+          name: e.tags ? String((e.tags['name:en'] || e.tags.name) || '').slice(0, 60) : null,
+          kind: e.tags ? e.tags.route : null,
+          operator: e.tags && e.tags.operator ? String(e.tags.operator).slice(0, 40) : null,
+        })),
+      };
+    } catch (e) { return { ok: false, end: label, error: errText(e) }; }
+  }
+
+  function renderRun(run) {
+    const j = run.journey, bits = [];
+    bits.push(j.ok
+      ? (j.withTransit
+        ? ok('Journey: ' + j.withTransit + ' of ' + j.itineraries + ' use transit · ' + (j.bestMinutes || '?') + ' min · modes ' + (j.modes.join(', ') || '—'))
+        : hm('Journey: Transitous answered in ' + j.ms + ' ms but found no way to do it by public transport'))
+      : no('Journey failed: ' + esc(j.error)));
+    if (j.ok && j.bestLegs) {
+      const named = j.bestLegs.filter((l) => l.mode !== 'WALK');
+      bits.push('<ul>' + named.map((l) => '<li>' + esc(l.mode) + ' · '
+        + esc([l.routeShortName, l.routeLongName, l.displayName, l.headsign, l.agencyName].filter(Boolean).join(' / ') || 'no name on this leg')
+        + (l.legGeometry ? ' · shape ' + l.legGeometry.chars + ' chars' : ' · no shape') + '</li>').join('') + '</ul>');
+    }
+    for (const s of run.stops) {
+      bits.push(s.ok
+        ? (s.count ? ok('Stops near ' + s.end + ': ' + s.count + ' — ' + esc(s.stops.map((x) => x.name).join(', ').slice(0, 90)))
+          : hm('Stops near ' + s.end + ': none that Transitous knows'))
+        : no('Stop look-up at ' + s.end + ' failed: ' + esc(s.error)));
+    }
+    for (const m of run.map) {
+      bits.push(m.ok
+        ? ok('OpenStreetMap near ' + m.end + ': ' + m.busStops + ' bus stop' + (m.busStops === 1 ? '' : 's') + ', '
+          + m.routeRelations + ' route' + (m.routeRelations === 1 ? '' : 's') + ' (' + m.routesWithRef + ' with a line number)' + (m.routes.length ? ' — ' + esc(m.routes.map((r) => r.ref || r.name).filter(Boolean).join(', ').slice(0, 70)) : ''))
+        : no('Map query at ' + m.end + ' failed: ' + esc(m.error)));
+    }
+    return bits.join('<br>');
+  }
+
+  $('go').onclick = async () => {
+    $('go').disabled = true;
+    $('again').disabled = true;
+    show('r-run', '<span class="hint" style="margin:0">Asking, a second apart…</span>');
+    const when = $('when').value;
+    const time = when ? new Date(when).toISOString() : new Date(Date.now() + 86400000).toISOString();
+    const run = { from: { name: A.name, at: [r5(A.lat), r5(A.lng)], how: A.from }, to: { name: B.name, at: [r5(B.lat), r5(B.lng)], how: B.from } };
+    run.journey = await journey(time);
+    run.stops = [await stopsNear(A, 'A'), await stopsNear(B, 'B')];
+    run.map = [await mapTransit(A, 'A'), await mapTransit(B, 'B')];
+    R.runs.push(run);
+    show('r-run', renderRun(run));
+    update();
+    $('go').disabled = false;
+    $('again').disabled = false;
+  };
+  $('again').onclick = () => {
+    $('qa').value = 'Tō-ji Kyoto';
+    $('qb').value = 'Kyoto Station';
+    $('qa').focus();
+    show('r-run', '<span class="hint" style="margin:0">Run ' + R.runs.length + ' kept. Find the next two ends and run again.</span>');
+  };
+
+  function update() {
+    $('out').value = '=== DAY-PLANNER TRANSIT PROBE ===\n' + JSON.stringify(R, null, 1) + '\n=== END ===';
+  }
+  update();
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('out').value); $('copy').textContent = 'Copied'; }
+    catch (e) { $('out').select(); $('copy').textContent = 'Select it and copy'; }
+    setTimeout(() => { $('copy').textContent = 'Copy results'; }, 2500);
+  };
+})();
+</script>
+</body>
+</html>
