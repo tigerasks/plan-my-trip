@@ -5,6 +5,12 @@
 'use strict';
 
 const C = root.DayPlannerCore;
+const ROUTE = 'day-route';
+// The line takes the page's own ink, so it stays legible when the theme changes.
+const inkColour = () => {
+  try { return getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#1c1917'; }
+  catch (e) { return '#1c1917'; }
+};
 const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const WORLD = { center: [8, 47], zoom: 3 };
 
@@ -83,6 +89,30 @@ const MapView = {
     try { const c = this.map.getCenter(); return { lat: c.lat, lng: c.lng }; } catch (e) { return null; }
   },
 
+  // The day's stops, joined in order. Dashed on purpose: these are straight lines between places,
+  // not the way you would actually walk or ride. Milestone 4 draws the real paths, solid.
+  drawRoute(points) {
+    if (!this.ready || !this.map) return;
+    const line = {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: points.map((p) => [p.lng, p.lat]) },
+    };
+    try {
+      if (!this.map.getSource(ROUTE)) {
+        this.map.addSource(ROUTE, { type: 'geojson', data: line });
+        this.map.addLayer({
+          id: ROUTE + '-line', type: 'line', source: ROUTE,
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': inkColour(), 'line-width': 2.5, 'line-opacity': 0.55, 'line-dasharray': [1.6, 1.6] },
+        });
+      } else {
+        this.map.getSource(ROUTE).setData(line);
+        this.map.setPaintProperty(ROUTE + '-line', 'line-color', inkColour());
+      }
+    } catch (e) { /* the map can carry on without the thread */ }
+  },
+
   clear() {
     for (const m of this.marks) { try { m.remove(); } catch (e) { /* already gone */ } }
     this.marks = [];
@@ -93,7 +123,7 @@ const MapView = {
     if (!this.ready || !this.map) return;
     this.clear();
     const day = trip && dayId ? trip.days[dayId] : null;
-    if (!day) { this.shownAs = ''; return; }
+    if (!day) { this.shownAs = ''; this.drawRoute([]); return; }
     const gl = root.maplibregl;
     const pts = [];
     const put = (p, cls, label, title, fit) => {
@@ -109,9 +139,16 @@ const MapView = {
       this.marks.push(mk);
       if (fit !== false) pts.push(p);
     };
-    put(day.start, 'mk-anchor', '', day.start.name || 'Where the day starts');
-    if (day.end && (day.end.lat != null)) put(day.end, 'mk-anchor', '', day.end.name || 'Where the day ends');
-    C.planPlaces(trip, dayId, day.shown).forEach((p, i) => put(p, 'mk-plan', String(i + 1), p.name));
+    const start = C.dayStart(trip, dayId), end = C.dayEnd(trip, dayId);
+    const thread = [];
+    if (C.hasPos(start)) { put(start, 'mk-anchor', '', start.name || 'Where the day starts'); thread.push(start); }
+    const stops = C.planPlaces(trip, dayId, day.shown);
+    stops.forEach((p, i) => { put(p, 'mk-plan', String(i + 1), p.name); if (C.hasPos(p)) thread.push(p); });
+    if (end && C.hasPos(end)) {
+      if (!C.hasPos(start) || end.lat !== start.lat || end.lng !== start.lng) put(end, 'mk-anchor', '', end.name || 'Where the day ends');
+      thread.push(end);
+    }
+    this.drawRoute(thread.length > 1 ? thread : []);
     C.ideasFor(trip, dayId, day.shown).forEach((p) => put(p, 'mk-idea', '', p.name));
     // Backlog dots are there to spot an idea near today's route; they never pull the view about.
     const dots = !!(opts && opts.backlog);

@@ -39,7 +39,13 @@ window.maplibregl = { version: 'stub',
     // A test can put its own features under the finger with window.__features.
     this.queryRenderedFeatures = () => window.__features
       || [{ sourceLayer: 'poi', layer: { id: 'poi_r1' }, id: 31415921, properties: { name: '清水寺', 'name:en': 'Kiyomizu-dera', class: 'place_of_worship', subclass: 'buddhist', rank: 1 } }];
-    this.getSource = (id) => src[id]; this.addSource = (id) => { src[id] = { setData: () => {} }; }; this.addLayer = () => {};
+    // Sources keep their data, so a test can read back what was drawn.
+    this.getSource = (id) => src[id];
+    this.addSource = (id, opts) => { src[id] = { data: opts && opts.data, setData(d) { this.data = d; } }; };
+    this.addLayer = (spec) => { (this.__layers = this.__layers || []).push(spec); };
+    this.getLayer = (id) => (this.__layers || []).find((l) => l.id === id);
+    this.setPaintProperty = () => {};
+    this.__sources = src;
     this.areTilesLoaded = () => true;
     setTimeout(() => { fire('style.load'); fire('idle'); }, 30);
   } };
