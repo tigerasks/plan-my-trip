@@ -301,3 +301,7 @@ pyrightconfig.json
 # Screenshots from the test runs. They carry timestamps and timings, so every run rewrites a few
 # of them; look at them on disk rather than in the diff.
 tests/shots/
+
+# Scratch notes a session keeps for itself. Anything worth keeping belongs in CLAUDE.md or
+# documentation/ instead.
+WORKING-NOTES.md
