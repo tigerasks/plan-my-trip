@@ -476,6 +476,9 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 14 | When does Transitous need telling about the planner? | Once other people use it. Development traffic is too small to require it, and while the planner isn't being advertised it may not be needed at all. The owner sends the message, not the planner and not the chat. |
 | 15 | What if the hosted router stops being an option? | Fall back on the dataset. Transitous publishes the timetable data it collects, and says outright that there is no need to scrape the API for it. See "If the hosted router is ever not an option". |
 | 16 | How is accommodation entered? | Once per booking, as a stay: a place, a first night and a number of nights. The days it covers take their start and end from it and are created with it. Not on each day. |
+| 17 | How does a leg hold what the services say? | Every way of making it side by side — walking, public transport, taxi — each with its own time, source and shape. Checking one never loses another. The planner picks which the day uses: your own time, then whichever you picked, then the quickest that makes sense. A taxi is never assumed. |
+| 18 | How does the planner know what instant to ask a timetable about? | The trip says which time zone its times are in (`tz`, a name like `Asia/Tokyo`), and the browser's own time zone database does the rest, summer time included. Left empty, it uses the device's own zone. Every time shown stays local to where you are going. |
+| 19 | Whose times calibrate the estimates? | Only times that measured something: OSRM, Transitous, and your own. A stop-based time is the planner's own arithmetic, so calibrating against it would be circular. |
 
 ## Open questions
 

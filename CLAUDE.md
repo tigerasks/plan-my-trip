@@ -14,8 +14,11 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   backlog and days model, auto-save in the browser, the `day-planner/2` file and text block, places
   (search, tapping the map, dropped pins, the preview with OpenStreetMap details, the hours editor,
   durations, moves, dragging and Delete with undo), and plans (the timeline with times, waits and
-  conflicts, copying between versions, Optimise order). Travel times and the chat round trip are
-  still to come. The service test page, `docs/probe.html`, stays alongside it.
+  conflicts, copying between versions, Optimise order).
+- Milestone 4 is built but **not yet pushed, nor run against the live services**: real routes from
+  OSRM, journeys from Transitous, the stop-based fallback over OpenStreetMap, the leg card, and the
+  planner checking a day's legs by itself. The chat round trip (milestone 5) is still to come. The
+  service test pages, `docs/probe.html` and `docs/probe-transit.html`, stay alongside the app.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -147,7 +150,7 @@ These are proposed; confirm each with the owner before starting it.
    - a timeline with times, waits and conflicts;
    - Optimise order;
    - priority labels only when imported.
-4. **Travel times:**
+4. **Travel times — built:**
    - estimates first, then real routes: OSRM for walking (with real paths) and taxi (with a pickup allowance), Transitous for public transport;
    - handling of how far ahead timetables reach;
    - when Transitous finds nothing, a check whether it knows any stops nearby, to tell "no timetables" from "no connection";
@@ -166,6 +169,15 @@ These are proposed; confirm each with the owner before starting it.
   - confirmed: tapped feature ids are OpenStreetMap ids times 10 plus the element type (1 node, 2 way, 3 relation). Nodes and ways are both verified live; relations never came up in three runs, and places are rarely relations;
   - answered: OpenStreetMap has Kyoto's bus lines with their numbers, Transitous has no stops at all for them, and a leg is named from `agencyName` plus `headsign` (design doc, fourth run);
   - whether any of that holds in another country: it is one city on one day;
-  - the exact credit lines.
-- **Before going live:** the Transitous heads-up, contact details on the site, the credits, and licence headers.
+  - **the next thing to probe:** the Overpass query the stop-based fallback sends. It uses
+    `nwr(around:…)` and `out tags center`, where earlier runs only proved `node(around:…)` with
+    `out tags`. `docs/probe-transit.html` now sends the planner's own query and reports how many
+    stops came back with a position, which is the number the fallback can actually use;
+  - also unverified live: which precision MOTIS encodes `legGeometry` at. The planner tries 7 then 5
+    and keeps whichever lands on the leg, so a wrong guess draws nothing rather than a line across
+    the sea.
+- **Before going live:** the Transitous heads-up, contact details on the site, and licence headers.
+  The credits are on the page as of milestone 4: OpenFreeMap, OpenMapTiles, OpenStreetMap
+  contributors with a "fix the map" link, Photon, Overpass, OSRM at FOSSGIS, and Transitous with its
+  data sources.
 - **v1:** the Claude-hosted planner stays for now; this is the owner's decision.
