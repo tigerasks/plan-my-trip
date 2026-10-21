@@ -20,6 +20,14 @@ Draft for review. Once built, v2 sits alongside the Claude-hosted planner (v1), 
 
 **Updated Fri 25 Sep 2026:** the stop search widens from 10 to 20 minutes' walk before giving up. Google Maps opening in a separate window is confirmed.
 
+**Updated Wed 21 Oct 2026, the public transport probe:** the two questions milestone 4 was waiting
+on are answered, and both answers hold. Kyoto's city buses are not in Transitous at all — not the
+timetables, not even the stops — while OpenStreetMap has them in full, with line numbers. So the
+stop-based fallback is both needed and buildable. A transit leg is named from its agency and its
+headsign, not from `routeShortName`, which a Japanese operator fills with a numeric id. Every leg
+carries a `legGeometry`, so a train can be drawn on the map and not only a walk. Overpass took
+26 to 44 seconds for the queries the fallback needs, which decides how they have to be made.
+
 **Changed Sun 4 Oct 2026, adding where you want it:** every gap in a version has a plus, and the
 ideas and the backlog have one at the top. A plus opens a panel listing the trip's own places first —
 the day's, including ones already in the version, and the backlog — then whatever a search turns up.
@@ -109,10 +117,39 @@ The price is the live link: data moves between planner and chat as a pasted text
 - **Searching "Kyoto" returns the station**, `railway=station`, not the city. Setting a day's city needs more than the first hit.
 - **Walking and taxi:** 27 min against 5 min over about 2 km, in 15 ms. The pickup allowance stands.
 
+**Fourth run, Wed 21 Oct 2026** (the public transport probe, `docs/probe-transit.html`; raw output in
+`service-tests.md`):
+- **Kyoto's city buses are not in Transitous.** Daisen-in to Kinkaku-ji returned no journey at all,
+  and asking what stops it knows at either end returned an empty list. The same question without the
+  stop filter returned ten OpenStreetMap places at each end, so the question lands and the answer is
+  real: it has no transit data for that part of the city. Decision 13's fallback is not a nicety.
+- **Where rail exists it works well.** Tō-ji to Kyoto Station gave five journeys, the best 24 min,
+  and the stop look-up named 東寺 (`jp-japan-rail_9639`) and three at Kyoto Station — among them two
+  long-distance coach feeds, so a little bus data exists; just not the city network.
+- **Naming a leg:** `routeShortName` and `displayName` both came back as `8999421`, and
+  `routeLongName` was empty. What is usable is `headsign` (京都) and `agencyName` (近畿日本鉄道), which
+  is how a Japanese train is described anyway: the operator, and where it is heading.
+- **Every leg has a shape.** `legGeometry` was populated on all three legs, the rail one included
+  (39 points). Transit legs can be drawn on the map, not only walks.
+- **OpenStreetMap has Kyoto's buses.** Around Daitoku-ji and Kinkaku-ji: bus stops and route
+  relations, *every* relation carrying a `ref` — 102, 6, 9, 12, 15, 37, 50, operator 京都市交通局 —
+  and lines serving both ends in common (102 and 12). That is exactly what naming a line needs.
+  Around Kyoto Station the relations are named trains instead (Nozomi, Haruka, Thunderbird), often
+  with no `ref`; but that is where Transitous works, so it matters less.
+- **Overpass is slow for this.** 26, 37, 44 seconds for one 800 m query. Not something a leg can
+  wait on.
+- **A caveat on the counts.** The probe asked for `out tags 60` and every end came back summing to
+  exactly 60, so its stop and route counts are truncated; the "0 relations" at Kyoto Station is that
+  limit, not the map. Raised to 400 afterwards.
+
 **Still to verify during the build:**
-- whether OpenStreetMap's bus and rail lines are mapped well enough in a trip's region to name the line between two stops;
-- whether Transitous knows any *bus* stops in a trip's region, to tell "no timetables here" from "no connection". Kyoto's rail is covered (third run); its buses are the open question;
-- which field, if any, carries a line's name in a Transitous leg, since `displayName` gave a numeric id;
+- answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
+  relation carrying a line number. Rail relations around a station are named rather than numbered;
+- answered (fourth run): Transitous knows no stops at all for Kyoto's city buses, which is what tells
+  "no timetables here" from "no connection now";
+- answered (fourth run): a leg is named from `agencyName` and `headsign`; `routeShortName` and
+  `displayName` are a numeric id and `routeLongName` is empty, at least for this operator;
+- whether the same holds in another country: all of the above is one city on one day;
 - how big a trip region's feeds are once reduced to stops, lines and frequencies, and what their
   licences allow being republished, if the offline fallback is ever needed;
 - the local-file fallback, optional now that GitHub Pages works;
@@ -126,10 +163,24 @@ Every leg starts with the planner's own estimate, computed instantly from the tw
 
 Legs that are part of a plan then get checked against real routes: OSRM for walking and taxi, Transitous for public transport. Results are cached in the trip data, so each leg is asked once, and requests are spaced at least a second apart. A checked leg shows the real time and its source; its card also shows the estimate and flags a big gap between the two.
 
-Public transport has two catches. Timetables are usually only published a few months ahead, so for a trip further out the planner asks about the same weekday and time in the current timetable, and says so. And where Transitous finds no journey, the planner first asks whether it knows any stops nearby at all, so it can say which case it is: no timetable data for that kind of service in the region (Kyoto has rail but seemingly not buses), or no connection at that time.
+Public transport has two catches. Timetables are usually only published a few months ahead, so for a
+trip further out the planner asks about the same weekday and time in the current timetable, and says
+so. And where Transitous finds no journey, the planner asks `/api/v1/reverse-geocode` what stops it
+knows at each end, so it can say which case it is: no data for that kind of service in the region
+(Kyoto has rail but no city buses, confirmed), or no connection at that time.
+
+**Naming a leg.** From `agencyName` and `headsign` — "近畿日本鉄道 towards 京都" — because
+`routeShortName` and `displayName` carry a numeric id and `routeLongName` can be empty. Where a
+short name is a real line number it is used instead.
+
+**Drawing a leg.** Every leg carries `legGeometry`, an encoded polyline, so a checked leg is drawn
+along its real path whatever the mode. Only estimates stay as dashed straight lines.
 
 Without timetables, it falls back to a stop-based estimate. This is the manual method automated:
 - it considers every station and stop within 10 minutes' walk of each end, from the map data, not just the nearest one. Where an end has none, it widens the search to 20 minutes' walk. If there are still none, it gives up on public transport for that leg and says so;
+- **the map queries run in the background.** Overpass took tens of seconds for an 800 m query in the
+  fourth run, so a leg shows its estimate at once and the stops and the line name arrive afterwards,
+  cached in the trip, or never. Nothing waits on them;
 - where OpenStreetMap has the bus and rail lines mapped (fetched through Overpass), it checks which lines serve both a start stop and an end stop, and names the line;
 - it takes the real walking times to and from the stops, estimates the ride from distance, and picks the quickest combination;
 - it suggests public transport only when that clearly beats walking; otherwise the leg stays a walk.
