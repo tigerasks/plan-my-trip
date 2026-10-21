@@ -862,6 +862,89 @@ function startWindows(place, date) {
   return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
 }
 
+// ---------- asking OSRM ----------
+// Real routes on OpenStreetMap's own streets, from the FOSSGIS servers: reasonable non-commercial
+// use, at most one request a second. The walking profile is the one the planner leans on; the car
+// profile answers "what would a taxi do", with an allowance for it reaching you.
+const OSRM = 'https://routing.openstreetmap.de/';
+const OSRM_PROFILE = { walk: { prefix: 'routed-foot', profile: 'foot' }, car: { prefix: 'routed-car', profile: 'driving' } };
+function osrmUrl(from, to, mode) {
+  const p = OSRM_PROFILE[mode];
+  if (!p || !hasPos(from) || !hasPos(to)) return null;
+  // polyline rather than geojson: a few hundred bytes a leg instead of a few thousand, and every
+  // leg is saved in the trip and sent to the chat.
+  return OSRM + p.prefix + '/route/v1/' + p.profile + '/'
+    + from.lng.toFixed(6) + ',' + from.lat.toFixed(6) + ';' + to.lng.toFixed(6) + ',' + to.lat.toFixed(6)
+    + '?overview=full&geometries=polyline';
+}
+// What came back, or null. A shape that does not match the leg is dropped and the time kept.
+function parseOsrm(json, mode, from, to) {
+  const j = obj(json);
+  if (str(j.code) !== 'Ok') return null;
+  const route = arr(j.routes)[0];
+  if (!route) return null;
+  const seconds = toNum(obj(route).duration);
+  const metres = toNum(obj(route).distance);
+  if (seconds == null) return null;
+  let path = typeof route.geometry === 'string' ? route.geometry : null;
+  if (path && !pathLooksRight(decodePath(path, 5), from, to)) path = null;
+  const minutes = Math.max(mode === 'walk' ? 1 : 1, Math.round(seconds / 60)) + (mode === 'car' ? TAXI_PICKUP : 0);
+  return {
+    mode,
+    minutes,
+    km: metres == null ? null : Math.round(metres) / 1000,
+    source: 'osrm',
+    path,
+    name: mode === 'car' ? 'by taxi, with ' + fmtDur(TAXI_PICKUP) + ' to be picked up' : null,
+  };
+}
+
+// ---------- the shape of a route ----------
+// Routes come back as Google-encoded polylines: a few hundred bytes where a list of coordinates
+// would be a few thousand, which matters when every leg of every day is saved and exported.
+//
+// The accumulation is arithmetic rather than bitwise on purpose. MOTIS warns that at precision 7 a
+// longitude beyond 107.37 overflows, and Japan is at 135 — a bitwise decoder would silently produce
+// nonsense there. This one does not, though it cannot repair a shape that was already encoded wrong,
+// which is what `pathLooksRight` is for.
+function decodePath(encoded, precision) {
+  const text = str(encoded, 60000);
+  if (!text) return [];
+  const digits = toNum(precision);
+  const factor = Math.pow(10, digits == null ? 5 : clamp(Math.round(digits), 1, 9));
+  const out = [];
+  let i = 0, lat = 0, lng = 0;
+  while (i < text.length) {
+    let shift = 1, value = 0, byte = 0;
+    do {
+      byte = text.charCodeAt(i++) - 63;
+      if (byte < 0) return out;
+      value += (byte & 0x1f) * shift;
+      shift *= 32;
+    } while (byte >= 0x20 && i < text.length);
+    lat += (value % 2) ? -(value + 1) / 2 : value / 2;
+    shift = 1; value = 0;
+    do {
+      byte = text.charCodeAt(i++) - 63;
+      if (byte < 0) return out;
+      value += (byte & 0x1f) * shift;
+      shift *= 32;
+    } while (byte >= 0x20 && i < text.length);
+    lng += (value % 2) ? -(value + 1) / 2 : value / 2;
+    out.push({ lat: lat / factor, lng: lng / factor });
+    if (out.length > 4000) break;
+  }
+  return out;
+}
+// A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
+// Better no line on the map than a line across the sea.
+const PATH_SLACK = 2;   // km: a route snaps to the road network, so the ends move a little
+function pathLooksRight(points, from, to) {
+  if (!points || points.length < 2) return false;
+  if (!hasPos(from) || !hasPos(to)) return false;
+  return kmBetween(points[0], from) <= PATH_SLACK && kmBetween(points[points.length - 1], to) <= PATH_SLACK;
+}
+
 // ---------- what is known about a leg ----------
 // A leg is between two points of a day: a place, or the day's own `start` and `end`. Keys are
 // directed and looked up exactly — a leg checked one way says nothing about the other, since one-way
@@ -1673,6 +1756,7 @@ const Core = {
   openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
+  decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
