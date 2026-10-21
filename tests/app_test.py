@@ -48,7 +48,9 @@ with sync_playwright() as pw:
     asked = []
     # What Transitous has to say, which the tests turn up and down: a journey or nothing, stops
     # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
-    TRANSIT = {'ride': True, 'stops': True}
+    # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
+    # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
+    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none'}
 
     def services(r):
         u = r.request.url
@@ -56,7 +58,7 @@ with sync_playwright() as pw:
             asked.append(u)
             if 'reverse-geocode' in u:
                 r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitStops'] if TRANSIT['stops'] else []))
-            elif TRANSIT['ride']:
+            elif TRANSIT['ride'] is True or (TRANSIT['ride'] == 'soon' and TRANSIT['far'] not in u):
                 r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitJourney']))
             else:
                 r.fulfill(status=200, headers=H, body=json.dumps({'itineraries': [], 'direct': []}))
@@ -412,6 +414,37 @@ with sync_playwright() as pw:
     ctx.close()
     TRANSIT['ride'] = True
     TRANSIT['stops'] = True
+
+    # ---- a trip further out than the timetables reach
+    # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and
+    # the honest answer is the same weekday in the coming week, said plainly (design doc).
+    far = json.loads(json.dumps(DEMO))
+    base = datetime.date.today() + datetime.timedelta(days=200)
+    moved = {old: (base + datetime.timedelta(days=i)).isoformat()
+             for i, old in enumerate(sorted(far['trip']['days']))}
+    far['trip']['days'] = {moved[k]: dict(v, id=moved[k], date=moved[k]) for k, v in far['trip']['days'].items()}
+    for place in far['trip']['places'].values():
+        if place.get('dayId'):
+            place['dayId'] = moved[place['dayId']]
+    firstDay = moved[sorted(moved)[0]]
+    TRANSIT['ride'] = 'soon'
+    TRANSIT['far'] = 'time=' + firstDay[:8]        # nothing is published for that month
+    ctx, pg = open_page(held=far, extra=services)
+    pg.wait_for_function("() => { const d = window.DayPlannerApp.trip.days['%s'];"
+                         " return ((d.legs['start>example-temple'] || {}).transit || {}).minutes != null; }" % firstDay,
+                         timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['%s'].legs['start>example-temple'].transit" % firstDay)
+    ck(leg['minutes'] == 24, 'a journey is found after all, on the same weekday in the coming week')
+    ck('the same weekday' in leg['detail'] and 'does not reach' in leg['detail'],
+       'and the leg says where its times come from: ' + leg['detail'])
+    ck(leg['departs'][:7] != firstDay[:7], 'the departure it answers for is that other date, not the trip\'s')
+    asked_far = [u for u in asked if '/plan?' in u]
+    ck(any(TRANSIT['far'] in u for u in asked_far), 'the trip\'s own date is still what it asks about first')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('the same weekday' in pg.inner_text('#sheet'), 'and the card says so too')
+    ctx.close()
+    TRANSIT['ride'] = True
 
     # ---- the map
     ctx, pg = open_page(held=DEMO)

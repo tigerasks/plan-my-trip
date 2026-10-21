@@ -618,6 +618,15 @@ tWrong.itineraries[0].legs.forEach((l) => { l.legGeometry.points = C.encodePath(
 ok(C.parseTransit(tWrong, tHotel, tTemple, 'now').path === null, 'a journey drawn across the sea is not drawn at all');
 ok(C.parseTransit(tWrong, tHotel, tTemple, 'now').minutes === 24, 'though its time is still worth keeping');
 
+// Timetables reach only a few months ahead, so a trip beyond that is asked about differently.
+ok(C.farAhead('2026-11-21', '2026-10-21') === true, 'a month and a day out is past where timetables reach');
+ok(C.farAhead('2026-11-20', '2026-10-21') === false, 'a month out is not');
+ok(C.sameWeekdaySoon('2026-11-21', '2026-10-21') === '2026-10-24',
+  'the stand-in is the next Saturday, since the trip day is one: ' + C.sameWeekdaySoon('2026-11-21', '2026-10-21'));
+ok(C.sameWeekdaySoon('2026-10-28', '2026-10-21') === '2026-10-28', 'a week out stands in for itself');
+ok(C.sameWeekdaySoon('2026-10-21', '2026-10-21') === null, 'today is no stand-in: its services may have run');
+ok(C.daysApart('2026-10-21', '2026-11-21') === 31 && C.daysApart('x', 'y') === null, 'and days count plainly');
+
 console.log('\n== Local time, where the trip is ==');
 ok(C.goodZone('Asia/Tokyo') && !C.goodZone('Mars/Olympus') && !C.goodZone(''),
   'a time zone is only kept if the browser knows it');

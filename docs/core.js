@@ -1092,6 +1092,29 @@ function minutesOfDay(instantISO, tz) {
   return local.getUTCHours() * 60 + local.getUTCMinutes();
 }
 
+// Timetables are usually published only a few months ahead, so a trip further out gets nothing
+// back — not because nothing runs, but because nobody has said yet what will. The nearest honest
+// answer is the same weekday in the coming week, said plainly as what it is (design doc,
+// "Travel times").
+const TIMETABLE_REACH = 30;        // days: past this, an empty answer says more about the timetable
+const daysApart = (fromISO, toISO) => {
+  const a = Date.parse(str(fromISO).slice(0, 10) + 'T00:00:00Z');
+  const b = Date.parse(str(toISO).slice(0, 10) + 'T00:00:00Z');
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 86400000) : null;
+};
+const farAhead = (dateISO, todayISO) => {
+  const days = daysApart(todayISO, dateISO);
+  return days != null && days > TIMETABLE_REACH;
+};
+// The next date with the same weekday, never today: today's services may already have run.
+function sameWeekdaySoon(dateISO, todayISO) {
+  const want = Date.parse(str(dateISO).slice(0, 10) + 'T00:00:00Z');
+  const now = Date.parse(str(todayISO).slice(0, 10) + 'T00:00:00Z');
+  if (!Number.isFinite(want) || !Number.isFinite(now) || want <= now) return null;
+  const shift = ((new Date(want).getUTCDay() - new Date(now).getUTCDay()) + 7) % 7 || 7;
+  return new Date(now + shift * 86400000).toISOString().slice(0, 10);
+}
+
 // ---------- asking Transitous ----------
 // Public transport from Transitous, which runs MOTIS over timetables that transit agencies publish.
 // Free for open-source, non-commercial use; the browser identifies itself through the Referer and
@@ -1995,7 +2018,8 @@ const Core = {
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
-  TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
+  TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,

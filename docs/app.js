@@ -1230,20 +1230,35 @@ function whyNoJourney(from, to, departs) {
 // would. An answer that says nothing is still kept, with the reason: it stops the planner asking
 // the same question of the same service over and over.
 function askTransit(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
   const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
   const departs = departureOf(dayId, fromId, toId);
   const url = departs ? C.transitUrl(from, to, departs) : null;
-  if (!url) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
+  if (!url || !day) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
+  const now = new Date().toISOString();
   const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
+  const nothing = () => whyNoJourney(from, to, departs).then((why) => {
+    keep({ asked: now, departs, source: 'transitous', detail: why });
+    return null;
+  });
   return Live.fetchJson(url).then((json) => {
     const got = C.parseTransit(json, from, to, departs);
-    const now = new Date().toISOString();
     if (got) { keep(Object.assign({ at: now }, got)); return got; }
+    // Keep the empty answer straight away, so nothing asks again while the rest is worked out.
     keep({ asked: now, departs, source: 'transitous' });
-    return whyNoJourney(from, to, departs).then((why) => {
-      keep({ asked: now, departs, source: 'transitous', detail: why });
-      return null;
-    });
+    // Before deciding nothing runs, see whether the timetable reaches that far at all.
+    const instead = C.farAhead(day.date, isoToday()) ? C.sameWeekdaySoon(day.date, isoToday()) : null;
+    const when = instead ? C.instantOf(instead, C.minutesOfDay(departs, App.trip.tz), App.trip.tz) : null;
+    const other = when ? C.transitUrl(from, to, when) : null;
+    if (!other) return nothing();
+    return Live.fetchJson(other).then((json2) => {
+      const ride = C.parseTransit(json2, from, to, when);
+      if (!ride) return nothing();
+      ride.detail = 'Times from ' + C.fmtDateUK(instead) + ', the same weekday: the timetable does not '
+        + 'reach ' + C.fmtDateUK(day.date) + ' yet.' + (ride.detail ? ' · ' + ride.detail : '');
+      keep(Object.assign({ at: now }, ride));
+      return ride;
+    }, () => nothing());
   });
 }
 
