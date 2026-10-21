@@ -12,6 +12,7 @@ JS = {'Content-Type': 'application/javascript'}
 CSS = {'Content-Type': 'text/css'}
 JSON_H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 NO_ROUTE = '{"code": "NoRoute", "routes": []}'
+NO_JOURNEY = '{"itineraries": [], "direct": []}'
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -39,6 +40,10 @@ def offline(base, extra=None):
             return r.continue_()
         if extra and extra(r):
             return None
+        if 'api.transitous.org' in u:
+            # As with OSRM: the planner asks about the legs of a day by itself, so an unanswered
+            # request would be a console error in every test. "No journey" leaves the estimate.
+            return r.fulfill(status=200, body=NO_JOURNEY, headers=JSON_H)
         if 'routing.openstreetmap.de' in u:
             # The planner checks a plan's legs by itself, so every page asks OSRM sooner or later.
             # Unless a test answers for it, it gets a polite "no route": the estimates stand, and a

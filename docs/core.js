@@ -1429,7 +1429,8 @@ function planDay(trip, dayId, key, order) {
     const waited = at - arrive;
     wait += waited;
     visit += p.duration;
-    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: p.id }, leg));
+    // `leaves` is when you would set off, which is the only thing a timetable can be asked about.
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: p.id, leaves: t }, leg));
     items.push({
       type: 'visit', id: p.id, name: p.name, place: p, leg,
       arrive, at, until: at + p.duration, waited,
@@ -1444,7 +1445,7 @@ function planDay(trip, dayId, key, order) {
     if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
-    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: 'end' }, leg));
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: 'end', leaves: t }, leg));
     items.push({ type: 'end', name: end.name, at: finish, place: end });
     if (endBy != null && finish > endBy) {
       flag('error', 'You would be back ' + fmtTime(finish) + ', ' + fmtDur(finish - endBy) + ' after ' + hhmm(endBy), 'end');

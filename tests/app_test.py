@@ -49,6 +49,15 @@ with sync_playwright() as pw:
 
     def services(r):
         u = r.request.url
+        if 'api.transitous.org' in u:
+            asked.append(u)
+            if 'reverse-geocode' in u:
+                r.fulfill(status=200, headers=H, body=json.dumps([] if 'nostops' in u else FIX['transitStops']))
+            elif 'noride' in u:
+                r.fulfill(status=200, headers=H, body=json.dumps({'itineraries': [], 'direct': []}))
+            else:
+                r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitJourney']))
+            return True
         if 'routing.openstreetmap.de' in u:
             asked.append(u)
             if 'nowhere' in u:
@@ -181,19 +190,28 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(150)
 
     # Left alone for a moment, the planner checks the legs of the plan itself, one at a time: there
-    # is no point making someone open every card to ask (design doc, decision 8). Walking is what
-    # OSRM can always answer, and it is the time a ride has to beat.
+    # is no point making someone open every card to ask (design doc, decision 8). Walking is asked
+    # of OSRM on every leg, since it is what a ride has to beat; the timetables are only asked about
+    # where the planner expects you to ride.
     asked.clear()
     pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs || {};"
-                         " const k = Object.keys(l);"
-                         " return k.length === 2 && k.every((x) => (l[x].walk || {}).source === 'osrm'); }",
-                         timeout=30000)
+                         " const k = Object.keys(l); return k.length === 2 && k.every((x) =>"
+                         " (l[x].walk || {}).source === 'osrm' && (l[x].transit || {}).source === 'transitous'); }",
+                         timeout=40000)
     routes = [u for u in asked if 'routing.openstreetmap.de' in u]
+    rides = [u for u in asked if 'api.transitous.org' in u]
     ck(len(routes) == 2 and all('routed-foot/route/v1/foot/' in u for u in routes),
        'both legs of the plan get their walking time without being asked: %d calls' % len(routes))
+    ck(len(rides) == 2 and all('/api/v6/plan?' in u for u in rides),
+       'and both get asked of the timetables: %d calls' % len(rides))
+    ck('fromPlace=34.985800,135.758800' in rides[0], 'with the ends latitude first, as Transitous wants')
+    ck('time=2026-11-20T23%3A30%3A00.000Z' in rides[0],
+       'for the instant you would set off, 08:30 in Kyoto: ' + rides[0].split('time=')[1])
     ck(pg.evaluate('window.DayPlannerLive.idle()') is True, 'and the planner is quiet again afterwards')
-    ck('≈' in pg.inner_text('.timeline'),
-       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
+    ck('✓ checked' in pg.inner_text('.timeline'), 'the timeline stops guessing at the legs')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'and uses the ride, which clearly beats half an hour on foot: '
+       + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
 
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
@@ -201,12 +219,17 @@ with sync_playwright() as pw:
     ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
        'naming both ends: ' + pg.inner_text('.sh-sub'))
     labels = pg.locator('#sheet .facts.legs dt').all_text_contents()
-    ck(labels == ['Walking', 'Estimate'], 'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
+    ck(labels == ['Walking', 'Train or bus', 'Estimate'],
+       'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
     ck('31 min' in pg.inner_text('#sheet') and 'OSRM' in pg.inner_text('#sheet'),
        'with the real walking time and who said so')
     ck('2.3 km' in pg.inner_text('#sheet'), 'and how far it is on foot')
+    ck('近畿日本鉄道 towards 京都' in pg.inner_text('#sheet'),
+       'the ride is named from who runs it and where it is heading')
+    ck('walk 13 min to 東寺 · 2 min to 京都 · walk 9 min' in pg.inner_text('#sheet'),
+       'and spelled out step by step')
     ck('in use' in pg.inner_text('#sheet .facts.legs dd >> nth=1'),
-       'the estimate is still the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
+       'the ride is the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
 
     # putting the walk in its place, since the choice is yours
     pg.click('[data-act="pick-leg"][data-mode="walk"]')
@@ -243,7 +266,8 @@ with sync_playwright() as pw:
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the card stays open, so you can change your mind')
     pg.click('[data-act="drop-my-leg"]')
     pg.wait_for_timeout(900)
-    ck('≈' in pg.inner_text('.timeline'), 'forgetting it leaves the planner to choose again')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'forgetting it leaves the planner to choose again, which brings back the ride')
 
     # a taxi, which is never assumed: it is there once you ask
     asked.clear()
@@ -255,7 +279,8 @@ with sync_playwright() as pw:
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
     ck(leg['car']['minutes'] == 10, 'and keeps it with the allowance for being picked up: %d min' % leg['car']['minutes'])
     ck(leg['walk']['minutes'] == 31, 'beside the walk, which it does not touch')
-    ck('≈' in pg.inner_text('.timeline'), 'the leg itself is unchanged, since a taxi is a decision')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'the leg itself is unchanged, since taking a taxi is a decision')
     ck('picked up' in pg.inner_text('#sheet'), 'the card says why a taxi takes longer than the driving time')
     ck('By taxi' in pg.locator('#sheet .facts.legs dt').all_text_contents(), 'and lists it as one of the ways')
     pg.screenshot(path=str(SHOTS / 'app_leg_desktop_light.png'))

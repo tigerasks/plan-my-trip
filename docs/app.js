@@ -915,7 +915,15 @@ const SHEETS = {
     if (rec.mine) rows.push(row('Your time', esc(C.fmtDur(rec.mine.minutes)), inUse('mine')));
     for (const m of C.LEG_MODES) {
       const slot = rec[m];
-      if (!slot || slot.minutes == null) continue;
+      if (!slot) continue;
+      // A service that was asked and had nothing to say is worth a line of its own: it is the
+      // difference between "not looked at" and "looked at, and there is nothing there".
+      if (slot.minutes == null) {
+        rows.push(row(LEG_LABEL[m], '<span class="muted">nothing came back</span>',
+          [LEG_FROM[slot.source] || '', slot.asked ? C.fmtDateUK(slot.asked.slice(0, 10)) : '']
+            .filter(Boolean).join(' · '), slot.detail || ''));
+        continue;
+      }
       rows.push(row(LEG_LABEL[m], esc(C.fmtDur(slot.minutes)),
         [LEG_FROM[slot.source] || 'checked', slot.km != null ? slot.km.toFixed(1) + ' km' : '',
           slot.at ? C.fmtDateUK(slot.at.slice(0, 10)) : '', inUse(m)].filter(Boolean).join(' · '),
@@ -945,11 +953,12 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">Check it for real</span>'
       + '<div class="actions">'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="walk">Walking</button>'
+      + '<button type="button" class="btn" data-act="check-leg" data-mode="transit">Public transport</button>'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="car">By taxi</button>'
       + '</div>'
-      + '<p class="hint">Real streets from OSRM, a second between requests, and the answer kept in the '
-      + 'trip so the same leg is never asked twice. Each way is kept beside the others, so checking '
-      + 'the taxi never loses the walk.</p></div>'
+      + '<p class="hint">Real streets from OSRM, timetables from Transitous, a second between '
+      + 'requests, and the answer kept in the trip so the same leg is never asked twice. Each way '
+      + 'is kept beside the others, so checking the taxi never loses the walk.</p></div>'
       + '<div class="sh-sec"><span class="label">Your own time</span>'
       + '<p class="note">If you know how long this takes, say so. It wins over everything else.</p>'
       + legTimeWheels(rec.mine ? rec.mine.minutes : info.minutes)
@@ -1182,27 +1191,67 @@ function askOsrm(dayId, fromId, toId, mode) {
   });
 }
 
+// When you would set off on this leg, as the instant a timetable can be asked about. It comes from
+// the plan on screen, so moving a stop about changes which departures the planner looks up.
+function departureOf(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
+  if (!day) return null;
+  const plan = C.planDay(App.trip, dayId);
+  const item = plan && plan.items.find((it) => it.type === 'travel' && it.fromId === fromId && it.toId === toId);
+  return item && item.leaves != null ? C.instantOf(day.date, item.leaves, App.trip.tz) : null;
+}
+
+// Ask Transitous what public transport would do with this leg, leaving when the plan says you
+// would. An answer that says nothing is still kept: it stops the planner asking the same question
+// of the same service over and over.
+function askTransit(dayId, fromId, toId) {
+  const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
+  const departs = departureOf(dayId, fromId, toId);
+  const url = departs ? C.transitUrl(from, to, departs) : null;
+  if (!url) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
+  return Live.fetchJson(url).then((json) => {
+    const got = C.parseTransit(json, from, to, departs);
+    const now = new Date().toISOString();
+    C.setLeg(App.trip, dayId, fromId, toId,
+      { transit: got ? Object.assign({ at: now }, got) : { asked: now, departs, source: 'transitous' } });
+    changed();
+    return got;
+  });
+}
+
 // The same check, asked for from a leg card. The card may have been closed or moved on by the time
 // the answer comes, so the sheet is only touched if it is still the same one.
+const NO_ANSWER = {
+  walk: 'OSRM could not find a way between these two.',
+  car: 'OSRM could not find a way between these two.',
+  transit: 'Transitous found no journey leaving then.',
+};
+const SERVICE_OF = { walk: 'OSRM', car: 'OSRM', transit: 'Transitous' };
 function checkLeg(dayId, fromId, toId, mode) {
   const sheet = App.ui.sheet;
   const mine = () => (App.ui.sheet === sheet ? sheet : null);
-  if (!C.osrmUrl(C.pointOf(App.trip, dayId, fromId), C.pointOf(App.trip, dayId, toId), mode)) {
+  const ask = mode === 'transit'
+    ? () => askTransit(dayId, fromId, toId)
+    : () => askOsrm(dayId, fromId, toId, mode);
+  if (mode !== 'transit' && !C.osrmUrl(C.pointOf(App.trip, dayId, fromId), C.pointOf(App.trip, dayId, toId), mode)) {
     if (mine()) { sheet.error = 'One end of this leg has no position, so there is nothing to ask about.'; render(); }
     return Promise.resolve(null);
   }
   if (mine()) { sheet.busy = true; sheet.error = ''; render(); }
-  return askOsrm(dayId, fromId, toId, mode).then(
+  return ask().then(
     (got) => {
       if (mine()) {
         sheet.busy = false;
-        if (!got) sheet.error = 'OSRM could not find a way between these two.';
+        if (!got) sheet.error = NO_ANSWER[mode];
         render();
       }
       return got;
     },
     (err) => {
-      if (mine()) { sheet.busy = false; sheet.error = 'OSRM ' + Live.why(err) + '. The estimate still stands.'; }
+      if (mine()) {
+        sheet.busy = false;
+        sheet.error = SERVICE_OF[mode] + ' ' + Live.why(err) + '. The estimate still stands.';
+      }
       render();
       return null;
     });
@@ -1222,10 +1271,13 @@ function sweepWants() {
   const plan = C.planDay(App.trip, App.ui.dayId);
   if (!plan) return [];
   // The walking time is worth having on every leg, even a long one: it is what a ride has to beat,
-  // and it is the one thing OSRM can always answer. A ride itself waits for Transitous.
-  return plan.items
-    .filter((it) => it.type === 'travel' && !it.unknown && it.fromId && it.toId && !(it.known || {}).walk)
-    .map((it) => ({ dayId: App.ui.dayId, fromId: it.fromId, toId: it.toId, mode: 'walk' }))
+  // and it is the one thing OSRM can always answer. Timetables are only worth asking about where
+  // the planner expects you to ride, and they are the slower, scarcer service of the two.
+  const legs = plan.items.filter((it) => it.type === 'travel' && !it.unknown && it.fromId && it.toId);
+  const want = (it, mode) => ({ dayId: App.ui.dayId, fromId: it.fromId, toId: it.toId, mode });
+  return legs.filter((it) => !(it.known || {}).walk).map((it) => want(it, 'walk'))
+    .concat(legs.filter((it) => it.guessMode === 'transit' && !(it.known || {}).transit)
+      .map((it) => want(it, 'transit')))
     .filter((w) => !Sweep.tried[sweepKey(w)]);
 }
 function sweepSoon() {
@@ -1242,7 +1294,8 @@ function sweepStep() {
   Sweep.tried[sweepKey(w)] = true;
   Sweep.going = true;
   const done = () => { Sweep.going = false; if (sweepWants().length) sweepSoon(); };
-  askOsrm(w.dayId, w.fromId, w.toId, w.mode).then(done, done);
+  const ask = w.mode === 'transit' ? askTransit(w.dayId, w.fromId, w.toId) : askOsrm(w.dayId, w.fromId, w.toId, w.mode);
+  ask.then(done, done);
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
