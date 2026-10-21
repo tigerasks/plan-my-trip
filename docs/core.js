@@ -1311,8 +1311,9 @@ function stopSlot(plan, line, now) {
     source: 'stops',
     at: str(now, 32) || null,
     name: words ? 'probably the ' + words : null,
+    // The line is named once, in `name`; here it is only what kind of ride it is.
     detail: 'walk ' + fmtDur(plan.walkOn) + (plan.from.name ? ' to ' + plan.from.name : ' to the stop')
-      + ' · ≈ ' + fmtDur(plan.ride) + (words ? ' on the ' + words : ride)
+      + ' · ≈ ' + fmtDur(plan.ride) + ride
       + ' · walk ' + fmtDur(plan.walkOff) + (plan.to.name ? ' from ' + plan.to.name : ''),
   };
 }

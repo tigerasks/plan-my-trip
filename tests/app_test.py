@@ -241,7 +241,10 @@ with sync_playwright() as pw:
     ck('24 min train or bus' in pg.inner_text('.timeline'),
        'and uses the ride, which clearly beats half an hour on foot: '
        + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
+    ck('近畿日本鉄道 towards 京都' in pg.inner_text('.timeline'),
+       'with the line named in the plan itself, not only on the card')
 
+    pg.screenshot(path=str(SHOTS / 'app_checked_desktop_light.png'))
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
@@ -470,6 +473,7 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(300)
     ck('from the stops nearby' in pg.inner_text('#sheet'), 'the card says where the time came from')
     ck(leg['detail'] in pg.inner_text('#sheet'), 'and spells the journey out')
+    pg.screenshot(path=str(SHOTS / 'app_stops_desktop_light.png'))
     ctx.close()
 
     # where the map has nothing either, the planner says so and stops asking

@@ -503,9 +503,11 @@ const LEG_FROM = { osrm: 'OSRM', transitous: 'Transitous', stops: 'from the stop
 function legWords(it) {
   if (it.unknown) return '<span class="muted">travel time unknown</span>';
   const how = esc(C.MODE_WORD[it.mode] || '');
-  if (it.by === 'you') return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">· your own time</span>';
-  if (it.estimate === false) return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">✓ checked</span>';
-  return '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + how;
+  // Which line it is matters as much as how long it takes, where anyone has said.
+  const line = it.name ? '<span class="by line">' + esc(it.name) + '</span>' : '';
+  if (it.by === 'you') return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">· your own time</span>' + line;
+  if (it.estimate === false) return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">✓ checked</span>' + line;
+  return '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + how + line;
 }
 function summaryChipHtml(P) {
   const n = P.summary.errors;
