@@ -489,6 +489,11 @@ function timelineHtml(P) {
   if (!tailDone) out.push(plusRow('plan', n, 'Add a stop', 'Add a stop at the end'));
   return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
 }
+// How each way of making a leg is named on its card, and who said so.
+const LEG_LABEL = { walk: 'Walking', transit: 'Train or bus', car: 'By taxi' };
+// What the planner would have guessed for that same way, to compare a checked time against.
+const EST_OF = { walk: 'walkMinutes', transit: 'rideMinutes', car: 'carMinutes' };
+const LEG_FROM = { osrm: 'OSRM', transitous: 'Transitous', stops: 'from the stops nearby' };
 // ≈ for the planner's own guess, ✓ for a route that was checked, and your own time said plainly.
 function legWords(it) {
   if (it.unknown) return '<span class="muted">travel time unknown</span>';
@@ -887,47 +892,66 @@ const SHEETS = {
       + '<div id="asResults">' + addFoundHtml(s) + '</div>';
   },
 
-  // One leg of a day: what the planner guessed, what the route services said, and what you know.
+  // One leg of a day: what the planner guessed, what each service said about each way of making it,
+  // and what you know. Whichever is in use says so, and any other way can be put in its place.
   leg: (s) => {
     const day = currentDay();
     if (!day) return sheetHead('That leg has gone');
     const from = C.pointOf(App.trip, day.id, s.from), to = C.pointOf(App.trip, day.id, s.to);
     const info = C.legBetween(App.trip, day.id, s.from, s.to, C.calibration(App.trip, day.city));
-    const rec = C.legFor(App.trip, day.id, s.from, s.to);
+    const rec = C.legFor(App.trip, day.id, s.from, s.to) || {};
     const name = (p, id) => (p && p.name) || (id === 'start' ? 'where the day starts' : id === 'end' ? 'where it ends' : 'somewhere');
-    const row = (label, value, note) => '<dt>' + esc(label) + '</dt><dd>' + value
-      + (note ? ' <span class="by">' + esc(note) + '</span>' : '') + '</dd>';
+    const row = (label, value, note, more) => '<dt>' + esc(label) + '</dt><dd>' + value
+      + (note ? ' <span class="by">' + esc(note) + '</span>' : '')
+      + (more ? '<span class="by line">' + esc(more) + '</span>' : '') + '</dd>';
+    const used = info.by === 'you' ? 'mine' : (info.estimate ? 'estimate' : info.mode);
+    const inUse = (which) => (used === which ? 'in use' : '');
     const rows = [];
-    if (rec && rec.mine) rows.push(row('Your time', esc(C.fmtDur(rec.mine.minutes)), 'this is the one in use'));
-    if (rec && rec.minutes != null) {
-      rows.push(row('Checked', esc(C.fmtDur(rec.minutes) + ' ' + (C.MODE_WORD[rec.mode] || '')),
-        [rec.source === 'osrm' ? 'OSRM' : rec.source === 'transitous' ? 'Transitous' : rec.source === 'stops' ? 'from the stops nearby' : '',
-          rec.km != null ? rec.km.toFixed(1) + ' km' : '',
-          rec.at ? C.fmtDateUK(rec.at.slice(0, 10)) : ''].filter(Boolean).join(' · ')));
+    if (rec.mine) rows.push(row('Your time', esc(C.fmtDur(rec.mine.minutes)), inUse('mine')));
+    for (const m of C.LEG_MODES) {
+      const slot = rec[m];
+      if (!slot || slot.minutes == null) continue;
+      rows.push(row(LEG_LABEL[m], esc(C.fmtDur(slot.minutes)),
+        [LEG_FROM[slot.source] || 'checked', slot.km != null ? slot.km.toFixed(1) + ' km' : '',
+          slot.at ? C.fmtDateUK(slot.at.slice(0, 10)) : '', inUse(m)].filter(Boolean).join(' · '),
+        [slot.name, slot.detail].filter(Boolean).join(' · ')));
     }
-    if (info.guess != null) rows.push(row('Estimate', '≈ ' + esc(C.fmtDur(info.guess)), 'from the distance'));
-    const gap = rec && rec.minutes != null && info.guess != null ? Math.abs(rec.minutes - info.guess) : 0;
+    if (info.guess != null) {
+      rows.push(row('Estimate', '≈ ' + esc(C.fmtDur(info.guess)),
+        [C.MODE_WORD[info.guessMode] || '', 'from the distance', inUse('estimate')].filter(Boolean).join(' · ')));
+    }
+    // The gap worth pointing out is between the checked time and what the planner would have
+    // guessed for the same way — not against a guess about a different one.
+    const guessedWay = used === 'estimate' || used === 'mine' ? null : info[EST_OF[used]];
+    const gap = guessedWay != null && info.checked != null ? Math.abs(info.checked - guessedWay) : 0;
+    const swaps = C.LEG_MODES.filter((m) => rec[m] && rec[m].minutes != null && m !== used);
     return sheetHead('This leg', name(from, s.from) + ' → ' + name(to, s.to))
-      + (rec && rec.name ? '<p class="note">' + esc(rec.name) + '</p>' : '')
-      + (rec && rec.detail ? '<p class="note">' + esc(rec.detail) + '</p>' : '')
       + (rows.length ? '<dl class="facts legs">' + rows.join('') + '</dl>' : '')
       + (gap >= 10 ? '<p class="note amber">The estimate is ' + esc(C.fmtDur(gap)) + ' out. The checked time is the one to trust.</p>' : '')
       + (s.busy ? '<p class="note">Asking…</p>' : '')
       + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+      + (swaps.length || rec.pick
+        ? '<div class="sh-sec"><span class="label">Which one to use</span><div class="actions">'
+          + swaps.map((m) => '<button type="button" class="btn" data-act="pick-leg" data-mode="' + m + '">'
+            + esc('Use the ' + C.MODE_WORD[m]) + '</button>').join('')
+          + (rec.pick ? '<button type="button" class="btn" data-act="pick-leg" data-mode="">Let the planner choose</button>' : '')
+          + '</div></div>'
+        : '')
       + '<div class="sh-sec"><span class="label">Check it for real</span>'
       + '<div class="actions">'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="walk">Walking</button>'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="car">By taxi</button>'
       + '</div>'
       + '<p class="hint">Real streets from OSRM, a second between requests, and the answer kept in the '
-      + 'trip so the same leg is never asked twice. The last check is the one the timeline uses.</p></div>'
+      + 'trip so the same leg is never asked twice. Each way is kept beside the others, so checking '
+      + 'the taxi never loses the walk.</p></div>'
       + '<div class="sh-sec"><span class="label">Your own time</span>'
       + '<p class="note">If you know how long this takes, say so. It wins over everything else.</p>'
-      + legTimeWheels(rec && rec.mine ? rec.mine.minutes : info.minutes)
+      + legTimeWheels(rec.mine ? rec.mine.minutes : info.minutes)
       + '<div class="actions"><button type="button" class="btn primary" data-act="save-my-leg">Use my time</button>'
-      + (rec && rec.mine ? '<button type="button" class="btn" data-act="drop-my-leg">Forget it</button>' : '')
+      + (rec.mine ? '<button type="button" class="btn" data-act="drop-my-leg">Forget it</button>' : '')
       + '</div></div>'
-      + (rec ? '<div class="sh-sec"><span class="label">Start again</span>'
+      + (rows.length ? '<div class="sh-sec"><span class="label">Start again</span>'
         + '<button type="button" class="btn danger" data-act="forget-leg">Forget what is known about this leg</button></div>' : '');
   },
 
@@ -1134,29 +1158,39 @@ function openPlace(id) {
   openSheet('place', { id: id });
 }
 
-// Ask OSRM what a leg really takes, and keep the answer in the trip. The card may have been closed
-// or moved on by the time it answers, so the sheet is only touched if it is still the same one.
-function checkLeg(dayId, fromId, toId, mode) {
+// Ask OSRM what a leg really takes and keep the answer against that leg. Nothing on screen waits
+// for it: the estimate stands until the answer lands, and keeps standing if it never does.
+function askOsrm(dayId, fromId, toId, mode) {
   const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
   const url = C.osrmUrl(from, to, mode);
+  if (!url) return Promise.reject(new Error('one end of this leg has no position'));
+  return Live.fetchJson(url).then((json) => {
+    const got = C.parseOsrm(json, mode, from, to);
+    const slot = {};
+    slot[mode] = Object.assign({ at: new Date().toISOString() }, got || { asked: new Date().toISOString() });
+    C.setLeg(App.trip, dayId, fromId, toId, slot);
+    changed();
+    return got;
+  });
+}
+
+// The same check, asked for from a leg card. The card may have been closed or moved on by the time
+// the answer comes, so the sheet is only touched if it is still the same one.
+function checkLeg(dayId, fromId, toId, mode) {
   const sheet = App.ui.sheet;
   const mine = () => (App.ui.sheet === sheet ? sheet : null);
-  if (!url) {
+  if (!C.osrmUrl(C.pointOf(App.trip, dayId, fromId), C.pointOf(App.trip, dayId, toId), mode)) {
     if (mine()) { sheet.error = 'One end of this leg has no position, so there is nothing to ask about.'; render(); }
     return Promise.resolve(null);
   }
   if (mine()) { sheet.busy = true; sheet.error = ''; render(); }
-  return Live.fetchJson(url).then(
-    (json) => {
-      const got = C.parseOsrm(json, mode, from, to);
-      if (mine()) sheet.busy = false;
-      if (!got) {
-        if (mine()) sheet.error = 'OSRM could not find a way between these two.';
+  return askOsrm(dayId, fromId, toId, mode).then(
+    (got) => {
+      if (mine()) {
+        sheet.busy = false;
+        if (!got) sheet.error = 'OSRM could not find a way between these two.';
         render();
-        return null;
       }
-      C.setLeg(App.trip, dayId, fromId, toId, Object.assign({ at: new Date().toISOString() }, got));
-      changed();
       return got;
     },
     (err) => {
@@ -1648,15 +1682,25 @@ const ACTIONS = {
     const s = App.ui.sheet, day = currentDay();
     if (s && day) checkLeg(day.id, s.from, s.to, el.dataset.mode);
   },
+  // Which of the known ways the leg should use. An empty mode hands the choice back to the planner.
+  'pick-leg': (el) => {
+    const s = App.ui.sheet, day = currentDay();
+    const mode = el.dataset.mode || null;
+    C.setLeg(App.trip, day.id, s.from, s.to, { pick: mode });
+    changed(mode ? 'Using the ' + C.MODE_WORD[mode] : 'The planner chooses again');
+  },
   'save-my-leg': () => {
     const s = App.ui.sheet, day = currentDay();
-    C.setLeg(App.trip, day.id, s.from, s.to, { mine: { minutes: legTimeOf(), at: new Date().toISOString() } });
+    const info = C.legBetween(App.trip, day.id, s.from, s.to, C.calibration(App.trip, day.city));
+    // Kept with the way it is about, so it teaches the estimate for that way and not another.
+    C.setLeg(App.trip, day.id, s.from, s.to,
+      { mine: { minutes: legTimeOf(), mode: info.mode, at: new Date().toISOString() } });
     changed('Your time: ' + C.fmtDur(legTimeOf()));
   },
   'drop-my-leg': () => {
     const s = App.ui.sheet, day = currentDay();
     C.setLeg(App.trip, day.id, s.from, s.to, { mine: null });
-    changed('Back to what was checked');
+    changed('Back to what the planner has');
   },
   'forget-leg': () => {
     const s = App.ui.sheet, day = currentDay();

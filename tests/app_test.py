@@ -179,62 +179,89 @@ with sync_playwright() as pw:
     # ---- a leg of the day
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
+
+    # The walking time of a leg, asked for from its card. It is what a ride has to beat, so it is
+    # worth knowing even where walking is not what you would do.
+    asked.clear()
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
     ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
        'naming both ends: ' + pg.inner_text('.sh-sub'))
-    ck('Estimate' in pg.locator('#sheet dt').all_text_contents(), 'and showing the estimate it is using')
+    pg.click('[data-act="check-leg"][data-mode="walk"]')
+    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).walk || {}).source === 'osrm'", timeout=15000)
+    pg.wait_for_timeout(300)
+    routes = [u for u in asked if 'routing.openstreetmap.de' in u]
+    ck(len(routes) == 1 and 'routed-foot/route/v1/foot/' in routes[0], 'checking asks OSRM for the walking profile')
+    ck('≈' in pg.inner_text('.timeline'),
+       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
+    labels = pg.locator('#sheet .facts.legs dt').all_text_contents()
+    ck(labels == ['Walking', 'Estimate'], 'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
+    ck('31 min' in pg.inner_text('#sheet') and 'OSRM' in pg.inner_text('#sheet'),
+       'with the real walking time and who said so')
+    ck('2.3 km' in pg.inner_text('#sheet'), 'and how far it is on foot')
+    ck('in use' in pg.inner_text('#sheet .facts.legs dd >> nth=1'),
+       'the estimate is still the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
+
+    # putting the walk in its place, since the choice is yours
+    pg.click('[data-act="pick-leg"][data-mode="walk"]')
+    pg.wait_for_timeout(900)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['pick'] == 'walk', 'you can tell it to use the walk instead')
+    ck('✓ checked' in pg.inner_text('.timeline'), 'and the timeline stops guessing at that leg')
+    ck('31 min walk' in pg.inner_text('.timeline'), 'using the checked time: '
+       + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
+    real = pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")
+    dashed = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(real) == 1 and len(real[0]) > 2,
+       'the map draws that leg along its real path, not as a straight line: %d hops, %d points'
+       % (len(real), len(real[0]) if real else 0))
+    ck(len(dashed) == 1, 'leaving the hop that is still guessed dashed: %d' % len(dashed))
+    ck('min out' in pg.inner_text('#sheet'), 'the card says how far out the guess for that same way was: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'out.' in l][0])
+    pg.click('[data-act="pick-leg"][data-mode=""]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].pick") is None,
+       'and you can hand the choice back to the planner')
+
+    # your own time, which beats everything
     ck(pg.locator('#legH').count() == 1 and pg.locator('#legM .wheel-item').count() == 60,
-       'with wheels to enter your own time, minute by minute')
+       'the card has wheels to enter your own time, minute by minute')
     pg.click('#legM .wheel-item[data-v="12"]')
     pg.click('[data-act="save-my-leg"]')
     pg.wait_for_timeout(900)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
     ck(leg['mine']['minutes'] == 12, 'which is kept against that leg')
+    ck(leg['walk']['minutes'] == 31, 'without losing what was checked')
     ck('your own time' in pg.inner_text('.timeline'), 'and the timeline says whose time it is showing')
     ck('12 min' in pg.inner_text('.timeline'), 'using it: ' + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'own time' in l][0])
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the card stays open, so you can change your mind')
     pg.click('[data-act="drop-my-leg"]')
     pg.wait_for_timeout(900)
-    ck('≈' in pg.inner_text('.timeline'), 'forgetting it goes back to the estimate')
+    ck('≈' in pg.inner_text('.timeline'), 'forgetting it leaves the planner to choose again')
 
-    # checking it for real
+    # a taxi, which is never assumed: it is there once you ask
     asked.clear()
-    pg.click('[data-act="check-leg"][data-mode="walk"]')
-    pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs;"
-                         " return l && l['start>example-temple'] && l['start>example-temple'].source === 'osrm'; }",
-                         timeout=15000)
-    pg.wait_for_timeout(300)
-    ck(len(asked) == 1 and 'routed-foot/route/v1/foot/' in asked[0], 'checking asks OSRM for the walking profile')
-    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
-    ck(leg['minutes'] == 31 and leg['source'] == 'osrm', 'and the real time is kept: %d min' % leg['minutes'])
-    ck(leg['km'] == 2.31 and leg['path'], 'with the distance and the shape of the route')
-    real = pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")
-    dashed = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
-    ck(len(real) == 1 and len(real[0]) > 2,
-       'and the map draws it along the real path, not as a straight line: %d hops, %d points'
-       % (len(real), len(real[0]) if real else 0))
-    ck(len(dashed) == 1, 'leaving the hop back to the hotel, which nobody has checked, dashed: %d' % len(dashed))
-    ck('✓ checked' in pg.inner_text('.timeline'), 'the timeline marks it as checked rather than guessed')
-    ck('Estimate' in pg.locator('#sheet dt').all_text_contents() and 'Checked' in pg.locator('#sheet dt').all_text_contents(),
-       'and the card shows the guess against the real time')
-    ck('is 11 min out' in pg.inner_text('#sheet'), 'saying how far out the guess was: '
-       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'out.' in l][0])
-
     pg.click('[data-act="check-leg"][data-mode="car"]')
-    pg.wait_for_function("() => window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].mode === 'car'",
-                         timeout=15000)
+    pg.wait_for_function("() => (window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].car || {})"
+                         ".minutes != null", timeout=15000)
     pg.wait_for_timeout(300)
+    ck([u for u in asked if 'routed-car/route/v1/driving/' in u], 'a taxi check asks the driving profile')
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
-    ck(leg['mode'] == 'car' and leg['minutes'] == 10, 'a taxi check replaces it, with the pickup allowance: %d min' % leg['minutes'])
-    ck('picked up' in pg.inner_text('#sheet'), 'and says why it is longer than the driving time')
+    ck(leg['car']['minutes'] == 10, 'and keeps it with the allowance for being picked up: %d min' % leg['car']['minutes'])
+    ck(leg['walk']['minutes'] == 31, 'beside the walk, which it does not touch')
+    ck('≈' in pg.inner_text('.timeline'), 'the leg itself is unchanged, since a taxi is a decision')
+    ck('picked up' in pg.inner_text('#sheet'), 'the card says why a taxi takes longer than the driving time')
+    ck('By taxi' in pg.locator('#sheet .facts.legs dt').all_text_contents(), 'and lists it as one of the ways')
+    pg.screenshot(path=str(SHOTS / 'app_leg_desktop_light.png'))
+
     pg.click('[data-act="forget-leg"]')
     pg.wait_for_timeout(900)
     ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
        'and the whole leg can be forgotten')
     ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
-       'and the real path on the map goes with it')
+       'with any real path on the map going with it')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
 
@@ -821,13 +848,14 @@ with sync_playwright() as pw:
     # ---- searching for a place
     ctx, pg = open_page(held=DEMO, extra=services)
     asked.clear()          # other sections search too; this one counts its own requests
+    finds = lambda: [u for u in asked if 'photon.komoot.io' in u]
     pg.fill('#findBox', 'n')
     pg.wait_for_timeout(600)
-    ck(len(asked) == 0, 'one letter is not a search')
+    ck(len(finds()) == 0, 'one letter is not a search')
     pg.fill('#findBox', 'nintendo museum')
     pg.wait_for_timeout(1500)
-    ck(len(asked) == 1 and 'q=nintendo+museum' in asked[0], 'typing a name asks Photon once, after a pause')
-    ck('lat=' in asked[0], 'biased to where the map is looking')
+    ck(len(finds()) == 1 and 'q=nintendo+museum' in finds()[0], 'typing a name asks Photon once, after a pause')
+    ck('lat=' in finds()[0], 'biased to where the map is looking')
     ck(pg.locator('#findResults .item').count() == 2, 'the results are listed')
     ck('Nintendo Museum' in pg.locator('#findResults .nm').first.inner_text(), 'by name')
     ck('Museum · Ogura · Ogura-cho · Uji' in pg.locator('#findResults .meta').first.inner_text(),

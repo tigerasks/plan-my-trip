@@ -123,13 +123,13 @@ const MapView = {
     try { put(ROUTE, false); put(REAL, true); } catch (e) { /* the map can carry on without the thread */ }
   },
 
-  // One hop per pair on the thread: its real path where that leg has been checked, the straight
-  // line between the two where it has not.
+  // One hop per pair on the thread: the real path of the way the leg is using, where that way was
+  // checked and came back with a shape, and the straight line between the two where it did not.
   hopsAlong(trip, dayId, thread) {
     const hops = [];
     for (let i = 1; i < thread.length; i++) {
       const a = thread[i - 1], b = thread[i];
-      const path = C.legPath(C.legFor(trip, dayId, a.id, b.id));
+      const path = C.legPath(C.legBetween(trip, dayId, a.id, b.id));
       const real = path.length > 1;
       hops.push({ points: real ? path : [a.p, b.p], real });
     }

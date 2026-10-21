@@ -184,6 +184,8 @@ button.item:hover { background: var(--hover); }
   padding: 4px 2px 4px 22px; border-radius: 7px; font-size: 11.5px; color: var(--faint); }
 .tl-leg .leg:hover { background: var(--hover); color: var(--ink-2); }
 .by { color: var(--faint); }
+/* A second line under a fact, for what a service said about it: a line name, the stops on the way. */
+.by.line { display: block; margin-top: 2px; }
 .facts.legs { grid-template-columns: 76px 1fr; font-size: 13px; margin-bottom: 4px; }
 .timeline .row { border-top: 1px solid var(--line-2); }
 .timeline .row:first-child { border-top: 0; }
