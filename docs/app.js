@@ -471,8 +471,9 @@ function timelineHtml(P) {
           ? '<span>' + (it.type === 'start' ? 'Leave ' : 'Back at ') + esc(it.name) + '</span>'
           : '<span class="muted">' + (it.type === 'start' ? 'Set off' : 'Back') + '</span>') + '</li>');
     } else if (it.type === 'travel') {
-      out.push('<li class="tl-leg">' + timeCell('')
-        + '<span>' + (it.unknown ? 'travel time unknown' : '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + esc(C.MODE_WORD[it.mode])) + '</span></li>');
+      out.push('<li class="tl-leg"><button type="button" class="leg" data-act="leg"'
+        + ' data-from="' + esc(it.fromId) + '" data-to="' + esc(it.toId) + '">'
+        + timeCell('') + '<span>' + legWords(it) + '</span></button></li>');
     } else if (it.type === 'visit') {
       out.push(plusRow('plan', n, 'Add a stop', n ? 'Add a stop after stop ' + n : 'Add a stop at the start'));
       n++;
@@ -487,6 +488,14 @@ function timelineHtml(P) {
   });
   if (!tailDone) out.push(plusRow('plan', n, 'Add a stop', 'Add a stop at the end'));
   return '<ul class="list timeline" data-list="plan">' + out.join('') + '</ul>';
+}
+// ≈ for the planner's own guess, ✓ for a route that was checked, and your own time said plainly.
+function legWords(it) {
+  if (it.unknown) return '<span class="muted">travel time unknown</span>';
+  const how = esc(C.MODE_WORD[it.mode] || '');
+  if (it.by === 'you') return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">· your own time</span>';
+  if (it.estimate === false) return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">✓ checked</span>';
+  return '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + how;
 }
 function summaryChipHtml(P) {
   const n = P.summary.errors;
@@ -601,6 +610,15 @@ function minuteValues(extra) {
   if (odd != null && !mins.includes(odd)) mins.push(odd);
   return mins.sort((a, b) => a - b).map((m) => ({ value: m, label: two(m) }));
 }
+// A leg is rarely a round number, so its minutes go one by one rather than in quarters.
+const everyMinute = () => Array.from({ length: 60 }, (_, m) => ({ value: m, label: two(m) }));
+function legTimeWheels(minutes) {
+  const m = C.clamp(Math.round(C.toNum(minutes) || 0), 0, 359);
+  return '<div class="wheels">' + wheelHtml('legH', hourValues(5), Math.floor(m / 60), 'Hours')
+    + wheelHtml('legM', everyMinute(), m % 60, 'Minutes') + '</div>';
+}
+const legTimeOf = () => (+wheelValue('legH') || 0) * 60 + (+wheelValue('legM') || 0);
+
 // Two wheels, a duration in minutes.
 function durationWheels(id, minutes) {
   return '<div class="wheels">' + wheelHtml(id + 'H', hourValues(12), Math.floor(minutes / 60), 'Hours')
@@ -867,6 +885,41 @@ const SHEETS = {
           + '<ul class="list">' + mine.map((p) => addRow(p.id, p.name, p.note, 'add-mine')).join('') + '</ul></div>'
         : '')
       + '<div id="asResults">' + addFoundHtml(s) + '</div>';
+  },
+
+  // One leg of a day: what the planner guessed, what the route services said, and what you know.
+  leg: (s) => {
+    const day = currentDay();
+    if (!day) return sheetHead('That leg has gone');
+    const from = C.pointOf(App.trip, day.id, s.from), to = C.pointOf(App.trip, day.id, s.to);
+    const info = C.legBetween(App.trip, day.id, s.from, s.to, C.calibration(App.trip, day.city));
+    const rec = C.legFor(App.trip, day.id, s.from, s.to);
+    const name = (p, id) => (p && p.name) || (id === 'start' ? 'where the day starts' : id === 'end' ? 'where it ends' : 'somewhere');
+    const row = (label, value, note) => '<dt>' + esc(label) + '</dt><dd>' + value
+      + (note ? ' <span class="by">' + esc(note) + '</span>' : '') + '</dd>';
+    const rows = [];
+    if (rec && rec.mine) rows.push(row('Your time', esc(C.fmtDur(rec.mine.minutes)), 'this is the one in use'));
+    if (rec && rec.minutes != null) {
+      rows.push(row('Checked', esc(C.fmtDur(rec.minutes) + ' ' + (C.MODE_WORD[rec.mode] || '')),
+        [rec.source === 'osrm' ? 'OSRM' : rec.source === 'transitous' ? 'Transitous' : rec.source === 'stops' ? 'from the stops nearby' : '',
+          rec.km != null ? rec.km.toFixed(1) + ' km' : '',
+          rec.at ? C.fmtDateUK(rec.at.slice(0, 10)) : ''].filter(Boolean).join(' · ')));
+    }
+    if (info.guess != null) rows.push(row('Estimate', '≈ ' + esc(C.fmtDur(info.guess)), 'from the distance'));
+    const gap = rec && rec.minutes != null && info.guess != null ? Math.abs(rec.minutes - info.guess) : 0;
+    return sheetHead('This leg', name(from, s.from) + ' → ' + name(to, s.to))
+      + (rec && rec.name ? '<p class="note">' + esc(rec.name) + '</p>' : '')
+      + (rec && rec.detail ? '<p class="note">' + esc(rec.detail) + '</p>' : '')
+      + (rows.length ? '<dl class="facts legs">' + rows.join('') + '</dl>' : '')
+      + (gap >= 10 ? '<p class="note amber">The estimate is ' + esc(C.fmtDur(gap)) + ' out. The checked time is the one to trust.</p>' : '')
+      + '<div class="sh-sec"><span class="label">Your own time</span>'
+      + '<p class="note">If you know how long this takes, say so. It wins over everything else.</p>'
+      + legTimeWheels(rec && rec.mine ? rec.mine.minutes : info.minutes)
+      + '<div class="actions"><button type="button" class="btn primary" data-act="save-my-leg">Use my time</button>'
+      + (rec && rec.mine ? '<button type="button" class="btn" data-act="drop-my-leg">Forget it</button>' : '')
+      + '</div></div>'
+      + (rec ? '<div class="sh-sec"><span class="label">Start again</span>'
+        + '<button type="button" class="btn danger" data-act="forget-leg">Forget what is known about this leg</button></div>' : '');
   },
 
   // Where you sleep, entered once per booking rather than once per day.
@@ -1549,6 +1602,23 @@ const ACTIONS = {
   },
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => { closeMenu(); openPlace(el.dataset.id); },
+  leg: (el) => openSheet('leg', { from: el.dataset.from, to: el.dataset.to }),
+  'save-my-leg': () => {
+    const s = App.ui.sheet, day = currentDay();
+    C.setLeg(App.trip, day.id, s.from, s.to, { mine: { minutes: legTimeOf(), at: new Date().toISOString() } });
+    changed('Your time: ' + C.fmtDur(legTimeOf()));
+  },
+  'drop-my-leg': () => {
+    const s = App.ui.sheet, day = currentDay();
+    C.setLeg(App.trip, day.id, s.from, s.to, { mine: null });
+    changed('Back to what was checked');
+  },
+  'forget-leg': () => {
+    const s = App.ui.sheet, day = currentDay();
+    C.clearLeg(App.trip, day.id, s.from, s.to);
+    closeSheet();
+    changed('Forgotten — back to the estimate');
+  },
   'delete-place': (el) => {
     const before = C.clone(App.trip);
     const wasDay = App.ui.dayId;

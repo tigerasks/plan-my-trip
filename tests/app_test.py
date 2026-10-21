@@ -162,6 +162,31 @@ with sync_playwright() as pw:
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
 
+    # ---- a leg of the day
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
+    ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
+       'naming both ends: ' + pg.inner_text('.sh-sub'))
+    ck('Estimate' in pg.locator('#sheet dt').all_text_contents(), 'and showing the estimate it is using')
+    ck(pg.locator('#legH').count() == 1 and pg.locator('#legM .wheel-item').count() == 60,
+       'with wheels to enter your own time, minute by minute')
+    pg.click('#legM .wheel-item[data-v="12"]')
+    pg.click('[data-act="save-my-leg"]')
+    pg.wait_for_timeout(900)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['mine']['minutes'] == 12, 'which is kept against that leg')
+    ck('your own time' in pg.inner_text('.timeline'), 'and the timeline says whose time it is showing')
+    ck('12 min' in pg.inner_text('.timeline'), 'using it: ' + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'own time' in l][0])
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the card stays open, so you can change your mind')
+    pg.click('[data-act="drop-my-leg"]')
+    pg.wait_for_timeout(900)
+    ck('≈' in pg.inner_text('.timeline'), 'forgetting it goes back to the estimate')
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
+
     # ---- copying a version, and tidying its order
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(200)
