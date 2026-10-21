@@ -108,6 +108,7 @@ function render() {
   renderSheet();
   renderSaved();
   M.show(App.trip, App.trip ? App.ui.dayId : null, { backlog: App.ui.backlogDots });
+  sweepSoon();
 }
 function renderSaved() {
   const el = $('#saved');
@@ -1198,6 +1199,43 @@ function checkLeg(dayId, fromId, toId, mode) {
       render();
       return null;
     });
+}
+
+// ---------- checking a plan's legs without being asked ----------
+// A leg of a plan is worth knowing properly, and opening every card to ask would be tedious, so the
+// planner checks them itself (design doc, decision 8). It is deliberately meek about it: it waits
+// for the screen to go quiet, asks about one leg at a time, gives way to anything you are waiting
+// for, and tries each leg once. Walking is OSRM's to answer; a transit leg waits for Transitous.
+const SWEEP_WAIT = 1500;        // ms of quiet before the planner asks anything of its own accord
+const Sweep = { timer: null, going: false, tried: {} };
+const sweepKey = (w) => w.dayId + '|' + w.fromId + '>' + w.toId + '|' + w.mode;
+
+function sweepWants() {
+  if (!App.trip || !App.ui.dayId) return [];
+  const plan = C.planDay(App.trip, App.ui.dayId);
+  if (!plan) return [];
+  // The walking time is worth having on every leg, even a long one: it is what a ride has to beat,
+  // and it is the one thing OSRM can always answer. A ride itself waits for Transitous.
+  return plan.items
+    .filter((it) => it.type === 'travel' && !it.unknown && it.fromId && it.toId && !(it.known || {}).walk)
+    .map((it) => ({ dayId: App.ui.dayId, fromId: it.fromId, toId: it.toId, mode: 'walk' }))
+    .filter((w) => !Sweep.tried[sweepKey(w)]);
+}
+function sweepSoon() {
+  if (Sweep.timer) clearTimeout(Sweep.timer);
+  Sweep.timer = setTimeout(sweepStep, SWEEP_WAIT);
+}
+function sweepStep() {
+  Sweep.timer = null;
+  if (Sweep.going) return;
+  const want = sweepWants();
+  if (!want.length) return;
+  if (!Live.idle()) { sweepSoon(); return; }   // you asked for something; this can wait
+  const w = want[0];
+  Sweep.tried[sweepKey(w)] = true;
+  Sweep.going = true;
+  const done = () => { Sweep.going = false; if (sweepWants().length) sweepSoon(); };
+  askOsrm(w.dayId, w.fromId, w.toId, w.mode).then(done, done);
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.

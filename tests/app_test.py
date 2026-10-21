@@ -180,22 +180,26 @@ with sync_playwright() as pw:
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
 
-    # The walking time of a leg, asked for from its card. It is what a ride has to beat, so it is
-    # worth knowing even where walking is not what you would do.
+    # Left alone for a moment, the planner checks the legs of the plan itself, one at a time: there
+    # is no point making someone open every card to ask (design doc, decision 8). Walking is what
+    # OSRM can always answer, and it is the time a ride has to beat.
     asked.clear()
+    pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs || {};"
+                         " const k = Object.keys(l);"
+                         " return k.length === 2 && k.every((x) => (l[x].walk || {}).source === 'osrm'); }",
+                         timeout=30000)
+    routes = [u for u in asked if 'routing.openstreetmap.de' in u]
+    ck(len(routes) == 2 and all('routed-foot/route/v1/foot/' in u for u in routes),
+       'both legs of the plan get their walking time without being asked: %d calls' % len(routes))
+    ck(pg.evaluate('window.DayPlannerLive.idle()') is True, 'and the planner is quiet again afterwards')
+    ck('≈' in pg.inner_text('.timeline'),
+       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
+
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
     ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
        'naming both ends: ' + pg.inner_text('.sh-sub'))
-    pg.click('[data-act="check-leg"][data-mode="walk"]')
-    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
-                         " || {}).walk || {}).source === 'osrm'", timeout=15000)
-    pg.wait_for_timeout(300)
-    routes = [u for u in asked if 'routing.openstreetmap.de' in u]
-    ck(len(routes) == 1 and 'routed-foot/route/v1/foot/' in routes[0], 'checking asks OSRM for the walking profile')
-    ck('≈' in pg.inner_text('.timeline'),
-       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
     labels = pg.locator('#sheet .facts.legs dt').all_text_contents()
     ck(labels == ['Walking', 'Estimate'], 'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
     ck('31 min' in pg.inner_text('#sheet') and 'OSRM' in pg.inner_text('#sheet'),
@@ -262,6 +266,9 @@ with sync_playwright() as pw:
        'and the whole leg can be forgotten')
     ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
        'with any real path on the map going with it')
+    pg.wait_for_timeout(1800)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
+       'a leg you have forgotten is not quietly checked all over again')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
 
@@ -847,7 +854,9 @@ with sync_playwright() as pw:
 
     # ---- searching for a place
     ctx, pg = open_page(held=DEMO, extra=services)
-    asked.clear()          # other sections search too; this one counts its own requests
+    # Other sections search too, and the planner checks the day's legs on its own, so this one
+    # counts the searches rather than every request.
+    asked.clear()
     finds = lambda: [u for u in asked if 'photon.komoot.io' in u]
     pg.fill('#findBox', 'n')
     pg.wait_for_timeout(600)

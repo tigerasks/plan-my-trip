@@ -10,6 +10,8 @@ SHOTS = HERE / 'shots'
 STUB = (HERE / 'maplibre_stub.js').read_text()
 JS = {'Content-Type': 'application/javascript'}
 CSS = {'Content-Type': 'text/css'}
+JSON_H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
+NO_ROUTE = '{"code": "NoRoute", "routes": []}'
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -37,6 +39,11 @@ def offline(base, extra=None):
             return r.continue_()
         if extra and extra(r):
             return None
+        if 'routing.openstreetmap.de' in u:
+            # The planner checks a plan's legs by itself, so every page asks OSRM sooner or later.
+            # Unless a test answers for it, it gets a polite "no route": the estimates stand, and a
+            # blocked request would show up as a console error and fail the run.
+            return r.fulfill(status=200, body=NO_ROUTE, headers=JSON_H)
         if 'maplibre-gl.js' in u:
             return r.fulfill(status=200, body=STUB, headers=JS)
         if 'maplibre-gl.css' in u:

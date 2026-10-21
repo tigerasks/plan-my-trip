@@ -171,6 +171,11 @@ assumed, since taking one is a decision. A long walk where a ride still looks qu
 card without taking the leg over, so the day does not look worse than it is while a real transit
 time is still missing.
 
+The planner checks the legs of the day on screen by itself, without being asked. It waits for the
+screen to go quiet, asks about one leg at a time, gives way to anything you are waiting for, and
+tries each leg once. The walking time is asked for on every leg, however long: it is what a ride has
+to beat, and it is the one thing OSRM can always answer.
+
 Public transport has two catches. Timetables are usually only published a few months ahead, so for a
 trip further out the planner asks about the same weekday and time in the current timetable, and says
 so. And where Transitous finds no journey, the planner asks `/api/v1/reverse-geocode` what stops it
