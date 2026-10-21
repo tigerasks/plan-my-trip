@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import datetime, json, pathlib, re, urllib.parse
+import datetime, json, math, pathlib, re, urllib.parse
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -45,12 +45,22 @@ with sync_playwright() as pw:
                       'tags': {'name': '東寺', 'name:en': 'East Temple', 'tourism': 'attraction', 'fee': 'yes'}},
         '263330850': {'type': 'way', 'id': 263330850, 'center': {'lat': 34.88712, 'lon': 135.80481}, 'tags': {}},
     }
+    def straight(url):
+        """How far apart the two points in an OSRM url are, in kilometres."""
+        pair = re.search(r'/([\d.-]+),([\d.-]+);([\d.-]+),([\d.-]+)', url)
+        if not pair:
+            return 99.0
+        lon1, lat1, lon2, lat2 = (float(x) for x in pair.groups())
+        dy = (lat2 - lat1) * 111.0
+        dx = (lon2 - lon1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
+        return (dx * dx + dy * dy) ** 0.5
+
     asked = []
     # What Transitous has to say, which the tests turn up and down: a journey or nothing, stops
     # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
     # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
     # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
-    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none'}
+    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none', 'map': False}
 
     def services(r):
         u = r.request.url
@@ -68,18 +78,32 @@ with sync_playwright() as pw:
             if 'nowhere' in u:
                 r.fulfill(status=200, body=json.dumps({'code': 'NoRoute', 'routes': []}), headers=H)
             else:
+                # The probe's own numbers for the leg it measured. A shorter hop — a walk round the
+                # corner to a bus stop — is scaled down, so it does not come back as half an hour.
                 walking = 'routed-foot' in u
+                # A short hop round the streets is a good deal longer than the line between the
+                # two points, which is exactly why the planner checks these rather than guessing.
+                near = straight(u) < 1.0
+                secs = (round(straight(u) * 2.2 / 4.5 * 3600) if walking else 60) if near else (1860 if walking else 300)
+                metres = round(straight(u) * 2200) if near else (2310 if walking else 2480)
                 r.fulfill(status=200, headers=H, body=json.dumps({'code': 'Ok', 'routes': [{
-                    'duration': 1860 if walking else 300,
-                    'distance': 2310 if walking else 2480,
-                    'geometry': KYOTO_SHAPE}]}))
+                    'duration': secs, 'distance': metres,
+                    'geometry': KYOTO_SHAPE if not near else ''}]}))
             return True
         if 'google.com/maps' in u:
             r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
             return True
         if 'overpass-api.de' in u:
             asked.append(u)
-            want = re.search(r'(node|way|relation)\((\d+)\)', urllib.parse.unquote(u))
+            q = urllib.parse.unquote(u)
+            if 'around:' in q:                      # the stop-based fallback asking what is nearby
+                if not TRANSIT['map']:
+                    r.fulfill(status=200, headers=H, body=json.dumps({'elements': []}))
+                else:
+                    near = FIX['stopsNearTemple'] if '34.994800' in q else FIX['stopsNearHotel']
+                    r.fulfill(status=200, headers=H, body=json.dumps(near))
+                return True
+            want = re.search(r'(node|way|relation)\((\d+)\)', q)
             r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                       body=json.dumps({'elements': [OSM_BY_ID[want.group(2)]] if want and want.group(2) in OSM_BY_ID else []}))
             return True
@@ -217,7 +241,10 @@ with sync_playwright() as pw:
     ck('24 min train or bus' in pg.inner_text('.timeline'),
        'and uses the ride, which clearly beats half an hour on foot: '
        + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
+    ck('近畿日本鉄道 towards 京都' in pg.inner_text('.timeline'),
+       'with the line named in the plan itself, not only on the card')
 
+    pg.screenshot(path=str(SHOTS / 'app_checked_desktop_light.png'))
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
     ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
@@ -412,8 +439,56 @@ with sync_playwright() as pw:
        'where it knows no stops at all, it says so instead: ' + leg['detail'])
     ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
     ctx.close()
+
+    # ---- working it out from the stops on the map
+    # No timetables does not mean no buses. The map knows where the stops are and which lines run by
+    # them, which is the method anyone would use by hand (design doc, "Travel times").
+    TRANSIT['map'] = True
+    asked.clear()
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=60000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] and leg['minutes'] < 60, 'the stops give a time after all: %s min' % leg['minutes'])
+    ck('walk' in leg['detail'] and '·' in leg['detail'],
+       'spelled out as walk, ride, walk: ' + leg['detail'])
+    ck('Pretend Station' in leg['detail'] and 'Temple-mae' in leg['detail'],
+       'naming the stop it would use at each end, which need not be a bus stop')
+    ck('205' in (leg['name'] or ''), 'and the line that runs by both ends: ' + str(leg['name']))
+    ck('probably' in (leg['name'] or ''), 'hedged, since the map cannot promise it stops at both')
+    maps = [u for u in asked if 'around:' in urllib.parse.unquote(u)]
+    ck(len(maps) == 2, 'the map is asked once per end, not once per leg: %d queries' % len(maps))
+    ck('around:800' in urllib.parse.unquote(maps[0]), 'within ten minutes\' walk')
+    # The walks at each end are the part that can be known for certain, so they are checked.
+    pg.wait_for_function("() => /walk 8 min/.test((((window.DayPlannerApp.trip.days['2026-11-21']"
+                         ".legs['start>example-temple'] || {}).transit || {}).detail) || '')", timeout=30000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck('walk 8 min to Pretend Station' in leg['detail'],
+       'and the walks to and from the stops are then checked for real, streets and all: ' + leg['detail'])
+    ck(any('135.757000,34.984000' in u for u in asked if 'routed-foot' in u),
+       'which means asking OSRM about the walk to that one stop, not to every stop there is')
+    ck(len([u for u in asked if 'routed-foot' in u and '34.984000' in u]) == 1, 'and asking once')
+    ck('≈' in pg.inner_text('.timeline'), 'and the day still says it is an estimate, because it is')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('from the stops nearby' in pg.inner_text('#sheet'), 'the card says where the time came from')
+    ck(leg['detail'] in pg.inner_text('#sheet'), 'and spells the journey out')
+    pg.screenshot(path=str(SHOTS / 'app_stops_desktop_light.png'))
+    ctx.close()
+
+    # where the map has nothing either, the planner says so and stops asking
+    TRANSIT['map'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=60000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] is None and 'no stops within twenty' in leg['detail'].lower(),
+       'with nothing on the map either, it gives up on public transport for that leg: ' + leg['detail'])
+    ctx.close()
+
     TRANSIT['ride'] = True
     TRANSIT['stops'] = True
+    TRANSIT['map'] = False
 
     # ---- a trip further out than the timetables reach
     # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and

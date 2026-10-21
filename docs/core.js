@@ -975,6 +975,8 @@ function pathLooksRight(points, from, to) {
 // streets and timetables both care. A place that is a stop twice needs no second key: the journey
 // between two places is the same whichever visit it is.
 const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+// Of those, the ones that measured something. 'stops' is the planner's own arithmetic over map data.
+const MEASURED = ['osrm', 'transitous'];
 const LEG_MODES = ['walk', 'transit', 'car'];
 const legKey = (fromId, toId) => cleanId(fromId) + '>' + cleanId(toId);
 const legEnds = (key) => { const bits = String(key).split('>'); return bits.length === 2 ? bits : null; };
@@ -1218,6 +1220,104 @@ function parseTransit(json, from, to, departsISO) {
   };
 }
 
+// ---------- the stop-based fallback ----------
+// Where there are no timetables, the map still knows where the stops are. This is the method anyone
+// would use by hand, automated: look at every stop within a walk of each end, take the quickest
+// pairing, and be honest that the ride itself is a guess (design doc, "Travel times").
+const STOP_REACH = 800;        // metres, about ten minutes on foot
+const STOP_REACH_WIDE = 1600;  // and twenty, where an end has nothing closer
+const STOPS_EACH_END = 12;     // the nearest few: a busy corner has dozens, and the rest never win
+function stopsNearUrl(point, metres) {
+  if (!hasPos(point)) return null;
+  const at = ',' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')';
+  const r = clamp(Math.round(toNum(metres) || STOP_REACH), 100, 5000);
+  const q = '[out:json][timeout:50];('
+    + 'nwr(around:' + r + at + '[highway=bus_stop];'
+    + 'nwr(around:' + r + at + '[railway~"^(station|halt|tram_stop)$"];'
+    + 'nwr(around:' + r + at + '[public_transport=station];'
+    + 'relation(around:' + r + at + '[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
+    + ');out tags center 400;';
+  return OVERPASS + '?data=' + encodeURIComponent(q);
+}
+const STOP_KIND = (tags) => {
+  const t = obj(tags);
+  if (str(t.railway) === 'tram_stop' || str(t.railway) === 'light_rail') return 'tram';
+  if (str(t.railway) === 'station' || str(t.railway) === 'halt') return 'rail';
+  if (str(t.highway) === 'bus_stop') return 'bus';
+  return 'stop';
+};
+// Stops and the lines that run near them, from one answer. A line relation is kept for its name
+// only: whether it really serves these stops is more than the map can promise.
+function parseNear(json) {
+  const all = arr(obj(json).elements);
+  const stops = [], lines = [];
+  for (const el of all) {
+    const e = obj(el), tags = obj(e.tags);
+    const name = str(tags['name:en'] || tags.name, 60) || null;
+    if (str(e.type) === 'relation' && str(tags.type) === 'route') {
+      lines.push({ id: 'r' + e.id, ref: str(tags.ref, 20) || null, name, kind: str(tags.route, 20) || null });
+      continue;
+    }
+    const c = obj(e.center);
+    const lat = toNum(e.lat != null ? e.lat : c.lat), lng = toNum(e.lon != null ? e.lon : c.lon);
+    if (lat == null || lng == null) continue;
+    stops.push({ id: str(e.type).slice(0, 1) + e.id, name, lat, lng, kind: STOP_KIND(tags) });
+  }
+  // Over the limit means the answer was cut short, so "no stops" would not be the truth.
+  return { stops, lines, capped: all.length >= 400 };
+}
+// A line seen near both ends. Not proof it serves them, which is why the whole result stays a guess.
+function commonLine(fromLines, toLines) {
+  const there = new Set(arr(toLines).map((l) => obj(l).id));
+  const both = arr(fromLines).filter((l) => there.has(obj(l).id));
+  return both.find((l) => obj(l).ref) || both[0] || null;
+}
+const lineWords = (line) => {
+  const l = obj(line);
+  if (l.ref) return l.ref + (l.kind === 'bus' ? ' bus' : l.kind === 'subway' ? ' line' : '');
+  return str(l.name, 60) || null;
+};
+// The quickest pairing of a stop at each end, with both walks estimated the way the planner
+// estimates every walk, and the ride from the distance between the two stops.
+function stopPlan(from, to, nearFrom, nearTo, trip, cal) {
+  if (!hasPos(from) || !hasPos(to)) return null;
+  const f = obj(cal), model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
+  const onFoot = (a, b) => Math.max(1, Math.round(walkMinutes(kmBetween(a, b)) * (toNum(f.walk) || 1)));
+  const nearest = (list, point) => arr(list).filter(hasPos)
+    .map((stop) => ({ stop, km: kmBetween(point, stop) }))
+    .sort((a, b) => a.km - b.km).slice(0, STOPS_EACH_END);
+  const starts = nearest(nearFrom, from), ends = nearest(nearTo, to);
+  if (!starts.length || !ends.length) return null;
+  let best = null;
+  for (const a of starts) {
+    for (const b of ends) {
+      if (a.stop.id === b.stop.id) continue;
+      const ride = Math.max(1, Math.round(rideMinutes(kmBetween(a.stop, b.stop), model) * (toNum(f.transit) || 1)));
+      const walkOn = onFoot(from, a.stop), walkOff = onFoot(b.stop, to);
+      const minutes = walkOn + ride + walkOff;
+      if (!best || minutes < best.minutes) best = { minutes, ride, walkOn, walkOff, from: a.stop, to: b.stop };
+    }
+  }
+  return best;
+}
+// What that pairing looks like on a leg: a time, and the walk-ride-walk spelled out.
+function stopSlot(plan, line, now) {
+  if (!plan) return null;
+  const words = lineWords(line);
+  const kind = str(obj(line).kind);
+  const ride = kind === 'bus' ? ' by bus' : kind === 'train' || kind === 'subway' || kind === 'light_rail' ? ' by train' : '';
+  return {
+    minutes: clamp(plan.minutes, 0, 1440),
+    source: 'stops',
+    at: str(now, 32) || null,
+    name: words ? 'probably the ' + words : null,
+    // The line is named once, in `name`; here it is only what kind of ride it is.
+    detail: 'walk ' + fmtDur(plan.walkOn) + (plan.from.name ? ' to ' + plan.from.name : ' to the stop')
+      + ' · ≈ ' + fmtDur(plan.ride) + ride
+      + ' · walk ' + fmtDur(plan.walkOff) + (plan.to.name ? ' from ' + plan.to.name : ''),
+  };
+}
+
 // ---------- local time, where the trip is ----------
 // Every time in the planner is local to where you are going, which is all a person needs. A
 // timetable service needs the actual instant, so a trip can say which time zone it is in and the
@@ -1313,10 +1413,13 @@ function calibration(trip, city) {
       if (!ends) continue;
       const g = legGuess(pointOf(trip, d.id, ends[0]), pointOf(trip, d.id, ends[1]), trip);
       if (!g) continue;
-      // Every way that has a real time teaches the estimate for that way. Your own time is the best
-      // evidence there is, so where you gave one it stands in for the way you gave it for.
+      // A time only teaches the estimate if it came from outside: a stop-based time is the
+      // planner's own guess wearing a hat, and calibrating against it would be circular. Your own
+      // time is the best evidence there is, so where you gave one it stands in for its way.
       const real = {};
-      for (const m of LEG_MODES) if (rec[m] && rec[m].minutes != null) real[m] = rec[m].minutes;
+      for (const m of LEG_MODES) {
+        if (rec[m] && rec[m].minutes != null && MEASURED.includes(rec[m].source)) real[m] = rec[m].minutes;
+      }
       if (rec.mine && rec.mine.minutes != null) {
         const m = rec.mine.mode || legChoice(rec, null);
         if (m) real[m] = rec.mine.minutes;
@@ -2019,7 +2122,8 @@ const Core = {
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
   TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
-  TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon,
+  STOP_REACH, STOP_REACH_WIDE, stopsNearUrl, parseNear, commonLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,

@@ -627,6 +627,40 @@ ok(C.sameWeekdaySoon('2026-10-28', '2026-10-21') === '2026-10-28', 'a week out s
 ok(C.sameWeekdaySoon('2026-10-21', '2026-10-21') === null, 'today is no stand-in: its services may have run');
 ok(C.daysApart('2026-10-21', '2026-11-21') === 31 && C.daysApart('x', 'y') === null, 'and days count plainly');
 
+console.log('\n== Working a leg out from the stops ==');
+const sFrom = { lat: 34.9858, lng: 135.7588 }, sTo = { lat: 34.9948, lng: 135.7858 };
+const sNear = C.parseNear({ elements: [
+  { type: 'node', id: 1, lat: 34.9862, lon: 135.7596, tags: { highway: 'bus_stop', name: 'Hotel-mae' } },
+  { type: 'node', id: 2, lat: 34.9840, lon: 135.7570, tags: { railway: 'station', 'name:en': 'Pretend Station', name: '架空駅' } },
+  { type: 'way', id: 3, center: { lat: 34.9850, lon: 135.7580 }, tags: { public_transport: 'station', name: 'A platform' } },
+  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
+  { type: 'node', id: 4, tags: { highway: 'bus_stop', name: 'Nowhere' } },
+] });
+ok(sNear.stops.length === 3, 'stops come back from the map, whether nodes or ways: ' + sNear.stops.length);
+ok(sNear.stops[1].name === 'Pretend Station', 'named in English where the map has it');
+ok(sNear.stops.map((x) => x.kind).join() === 'bus,rail,stop', 'and sorted into what kind of stop they are');
+ok(sNear.stops[2].lat === 34.9850, 'a stop mapped as a way is taken at its centre');
+ok(sNear.lines.length === 1 && sNear.lines[0].ref === '205', 'the lines that run by are kept apart from the stops');
+ok(!sNear.capped, 'and an answer well under the limit is not a truncated one');
+
+const sFar = C.parseNear({ elements: [
+  { type: 'node', id: 5, lat: 34.9944, lon: 135.7850, tags: { highway: 'bus_stop', name: 'Temple-mae' } },
+  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
+] });
+const sPlan = C.stopPlan(sFrom, sTo, sNear.stops, sFar.stops, { transit: 'city' });
+ok(sPlan.from.name === 'Hotel-mae' && sPlan.to.name === 'Temple-mae', 'the quickest pairing is the nearest here');
+ok(sPlan.minutes === sPlan.walkOn + sPlan.ride + sPlan.walkOff, 'and its time is walk plus ride plus walk');
+ok(C.commonLine(sNear.lines, sFar.lines).ref === '205', 'a line by both ends is the one to name');
+ok(C.commonLine(sNear.lines, []) === null, 'one by only one end is not');
+const sSlot = C.stopSlot(sPlan, C.commonLine(sNear.lines, sFar.lines), '2026-10-21T10:00:00Z');
+ok(sSlot.source === 'stops' && sSlot.minutes === sPlan.minutes, 'the leg keeps it as what it is: from the map');
+ok(sSlot.name === 'probably the 205 bus', 'hedged, since the map cannot promise the line stops there: ' + sSlot.name);
+ok(/^walk .* · ≈ .* · walk /.test(sSlot.detail), 'and spelled out walk, ride, walk: ' + sSlot.detail);
+ok(C.stopPlan(sFrom, sTo, [], sFar.stops, {}) === null, 'no stops at one end is no journey');
+ok(C.stopSlot(null, null, 'now') === null, 'and no plan is no leg');
+ok(C.stopsNearUrl(sFrom).includes('around%3A800'), 'the map is asked within ten minutes\' walk');
+ok(C.stopsNearUrl(sFrom, C.STOP_REACH_WIDE).includes('around%3A1600'), 'and twenty where that found nothing');
+
 console.log('\n== Local time, where the trip is ==');
 ok(C.goodZone('Asia/Tokyo') && !C.goodZone('Mars/Olympus') && !C.goodZone(''),
   'a time zone is only kept if the browser knows it');
@@ -740,6 +774,9 @@ const before = C.estimateLeg(K.t.places['example-temple'], nearby, K.t).minutes;
 C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, source: 'osrm' });
 C.setLeg(K.t, '2026-11-21', 'example-temple', 'made-up-market', { mode: 'walk', minutes: 26, source: 'osrm' });
 ok(C.calibration(K.t, 'Kyoto').walk === 1, 'two legs are not enough to move the estimates');
+C.setLeg(K.t, '2026-11-21', 'start', 'made-up-market', { transit: { minutes: 40, source: 'stops' } });
+ok(C.calibration(K.t, 'Kyoto').counted.transit === 0,
+  'a stop-based time teaches nothing: it is the planner\'s own guess coming back round');
 
 C.setLeg(K.t, '2026-11-21', 'made-up-market', 'end', { mode: 'walk', minutes: 28, source: 'osrm' });
 const cal = C.calibration(K.t, 'Kyoto');

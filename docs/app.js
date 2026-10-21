@@ -503,9 +503,11 @@ const LEG_FROM = { osrm: 'OSRM', transitous: 'Transitous', stops: 'from the stop
 function legWords(it) {
   if (it.unknown) return '<span class="muted">travel time unknown</span>';
   const how = esc(C.MODE_WORD[it.mode] || '');
-  if (it.by === 'you') return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">· your own time</span>';
-  if (it.estimate === false) return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">✓ checked</span>';
-  return '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + how;
+  // Which line it is matters as much as how long it takes, where anyone has said.
+  const line = it.name ? '<span class="by line">' + esc(it.name) + '</span>' : '';
+  if (it.by === 'you') return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">· your own time</span>' + line;
+  if (it.estimate === false) return esc(C.fmtDur(it.minutes)) + ' ' + how + ' <span class="by">✓ checked</span>' + line;
+  return '≈ ' + esc(C.fmtDur(it.minutes)) + ' ' + how + line;
 }
 function summaryChipHtml(P) {
   const n = P.summary.errors;
@@ -1236,6 +1238,68 @@ function whyNoJourney(from, to, departs) {
   });
 }
 
+// Where there are no timetables, the map still knows where the stops are. Overpass took tens of
+// seconds in the fourth service test, so none of this is waited on: the leg keeps its estimate and
+// the stops fill in behind it, or never (design doc, "Travel times").
+const OVERPASS_WAIT = 90000;
+function stopsNear(point) {
+  const ask = (metres) => {
+    const url = C.stopsNearUrl(point, metres);
+    return url ? Live.fetchJson(url, { timeout: OVERPASS_WAIT }).then((j) => C.parseNear(j), () => null)
+      : Promise.resolve(null);
+  };
+  return ask(C.STOP_REACH).then((near) => {
+    // Nothing within ten minutes' walk is worth a wider look before giving up on the leg.
+    if (!near || near.stops.length || near.capped) return near;
+    return ask(C.STOP_REACH_WIDE).then((wider) => wider || near);
+  });
+}
+// The two walks of the pairing that won, checked for real. Only those two: asking about every stop
+// at both ends would be hundreds of requests for one leg, and the ride is a guess either way.
+function realWalks(plan, from, to) {
+  const walk = (a, b) => {
+    const url = C.osrmUrl(a, b, 'walk');
+    if (!url) return Promise.resolve(null);
+    return Live.fetchJson(url).then((json) => {
+      const got = C.parseOsrm(json, 'walk', a, b);
+      return got ? got.minutes : null;
+    }, () => null);
+  };
+  return Promise.all([walk(from, plan.from), walk(plan.to, to)]).then(([on, off]) => {
+    if (on == null && off == null) return plan;
+    const walkOn = on == null ? plan.walkOn : on;
+    const walkOff = off == null ? plan.walkOff : off;
+    return Object.assign({}, plan, { walkOn, walkOff, minutes: walkOn + plan.ride + walkOff });
+  });
+}
+
+function askStops(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
+  const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
+  if (!day || !C.hasPos(from) || !C.hasPos(to)) return Promise.resolve(null);
+  return Promise.all([stopsNear(from), stopsNear(to)]).then(([a, b]) => {
+    if (!a || !b) return null;
+    const now = new Date().toISOString();
+    const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
+    const plan = C.stopPlan(from, to, a.stops, b.stops, App.trip, C.calibration(App.trip, day.city));
+    if (!plan) {
+      keep({ asked: now, source: 'stops',
+        detail: 'The map has no stops within twenty minutes\' walk of both ends, so the planner has '
+          + 'no public transport to offer for this leg.' });
+      return null;
+    }
+    const line = C.commonLine(a.lines, b.lines);
+    keep(C.stopSlot(plan, line, now));
+    // The walks at each end can be real even where the ride cannot, so they are checked after the
+    // leg already has something to show.
+    return realWalks(plan, from, to).then((walked) => {
+      const slot = C.stopSlot(walked, line, now);
+      keep(slot);
+      return slot;
+    }, () => null);
+  }, () => null);
+}
+
 // Ask Transitous what public transport would do with this leg, leaving when the plan says you
 // would. An answer that says nothing is still kept, with the reason: it stops the planner asking
 // the same question of the same service over and over.
@@ -1249,6 +1313,8 @@ function askTransit(dayId, fromId, toId) {
   const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
   const nothing = () => whyNoJourney(from, to, departs).then((why) => {
     keep({ asked: now, departs, source: 'transitous', detail: why });
+    // The map is asked next, but nothing waits for it: Overpass can take most of a minute.
+    askStops(dayId, fromId, toId);
     return null;
   });
   return Live.fetchJson(url).then((json) => {

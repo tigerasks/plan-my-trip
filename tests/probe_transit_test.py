@@ -26,7 +26,8 @@ STOPS = [{'name': 'Imamiya-jinja-mae', 'type': 'STOP', 'id': 'jp-1'},
          {'name': 'Daitokuji-mae', 'type': 'STOP', 'id': 'jp-2'}]
 ADDRESSES = [{'name': 'Murasakino', 'type': 'ADDRESS'}]
 OVERPASS = {'elements': [
-    {'type': 'node', 'id': 1, 'tags': {'highway': 'bus_stop', 'name': '大徳寺前', 'name:en': 'Daitokuji-mae'}},
+    {'type': 'node', 'id': 1, 'lat': 35.0441, 'lon': 135.7462,
+     'tags': {'highway': 'bus_stop', 'name': '大徳寺前', 'name:en': 'Daitokuji-mae'}},
     {'type': 'node', 'id': 2, 'tags': {'highway': 'bus_stop', 'name': '今宮神社前'}},
     {'type': 'relation', 'id': 9, 'tags': {'type': 'route', 'route': 'bus', 'ref': '206', 'name': 'Kyoto City Bus 206', 'operator': 'Kyoto City'}}]}
 PHOTON = {'features': [{'geometry': {'coordinates': [135.7458, 35.0436]},
@@ -107,6 +108,9 @@ with sync_playwright() as pw:
     ck(body['runs'][1]['journey']['bestLegs'][1]['routeLongName'] == 'Kintetsu Kyoto Line',
        'the block carries every name field, so the chat can see which to use')
     ck(body['runs'][0]['map'][0]['routesWithRef'] == 1, 'and how many map routes carry a line number')
+    ck(body['runs'][0]['map'][0]['withPosition'] == 1,
+       'and how many stops came back with a position, which is the number the fallback can use: '
+       + str(body['runs'][0]['map'][0]['withPosition']) + ' of ' + str(body['runs'][0]['map'][0]['busStops']))
     ck(body['runs'][1]['stops'][0]['anythingCount'] == 1 and body['runs'][1]['stops'][0]['count'] == 0,
        'and, where there are no stops, what else is known there — which says whether the answer means anything')
     br.close()
