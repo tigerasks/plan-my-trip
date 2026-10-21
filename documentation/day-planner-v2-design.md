@@ -161,7 +161,20 @@ OpenStreetMap's own tile servers are out regardless: they reject pages that don'
 
 Every leg starts with the planner's own estimate, computed instantly from the two positions. It exists even from a blank start, but it's rough, so it's marked ≈.
 
-Legs that are part of a plan then get checked against real routes: OSRM for walking and taxi, Transitous for public transport. Results are cached in the trip data, so each leg is asked once, and requests are spaced at least a second apart. A checked leg shows the real time and its source; its card also shows the estimate and flags a big gap between the two.
+Legs that are part of a plan then get checked against real routes: OSRM for walking and taxi, Transitous for public transport. Results are cached in the trip data, so each leg is asked once, and requests are spaced at least a second apart. A checked leg shows the real time and its source; its card also shows the estimate and flags a big gap between the two, comparing like with like — a checked walk against what the planner would have guessed for walking.
+
+**A leg holds every way of making it, side by side.** Walking, public transport and taxi each keep
+their own time, distance, shape and source, so checking the taxi never loses the walk. The planner
+then chooses which one the day uses: your own time if you gave one, then whichever way you picked,
+then the quickest that makes sense — a ride has to clearly beat walking, and a taxi is never
+assumed, since taking one is a decision. A long walk where a ride still looks quicker stays on the
+card without taking the leg over, so the day does not look worse than it is while a real transit
+time is still missing.
+
+The planner checks the legs of the day on screen by itself, without being asked. It waits for the
+screen to go quiet, asks about one leg at a time, gives way to anything you are waiting for, and
+tries each leg once. The walking time is asked for on every leg, however long: it is what a ride has
+to beat, and it is the one thing OSRM can always answer.
 
 Public transport has two catches. Timetables are usually only published a few months ahead, so for a
 trip further out the planner asks about the same weekday and time in the current timetable, and says
@@ -379,6 +392,7 @@ date:
 | `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |
 | `hours` | `source` (`osm`, `you` or `chat`), `verified`, `raw` (the text it came from), `week` (seven days, each a list of open–close pairs, `[]` for closed, absent for unknown), `lastEntry` |
 | `added` | `by` (`you` or `chat`), `how` (`search`, `map`, `pin` or `package`), `at` |
+| `leg` | keyed `fromId>toId` within its day, where an end is a place id or `start`/`end`. Holds `pick` (the way you chose, or none), `mine` (`minutes`, `mode`, `at`) and one slot per way — `walk`, `transit`, `car` — each with `minutes`, `km`, `source` (`osrm`, `transitous` or `stops`), `at`, `asked`, `path`, `precision` (5 from OSRM, 7 from MOTIS), `name` and `detail`. A slot with `asked` but no `minutes` is a service that was asked and had nothing, so it is not asked again |
 
 Three rules hold at all times, and the planner repairs anything that breaks them on the way in:
 

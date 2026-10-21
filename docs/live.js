@@ -15,11 +15,13 @@ const Live = {
   queue: Promise.resolve(),
   cache: new Map(),
   calls: 0,                    // the tests count these
+  pending: 0,                  // calls asked for and not yet answered
 
   // Space the calls out, whatever asks for them. Requests queue rather than overlap.
   fetchJson(url, opts) {
     const key = String(url);
     if (this.cache.has(key)) return Promise.resolve(this.cache.get(key));
+    this.pending++;
     const run = this.queue.then(async () => {
       if (this.cache.has(key)) return this.cache.get(key);
       const wait = this.last + GAP - Date.now();
@@ -38,6 +40,7 @@ const Live = {
         clearTimeout(timer);
       }
     });
+    run.then(() => { this.pending--; }, () => { this.pending--; });
     // A failed call must not poison the queue for the next one.
     this.queue = run.then(() => undefined, () => undefined);
     return run;
@@ -50,6 +53,9 @@ const Live = {
     if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'it could not be reached';
     return m || 'it did not answer';
   },
+
+  // Nothing is waiting, so background work may take its turn without delaying anybody.
+  idle() { return this.pending === 0; },
 
   forget() { this.cache.clear(); },
 };

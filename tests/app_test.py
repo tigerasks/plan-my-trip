@@ -7,6 +7,7 @@ import harness
 from harness import SHOTS, Checks
 
 SHOTS.mkdir(exist_ok=True)
+H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 DEMO = json.loads((harness.HERE / 'demo-trip.json').read_text())
 BASE, stop = harness.serve()
 ck = Checks('Day planner — the skeleton')
@@ -34,6 +35,8 @@ with sync_playwright() as pw:
         return False
 
     FIX = json.loads((harness.HERE / 'fixtures.json').read_text())
+    # A polyline from the hotel to the temple, so the shape passes the planner's sanity check.
+    KYOTO_SHAPE = FIX['kyotoShape']
     # What Overpass gives back, by id. Pizza Little Party's tags are from the service test; the
     # other two are made up, since the probe never looked them up.
     OSM_BY_ID = {
@@ -46,6 +49,17 @@ with sync_playwright() as pw:
 
     def services(r):
         u = r.request.url
+        if 'routing.openstreetmap.de' in u:
+            asked.append(u)
+            if 'nowhere' in u:
+                r.fulfill(status=200, body=json.dumps({'code': 'NoRoute', 'routes': []}), headers=H)
+            else:
+                walking = 'routed-foot' in u
+                r.fulfill(status=200, headers=H, body=json.dumps({'code': 'Ok', 'routes': [{
+                    'duration': 1860 if walking else 300,
+                    'distance': 2310 if walking else 2480,
+                    'geometry': KYOTO_SHAPE}]}))
+            return True
         if 'google.com/maps' in u:
             r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
             return True
@@ -110,7 +124,7 @@ with sync_playwright() as pw:
     ctx.close()
 
     # ---- opening a browser that already holds a trip
-    ctx, pg = open_page(held=DEMO)
+    ctx, pg = open_page(held=DEMO, extra=services)
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'a stored trip opens straight away')
     ck(pg.locator('#dayPick').is_visible() and 'Sat 21 Nov' in pg.inner_text('#dayFace'), 'on its first day: ' + pg.inner_text('#dayFace'))
     ck('Example Hotel · Kyoto Station' in pg.inner_text('#panel'), 'with the day it knows about')
@@ -161,6 +175,102 @@ with sync_playwright() as pw:
     ck(len(held['trip']['days']['2026-11-21']['plans']['balanced']) == 2, 'and switching never moves a place between versions')
     labels = pg.locator('.card-head .label').all_text_contents()
     ck(labels[1] == 'Plan · Do less 1' and labels[2] == 'Ideas for today 2', 'Do less keeps its own, shorter list: ' + ' / '.join(labels[1:3]))
+
+    # ---- a leg of the day
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
+
+    # Left alone for a moment, the planner checks the legs of the plan itself, one at a time: there
+    # is no point making someone open every card to ask (design doc, decision 8). Walking is what
+    # OSRM can always answer, and it is the time a ride has to beat.
+    asked.clear()
+    pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs || {};"
+                         " const k = Object.keys(l);"
+                         " return k.length === 2 && k.every((x) => (l[x].walk || {}).source === 'osrm'); }",
+                         timeout=30000)
+    routes = [u for u in asked if 'routing.openstreetmap.de' in u]
+    ck(len(routes) == 2 and all('routed-foot/route/v1/foot/' in u for u in routes),
+       'both legs of the plan get their walking time without being asked: %d calls' % len(routes))
+    ck(pg.evaluate('window.DayPlannerLive.idle()') is True, 'and the planner is quiet again afterwards')
+    ck('≈' in pg.inner_text('.timeline'),
+       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
+
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck(pg.inner_text('.sh-title').startswith('This leg'), 'a leg in the timeline opens')
+    ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
+       'naming both ends: ' + pg.inner_text('.sh-sub'))
+    labels = pg.locator('#sheet .facts.legs dt').all_text_contents()
+    ck(labels == ['Walking', 'Estimate'], 'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
+    ck('31 min' in pg.inner_text('#sheet') and 'OSRM' in pg.inner_text('#sheet'),
+       'with the real walking time and who said so')
+    ck('2.3 km' in pg.inner_text('#sheet'), 'and how far it is on foot')
+    ck('in use' in pg.inner_text('#sheet .facts.legs dd >> nth=1'),
+       'the estimate is still the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
+
+    # putting the walk in its place, since the choice is yours
+    pg.click('[data-act="pick-leg"][data-mode="walk"]')
+    pg.wait_for_timeout(900)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['pick'] == 'walk', 'you can tell it to use the walk instead')
+    ck('✓ checked' in pg.inner_text('.timeline'), 'and the timeline stops guessing at that leg')
+    ck('31 min walk' in pg.inner_text('.timeline'), 'using the checked time: '
+       + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
+    real = pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")
+    dashed = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(real) == 1 and len(real[0]) > 2,
+       'the map draws that leg along its real path, not as a straight line: %d hops, %d points'
+       % (len(real), len(real[0]) if real else 0))
+    ck(len(dashed) == 1, 'leaving the hop that is still guessed dashed: %d' % len(dashed))
+    ck('min out' in pg.inner_text('#sheet'), 'the card says how far out the guess for that same way was: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'out.' in l][0])
+    pg.click('[data-act="pick-leg"][data-mode=""]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].pick") is None,
+       'and you can hand the choice back to the planner')
+
+    # your own time, which beats everything
+    ck(pg.locator('#legH').count() == 1 and pg.locator('#legM .wheel-item').count() == 60,
+       'the card has wheels to enter your own time, minute by minute')
+    pg.click('#legM .wheel-item[data-v="12"]')
+    pg.click('[data-act="save-my-leg"]')
+    pg.wait_for_timeout(900)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['mine']['minutes'] == 12, 'which is kept against that leg')
+    ck(leg['walk']['minutes'] == 31, 'without losing what was checked')
+    ck('your own time' in pg.inner_text('.timeline'), 'and the timeline says whose time it is showing')
+    ck('12 min' in pg.inner_text('.timeline'), 'using it: ' + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'own time' in l][0])
+    ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the card stays open, so you can change your mind')
+    pg.click('[data-act="drop-my-leg"]')
+    pg.wait_for_timeout(900)
+    ck('≈' in pg.inner_text('.timeline'), 'forgetting it leaves the planner to choose again')
+
+    # a taxi, which is never assumed: it is there once you ask
+    asked.clear()
+    pg.click('[data-act="check-leg"][data-mode="car"]')
+    pg.wait_for_function("() => (window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].car || {})"
+                         ".minutes != null", timeout=15000)
+    pg.wait_for_timeout(300)
+    ck([u for u in asked if 'routed-car/route/v1/driving/' in u], 'a taxi check asks the driving profile')
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['car']['minutes'] == 10, 'and keeps it with the allowance for being picked up: %d min' % leg['car']['minutes'])
+    ck(leg['walk']['minutes'] == 31, 'beside the walk, which it does not touch')
+    ck('≈' in pg.inner_text('.timeline'), 'the leg itself is unchanged, since a taxi is a decision')
+    ck('picked up' in pg.inner_text('#sheet'), 'the card says why a taxi takes longer than the driving time')
+    ck('By taxi' in pg.locator('#sheet .facts.legs dt').all_text_contents(), 'and lists it as one of the ways')
+    pg.screenshot(path=str(SHOTS / 'app_leg_desktop_light.png'))
+
+    pg.click('[data-act="forget-leg"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
+       'and the whole leg can be forgotten')
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
+       'with any real path on the map going with it')
+    pg.wait_for_timeout(1800)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
+       'a leg you have forgotten is not quietly checked all over again')
+    pg.keyboard.press('Escape')
+    pg.wait_for_timeout(150)
 
     # ---- copying a version, and tidying its order
     pg.click('[data-act="version"][data-v="packed"]')
@@ -256,16 +366,21 @@ with sync_playwright() as pw:
     ck(pg.evaluate('window.__fitted.length') == 4, 'the view is fitted around everything on the day')
 
     # the day's thread
-    line = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
-    ck(len(line) == 4, 'the stops are joined in order, out from the hotel and back: %d points' % len(line))
-    ck(line[0] == line[-1], 'a day that ends where it started closes the loop')
-    ck(round(line[0][1], 4) == 34.9858 and round(line[1][1], 4) == 34.9948,
-       'starting at the hotel, then stop 1: ' + str([round(c[1], 4) for c in line]))
+    hops = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(hops) == 3, 'one hop per pair of stops, out from the hotel and back: %d hops' % len(hops))
+    ck(all(len(h) == 2 for h in hops), 'each hop nobody has checked is a straight line between two places')
+    ck(hops[0][0] == hops[-1][-1], 'a day that ends where it started closes the loop')
+    ck(round(hops[0][0][1], 4) == 34.9858 and round(hops[0][1][1], 4) == 34.9948,
+       'starting at the hotel, then stop 1: ' + str([round(h[0][1], 4) for h in hops]))
     layer = pg.evaluate("window.__lastMap.getLayer('day-route-line')")
     ck(layer['paint']['line-dasharray'] == [1.6, 1.6], 'drawn dashed, since a straight line is not a real route')
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
+       'with nothing solid on it yet, since no leg here has been checked')
+    ck('line-dasharray' not in pg.evaluate("window.__lastMap.getLayer('day-real-line')")['paint'],
+       'and the layer that holds checked legs is solid')
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(250)
-    ck(len(pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")) == 5,
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")) == 4,
        'and it follows the version on screen')
     pg.click('[data-act="version"][data-v="balanced"]')
     pg.wait_for_timeout(250)
@@ -739,14 +854,17 @@ with sync_playwright() as pw:
 
     # ---- searching for a place
     ctx, pg = open_page(held=DEMO, extra=services)
-    asked.clear()          # other sections search too; this one counts its own requests
+    # Other sections search too, and the planner checks the day's legs on its own, so this one
+    # counts the searches rather than every request.
+    asked.clear()
+    finds = lambda: [u for u in asked if 'photon.komoot.io' in u]
     pg.fill('#findBox', 'n')
     pg.wait_for_timeout(600)
-    ck(len(asked) == 0, 'one letter is not a search')
+    ck(len(finds()) == 0, 'one letter is not a search')
     pg.fill('#findBox', 'nintendo museum')
     pg.wait_for_timeout(1500)
-    ck(len(asked) == 1 and 'q=nintendo+museum' in asked[0], 'typing a name asks Photon once, after a pause')
-    ck('lat=' in asked[0], 'biased to where the map is looking')
+    ck(len(finds()) == 1 and 'q=nintendo+museum' in finds()[0], 'typing a name asks Photon once, after a pause')
+    ck('lat=' in finds()[0], 'biased to where the map is looking')
     ck(pg.locator('#findResults .item').count() == 2, 'the results are listed')
     ck('Nintendo Museum' in pg.locator('#findResults .nm').first.inner_text(), 'by name')
     ck('Museum · Ogura · Ogura-cho · Uji' in pg.locator('#findResults .meta').first.inner_text(),

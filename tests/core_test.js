@@ -581,15 +581,22 @@ ok(C.legEnds('a>b').join() === 'a,b' && C.legEnds('nonsense') === null, 'and the
 
 let L = withDemo((t) => C.setLeg(t, '2026-11-21', 'start', 'example-temple',
   { mode: 'walk', minutes: 21, km: 1.6, source: 'osrm', at: '2026-10-21T10:00:00Z', path: 'xyz' }));
-ok(L.out.minutes === 21 && L.out.source === 'osrm', 'a checked leg is kept with where it came from');
-ok(C.legFor(L.t, '2026-11-21', 'start', 'example-temple').path === 'xyz', 'and its path, for drawing');
+ok(L.out.walk.minutes === 21 && L.out.walk.source === 'osrm',
+  'a checked leg is filed under the way it is about, with where it came from');
+ok(C.legFor(L.t, '2026-11-21', 'start', 'example-temple').walk.path === 'xyz', 'and its path, for drawing');
 ok(C.legFor(L.t, '2026-11-21', 'example-temple', 'start') === null, 'the other direction is a different leg');
 ok(JSON.stringify(C.normalise(L.t).trip.days['2026-11-21'].legs) === JSON.stringify(L.t.days['2026-11-21'].legs),
   'and it survives normalising');
 
 C.setLeg(L.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 18, at: 'now' } });
-const both = C.legFor(L.t, '2026-11-21', 'start', 'example-temple');
-ok(both.minutes === 21 && both.mine.minutes === 18, 'your own time is kept beside the checked one, not instead of it');
+let both = C.legFor(L.t, '2026-11-21', 'start', 'example-temple');
+ok(both.walk.minutes === 21 && both.mine.minutes === 18, 'your own time is kept beside the checked one, not instead of it');
+C.setLeg(L.t, '2026-11-21', 'start', 'example-temple', { car: { minutes: 9, km: 2.1, source: 'osrm' } });
+both = C.legFor(L.t, '2026-11-21', 'start', 'example-temple');
+ok(both.walk.minutes === 21 && both.car.minutes === 9, 'and checking a taxi does not lose the walk');
+ok(C.normLeg({ walk: { asked: 'now' } }).walk.minutes === null,
+  'a service that was asked and had nothing is remembered, so it is not asked twice');
+ok(C.normLeg({ walk: { source: 'osrm' } }) === null, 'but an empty slot with nothing to say is dropped');
 ok(C.clearLeg(L.t, '2026-11-21', 'start', 'example-temple') && !C.legFor(L.t, '2026-11-21', 'start', 'example-temple'),
   'and a leg can be forgotten');
 ok(!C.clearLeg(L.t, '2026-11-21', 'start', 'nowhere'), 'forgetting one that is not there changes nothing');
@@ -598,7 +605,7 @@ const junk = C.normalise({ days: { '2026-11-21': { date: '2026-11-21', legs: {
   'no-arrow': { minutes: 5 }, 'a>b': { minutes: null }, 'a>c': { minutes: 12, mode: 'walk', source: 'made up' } } } } }).trip;
 ok(!junk.days['2026-11-21'].legs['no-arrow'], 'a key that is not a pair of ends is dropped');
 ok(!junk.days['2026-11-21'].legs['a>b'], 'so is a leg with no time in it at all');
-ok(junk.days['2026-11-21'].legs['a>c'].source === null, 'and a source the planner does not know becomes none');
+ok(junk.days['2026-11-21'].legs['a>c'].walk.source === null, 'and a source the planner does not know becomes none');
 
 L = withDemo((t) => { C.setLeg(t, '2026-11-21', 'start', 'example-temple', { minutes: 20, mode: 'walk' });
   C.setLeg(t, '2026-11-21', 'start', 'ghost', { minutes: 9, mode: 'walk' });
@@ -613,16 +620,43 @@ const leg = () => C.legBetween(B.t, '2026-11-21', 'start', 'example-temple');
 ok(leg().by === 'estimate' && leg().estimate === true, 'with nothing checked, it is the planner\'s own guess');
 const guessed = leg().minutes;
 
-C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, km: 2.3, source: 'osrm' });
-ok(leg().minutes === 31 && leg().by === 'osrm' && leg().estimate === false, 'a checked route beats the guess');
+// The rules for choosing between the ways, on their own. A ride has to clearly beat walking, and a
+// taxi is yours to choose (design doc, "Travel times").
+ok(C.legChoice({ walk: { minutes: 12 } }, { rideMinutes: 14 }) === 'walk',
+  'a checked walk takes the leg where walking is what you would do anyway');
+ok(C.legChoice({ walk: { minutes: 31 } }, { rideMinutes: 20 }) === null,
+  'a long walk where a ride still looks quicker is knowledge, not the leg\'s time');
+ok(C.legChoice({ walk: { minutes: 31 }, transit: { minutes: 20 } }, {}) === 'transit',
+  'a ride that clearly beats the walk takes the leg');
+ok(C.legChoice({ walk: { minutes: 22 }, transit: { minutes: 20 } }, {}) === 'walk',
+  'one that barely beats it does not: walking wins the close calls');
+ok(C.legChoice({ car: { minutes: 8 } }, {}) === null, 'a taxi is never assumed');
+ok(C.legChoice({ car: { minutes: 8 }, pick: 'car' }, {}) === 'car', 'it is there when you pick it');
+ok(C.legChoice({ pick: 'transit', walk: { minutes: 9 } }, {}) === 'walk',
+  'and picking a way nothing is known about picks nothing');
+
+// The demo leg is 2.3 km, which the planner expects you to ride, so a checked walk of half an hour
+// is kept without taking the leg over.
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { walk: { minutes: 31, km: 2.3, source: 'osrm' } });
+ok(leg().by === 'estimate' && leg().known.walk.minutes === 31,
+  'the walk is known, the leg still guessed: ' + leg().by);
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { transit: { minutes: 20, source: 'transitous' } });
+ok(leg().minutes === 20 && leg().by === 'transitous' && leg().estimate === false, 'a checked ride beats the guess');
 ok(leg().guess === guessed, 'and the guess is kept beside it, to show the gap');
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { pick: 'walk' });
+ok(leg().minutes === 31 && leg().mode === 'walk', 'you can put the walk back in its place');
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { pick: null });
 
 C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 24 } });
 ok(leg().minutes === 24 && leg().by === 'you', 'your own time beats both');
-ok(leg().checked === 31 && leg().guess === guessed, 'with the other two still there behind it');
+ok(leg().checked === 20 && leg().guess === guessed, 'with the other two still there behind it');
+ok(leg().known.walk.minutes === 31 && leg().known.transit.minutes === 20,
+  'and the card can still see every way that was checked');
 
 const believed = C.planDay(B.t, '2026-11-21', 'balanced');
 ok(believed.items[1].minutes === 24 && believed.items[1].estimate === false, 'and the timeline uses it');
+ok(C.legPath(C.legBetween(B.t, '2026-11-21', 'start', 'example-temple')).length === 0,
+  'a leg with no shape to its chosen way draws no path');
 ok(believed.summary.checked === 1 && believed.summary.estimated === 2, 'the summary counts what is known from what is guessed');
 ok(C.legBetween(B.t, '2026-11-21', 'start', 'nowhere').unknown === true, 'a leg to nowhere is still unknown');
 
@@ -720,6 +754,20 @@ route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geome
 ok(route.path === good, 'a shape that matches the leg is kept');
 route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: '_p~iF~ps|U_ulLnnqC' }] }, 'walk', osrmA, osrmB);
 ok(route.path === null && route.minutes === 10, 'one that lands in California is dropped, and the time kept');
+
+// A leg says how its own path was encoded, so whoever draws it never has to guess: OSRM at 5 digits,
+// MOTIS at 7. The same characters mean different places at the two precisions.
+ok(C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: good }] }, 'walk', osrmA, osrmB)
+  .precision === 5, 'an OSRM shape is marked as encoded at five digits');
+const drawn = C.legPath({ path: good, precision: 5 });
+ok(drawn.length === 3 && Math.abs(drawn[0].lat - osrmA.lat) < 1e-5, 'a leg hands back the points of its path');
+ok(C.legPath({ path: good, precision: 7 })[0].lat < 1, 'read at the wrong precision it would land in the sea');
+ok(C.legPath({ path: null }).length === 0 && C.legPath(null).length === 0, 'a leg with no path has no points');
+ok(C.normLeg({ mode: 'walk', minutes: 9, path: good }).walk.precision === 5,
+  'a stored leg that never said defaults to five');
+ok(C.normLeg({ walk: { minutes: 9, path: good, precision: 7 } }).walk.precision === 7,
+  'and one that said seven keeps seven');
+ok(C.normLeg({ minutes: 9, path: good }) === null, 'a time that does not say what it is a time for is no use');
 
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

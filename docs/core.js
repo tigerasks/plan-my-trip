@@ -895,6 +895,7 @@ function parseOsrm(json, mode, from, to) {
     km: metres == null ? null : Math.round(metres) / 1000,
     source: 'osrm',
     path,
+    precision: 5,
     name: mode === 'car' ? 'by taxi, with ' + fmtDur(TAXI_PICKUP) + ' to be picked up' : null,
   };
 }
@@ -936,6 +937,8 @@ function decodePath(encoded, precision) {
   }
   return out;
 }
+// The points of a leg's path, decoded the way that leg was encoded. OSRM uses 5 digits, MOTIS 7.
+const legPath = (leg) => (obj(leg).path ? decodePath(obj(leg).path, obj(leg).precision) : []);
 // A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
 // Better no line on the map than a line across the sea.
 const PATH_SLACK = 2;   // km: a route snaps to the road network, so the ends move a little
@@ -951,32 +954,58 @@ function pathLooksRight(points, from, to) {
 // streets and timetables both care. A place that is a stop twice needs no second key: the journey
 // between two places is the same whichever visit it is.
 const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+const LEG_MODES = ['walk', 'transit', 'car'];
 const legKey = (fromId, toId) => cleanId(fromId) + '>' + cleanId(toId);
 const legEnds = (key) => { const bits = String(key).split('>'); return bits.length === 2 ? bits : null; };
 
-function normLeg(raw) {
+// What one service said about one way of making a leg. A slot with no time but a stamp on `asked`
+// is a service that was asked and had nothing to say: worth keeping, so it is not asked again and
+// the card can tell "no timetables" from "not asked yet".
+function normLegMode(raw) {
   const r = obj(raw);
   const minutes = toNum(r.minutes);
-  const mine = obj(r.mine);
-  const myMinutes = toNum(mine.minutes);
-  const leg = {
-    mode: MODE_WORD[r.mode] ? r.mode : null,
+  const slot = {
     minutes: minutes == null ? null : clamp(Math.round(minutes), 0, 1440),
     km: toNum(r.km) == null ? null : Math.round(toNum(r.km) * 1000) / 1000,
     source: LEG_SOURCES.includes(r.source) ? r.source : null,
     at: str(r.at, 32) || null,
     asked: str(r.asked, 32) || null,
     path: str(r.path, 20000) || null,
+    precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
     detail: str(r.detail, 300) || null,
+  };
+  return slot.minutes == null && !slot.asked ? null : slot;
+}
+
+// One leg of a day: your own time, and what each way of making it is known to take. The ways sit
+// side by side rather than one over the other, so checking a taxi never loses the walk, and the
+// planner can see whether a ride is worth taking at all.
+function normLeg(raw) {
+  const r = obj(raw);
+  const mine = obj(r.mine);
+  const myMinutes = toNum(mine.minutes);
+  const leg = {
+    pick: LEG_MODES.includes(r.pick) ? r.pick : null,
     mine: myMinutes == null ? null : {
       minutes: clamp(Math.round(myMinutes), 0, 1440),
       mode: MODE_WORD[mine.mode] ? mine.mode : null,
       at: str(mine.at, 32) || null,
     },
   };
+  let ways = 0;
+  for (const m of LEG_MODES) {
+    const slot = normLegMode(r[m]);
+    if (slot) { leg[m] = slot; ways++; }
+  }
+  // A leg written the one-answer way — by an older planner, or by the chat — is filed under the
+  // mode it names.
+  if (MODE_WORD[r.mode] && !leg[r.mode]) {
+    const slot = normLegMode(r);
+    if (slot) { leg[r.mode] = slot; ways++; }
+  }
   // Nothing worth keeping: no time from a service and none of your own.
-  return leg.minutes == null && !leg.mine ? null : leg;
+  return !ways && !leg.mine ? null : leg;
 }
 function normLegs(raw) {
   const out = {};
@@ -1088,16 +1117,23 @@ function calibration(trip, city) {
   for (const d of dayList(trip)) {
     if (str(d.city) !== want) continue;
     for (const [key, rec] of Object.entries(obj(d.legs))) {
-      const real = rec.mine ? rec.mine.minutes : rec.minutes;
-      const mode = (rec.mine && rec.mine.mode) || rec.mode;
-      const slot = sums[mode];
-      if (real == null || !slot) continue;
       const ends = legEnds(key);
       if (!ends) continue;
       const g = legGuess(pointOf(trip, d.id, ends[0]), pointOf(trip, d.id, ends[1]), trip);
-      if (!g || !g[mode]) continue;
-      slot.sum += real / g[mode];
-      slot.n++;
+      if (!g) continue;
+      // Every way that has a real time teaches the estimate for that way. Your own time is the best
+      // evidence there is, so where you gave one it stands in for the way you gave it for.
+      const real = {};
+      for (const m of LEG_MODES) if (rec[m] && rec[m].minutes != null) real[m] = rec[m].minutes;
+      if (rec.mine && rec.mine.minutes != null) {
+        const m = rec.mine.mode || legChoice(rec, null);
+        if (m) real[m] = rec.mine.minutes;
+      }
+      for (const [m, took] of Object.entries(real)) {
+        if (!sums[m] || !g[m]) continue;
+        sums[m].sum += took / g[m];
+        sums[m].n++;
+      }
     }
   }
   // One odd leg should not drag the whole city about, so a factor only counts once there are a few.
@@ -1109,28 +1145,63 @@ function calibration(trip, city) {
   };
 }
 
+// Of the ways known for this leg, the one the planner shows. What you picked, if you picked one.
+// Otherwise the quickest that makes sense: a ride has to clearly beat walking to be worth it, and a
+// taxi is never assumed — it is there when you choose it (design doc, "Travel times").
+function legChoice(rec, est) {
+  const r = obj(rec);
+  const mins = (m) => (r[m] && r[m].minutes != null ? r[m].minutes : null);
+  if (r.pick && mins(r.pick) != null) return r.pick;
+  const walk = mins('walk'), transit = mins('transit');
+  if (walk != null && transit != null) return transit + WALK_BIAS < walk ? 'transit' : 'walk';
+  if (transit != null) return 'transit';
+  if (walk != null) {
+    const ride = toNum(obj(est).rideMinutes);
+    // A long walk, where a ride still looks quicker, is knowledge for the card rather than the
+    // leg's time: it waits for a real transit time instead of making the day look worse than it is.
+    if (ride == null || (walk <= MAX_WALK && walk <= ride + WALK_BIAS)) return 'walk';
+  }
+  return null;
+}
+
 // What the planner believes about one leg of a day: your own time if you gave one, otherwise the
-// route that was checked, otherwise its own estimate. Your own entry always wins.
+// way it has chosen from what has been checked, otherwise its own estimate. Your own entry always
+// wins, and whatever else is known rides along in `known` for the leg card to show.
 function legBetween(trip, dayId, fromId, toId, cal) {
   const from = pointOf(trip, dayId, fromId), to = pointOf(trip, dayId, toId);
   const est = estimateLeg(from, to, trip, cal);
   const rec = legFor(trip, dayId, fromId, toId);
-  if (!rec) return Object.assign({ by: 'estimate', guess: est.minutes }, est);
+  const guess = est.unknown ? null : est.minutes;
+  if (!rec) return Object.assign({ by: 'estimate', guess }, est);
+  const mode = legChoice(rec, est);
+  const slot = mode ? rec[mode] : null;
+  const known = {};
+  for (const m of LEG_MODES) if (rec[m]) known[m] = rec[m];
   const base = {
-    km: rec.km != null ? rec.km : est.km,
-    path: rec.path, name: rec.name, detail: rec.detail, asked: rec.asked, at: rec.at,
-    guess: est.unknown ? null : est.minutes,
-    checked: rec.minutes,
-    source: rec.source,
+    km: slot && slot.km != null ? slot.km : est.km,
+    path: slot ? slot.path : null,
+    precision: slot ? slot.precision : 5,
+    name: slot ? slot.name : null,
+    detail: slot ? slot.detail : null,
+    asked: slot ? slot.asked : null,
+    at: slot ? slot.at : null,
+    source: slot ? slot.source : null,
+    checked: slot ? slot.minutes : null,
+    guessMode: est.unknown ? null : est.mode,
+    pick: rec.pick || null,
+    known,
+    guess,
   };
   if (rec.mine) {
-    return Object.assign(base, {
-      mode: rec.mine.mode || rec.mode || est.mode,
+    return Object.assign({}, est, base, {
+      mode: rec.mine.mode || mode || est.mode,
       minutes: rec.mine.minutes, estimate: false, by: 'you',
     });
   }
-  if (rec.minutes != null) {
-    return Object.assign(base, { mode: rec.mode || est.mode, minutes: rec.minutes, estimate: false, by: rec.source || 'checked' });
+  if (slot) {
+    return Object.assign({}, est, base, {
+      mode, minutes: slot.minutes, estimate: false, by: slot.source || 'checked',
+    });
   }
   return Object.assign({ by: 'estimate' }, est, base);
 }
@@ -1199,7 +1270,7 @@ function planDay(trip, dayId, key, order) {
     const waited = at - arrive;
     wait += waited;
     visit += p.duration;
-    items.push(Object.assign({ type: 'travel' }, leg));
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: p.id }, leg));
     items.push({
       type: 'visit', id: p.id, name: p.name, place: p, leg,
       arrive, at, until: at + p.duration, waited,
@@ -1214,7 +1285,7 @@ function planDay(trip, dayId, key, order) {
     if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
-    items.push(Object.assign({ type: 'travel' }, leg));
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: 'end' }, leg));
     items.push({ type: 'end', name: end.name, at: finish, place: end });
     if (endBy != null && finish > endBy) {
       flag('error', 'You would be back ' + fmtTime(finish) + ', ' + fmtDur(finish - endBy) + ' after ' + hhmm(endBy), 'end');
@@ -1753,9 +1824,10 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  legPath, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
-  LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
+  LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
+  legChoice, pointOf, tidyLegs,
   decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
