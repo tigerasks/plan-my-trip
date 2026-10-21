@@ -159,9 +159,8 @@ These are proposed; confirm each with the owner before starting it.
 
 - **Verify:**
   - confirmed: tapped feature ids are OpenStreetMap ids times 10 plus the element type (1 node, 2 way, 3 relation). Nodes and ways are both verified live; relations never came up in three runs, and places are rarely relations;
-  - whether OpenStreetMap's bus and rail lines are mapped well enough in a trip's region to name the line between two stops;
-  - whether Transitous knows bus stops in a trip's region, to tell "no timetables" from "no connection". Kyoto's rail is covered; its buses are the open question;
-  - which field carries a line's name in a Transitous leg, since `displayName` gave a numeric id;
+  - answered: OpenStreetMap has Kyoto's bus lines with their numbers, Transitous has no stops at all for them, and a leg is named from `agencyName` plus `headsign` (design doc, fourth run);
+  - whether any of that holds in another country: it is one city on one day;
   - the exact credit lines.
 - **Before going live:** the Transitous heads-up, contact details on the site, the credits, and licence headers.
 - **v1:** the Claude-hosted planner stays for now; this is the owner's decision.

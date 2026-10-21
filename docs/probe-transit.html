@@ -68,7 +68,8 @@
 
     <section class="step"><h2>4 · Run the checks</h2>
       <p class="hint">Seven requests, a second apart: one journey, four stop look-ups, two map queries.
-        A map query that times out is tried once more.</p>
+        A map query that times out is tried once more. The map queries took half a minute each last
+        time, so a run can take a couple of minutes.</p>
       <div class="row" style="margin-top:8px"><button type="button" id="go" class="primary" disabled>Run the checks</button>
         <button type="button" id="again" disabled>Keep this run, start another</button></div>
       <div class="res" id="r-run"></div>
@@ -93,7 +94,7 @@
 (() => {
   'use strict';
   const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-  const R = { probe: 'day-planner transit probe 2', ranAt: new Date().toISOString(), page: {}, runs: [] };
+  const R = { probe: 'day-planner transit probe 3', ranAt: new Date().toISOString(), page: {}, runs: [] };
   const $ = (id) => document.getElementById(id);
   const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -265,7 +266,7 @@
     const q = '[out:json][timeout:25];('
       + 'node(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[highway=bus_stop];'
       + 'relation(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
-      + ');out tags 60;';
+      + ');out tags 400;';   // high enough that a busy corner's stops cannot crowd out its routes
     try {
       const { data, ms } = await getJson('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
       const els = data.elements || [];
@@ -273,6 +274,7 @@
       const routes = els.filter((e) => e.type === 'relation');
       return {
         ok: true, ms, end: label, within: '800 m',
+        capped: els.length >= 400,
         busStops: stops.length,
         stopNames: stops.slice(0, 6).map((e) => String((e.tags && (e.tags['name:en'] || e.tags.name)) || '(no name)').slice(0, 50)),
         routeRelations: routes.length,
@@ -313,7 +315,8 @@
     for (const m of run.map) {
       bits.push(m.ok
         ? ok('OpenStreetMap near ' + m.end + ': ' + m.busStops + ' bus stop' + (m.busStops === 1 ? '' : 's') + ', '
-          + m.routeRelations + ' route' + (m.routeRelations === 1 ? '' : 's') + ' (' + m.routesWithRef + ' with a line number)' + (m.routes.length ? ' — ' + esc(m.routes.map((r) => r.ref || r.name).filter(Boolean).join(', ').slice(0, 70)) : ''))
+          + m.routeRelations + ' route' + (m.routeRelations === 1 ? '' : 's') + ' (' + m.routesWithRef + ' with a line number)'
+          + (m.capped ? ' — and that is the limit, so there may be more' : '') + (m.routes.length ? ' — ' + esc(m.routes.map((r) => r.ref || r.name).filter(Boolean).join(', ').slice(0, 70)) : ''))
         : no('Map query at ' + m.end + ' failed: ' + esc(m.error)));
     }
     return bits.join('<br>');
