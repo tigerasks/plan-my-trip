@@ -446,6 +446,22 @@ with sync_playwright() as pw:
     ctx.close()
     TRANSIT['ride'] = True
 
+    # ---- crediting the services
+    # Every one of them is free on the understanding that it is named, and two of them ask for
+    # particular links: a way to fix the map, and where Transitous gets its timetables.
+    ctx, pg = open_page(held=DEMO, extra=services)
+    credits = pg.inner_text('.credits')
+    for name in ['OpenFreeMap', 'OpenMapTiles', 'OpenStreetMap contributors', 'Photon', 'Overpass',
+                 'OSRM at FOSSGIS', 'Transitous']:
+        ck(name in credits, 'the page credits ' + name)
+    links = pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.href)')
+    ck('https://www.openstreetmap.org/fixthemap' in links, 'with a way to put the map right')
+    ck('https://transitous.org/sources/' in links, 'and where the timetables come from')
+    ck(all(pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.rel === "noopener noreferrer")')),
+       'every outgoing link opens safely')
+    ck('https://github.com/tigerasks' in links, 'and the planner says who to talk to')
+    ctx.close()
+
     # ---- the map
     ctx, pg = open_page(held=DEMO)
     ck(pg.evaluate('window.__lastMap.__opts.style') == 'https://tiles.openfreemap.org/styles/liberty',

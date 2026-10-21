@@ -558,13 +558,23 @@ function backlogHtml() {
     listHtml(places, () => '<span class="dot"></span>',
       'The backlog is empty. It holds ideas that do not have a day yet.', 'backlog'), toggle);
 }
+// Every service here is free on the understanding that it is credited and used lightly. The
+// "fix the map" link is part of what the routing servers ask for: a wrong route is usually a wrong
+// map, and anyone can put it right.
+const CREDIT = (href, text) => '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
 function creditsHtml() {
   return '<p class="credits">'
-    + 'Map: <a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer">OpenFreeMap</a>'
-    + ' · <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles</a>'
-    + ' · Data <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a><br>'
-    + 'Planner by <a href="https://github.com/tigerasks" target="_blank" rel="noopener noreferrer">tigerasks</a>'
-    + ' · <a href="https://github.com/tigerasks/plan-my-trip" target="_blank" rel="noopener noreferrer">source code</a> (AGPL-3.0)'
+    + 'Map: ' + CREDIT('https://openfreemap.org/', 'OpenFreeMap')
+    + ' · ' + CREDIT('https://www.openmaptiles.org/', '© OpenMapTiles')
+    + ' · Data ' + CREDIT('https://www.openstreetmap.org/copyright', '© OpenStreetMap contributors')
+    + ' · ' + CREDIT('https://www.openstreetmap.org/fixthemap', 'fix the map') + '<br>'
+    + 'Search: ' + CREDIT('https://photon.komoot.io/', 'Photon')
+    + ' · Place details: ' + CREDIT('https://overpass-api.de/', 'Overpass')
+    + ' · Walking and taxi: ' + CREDIT('https://routing.openstreetmap.de/about.html', 'OSRM at FOSSGIS')
+    + ' · Timetables: ' + CREDIT('https://transitous.org/', 'Transitous')
+    + ' (' + CREDIT('https://transitous.org/sources/', 'data sources') + ')<br>'
+    + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
+    + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
     + '</p>';
 }
 
