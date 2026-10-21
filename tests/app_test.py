@@ -1010,6 +1010,12 @@ with sync_playwright() as pw:
     pg.click('[data-act="save-trip"]')
     pg.wait_for_timeout(150)
     ck('three letters' in pg.inner_text('#sheet'), 'a currency that is not a code is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#trZone', 'Mars/Olympus')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(150)
+    ck('does not know the time zone' in pg.inner_text('#sheet .note.bad'),
+       'a time zone the browser never heard of is explained too: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#trZone', 'Asia/Tokyo')
     pg.fill('#trCur', 'chf')
     pg.fill('#trTitle', 'Example · Kyoto')
     pg.click('[data-act="save-trip"]')
@@ -1017,6 +1023,9 @@ with sync_playwright() as pw:
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'saving renames the trip')
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
     ck(held['trip']['currency'] == 'CHF' and held['trip']['id'] == 'example-kyoto', 'the currency is stored, and the id never moves')
+    ck(held['trip']['tz'] == 'Asia/Tokyo', 'and the trip knows which time zone its times are in')
+    ck(pg.evaluate("window.DayPlannerCore.instantOf('2026-11-21', 570, 'Asia/Tokyo')") == '2026-11-21T00:30:00.000Z',
+       'so 09:30 on a Kyoto morning is the right instant to ask a timetable about')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'Escape closes a sheet')

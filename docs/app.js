@@ -98,6 +98,10 @@ function restore() {
   App.savedAt = null;
   App.undo = readUndo();
 }
+// The time zone this device is in, which is what the planner falls back to.
+const hereZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; }
+};
 const two = (n) => String(n).padStart(2, '0');
 const fmtClock = (d) => two(d.getHours()) + ':' + two(d.getMinutes());
 
@@ -1089,6 +1093,9 @@ const SHEETS = {
       + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
       + field('trTitle', 'Title', textIn('trTitle', t.title, ' maxlength="80"'), 'Shown at the top, and in what you hand back to the chat.')
       + field('trTz', 'Time zone label', textIn('trTz', t.tzLabel, ' maxlength="12" placeholder="JST"'), 'Just a label next to the times. Every time in the planner is local to where you are going.')
+      + field('trZone', 'Time zone', textIn('trZone', t.tz, ' maxlength="60" placeholder="' + esc(hereZone()) + '"'),
+        'Only the timetable service needs this, to work out which departures to look up. '
+        + 'Leave it empty and the planner uses this device\'s own, ' + esc(hereZone()) + '.')
       + field('trTransit', 'Getting around, by default',
         '<select class="in" id="trTransit">' + C.TRANSIT_TYPES.map((k) =>
           '<option value="' + k + '"' + (k === t.transit ? ' selected' : '') + '>' + esc(C.TRANSIT_LABEL[k]) + '</option>').join('') + '</select>',
@@ -1570,7 +1577,15 @@ const ACTIONS = {
       return;
     }
     App.trip.title = val('trTitle') || App.trip.title;
+    const zone = val('trZone');
+    if (zone && !C.goodZone(zone)) {
+      App.ui.sheet.error = 'This browser does not know the time zone "' + zone + '". It wants a name '
+        + 'like Asia/Tokyo or Europe/Berlin. Leave it empty to use this device\'s own, ' + hereZone() + '.';
+      render();
+      return;
+    }
     App.trip.tzLabel = val('trTz');
+    App.trip.tz = zone || null;
     App.trip.transit = val('trTransit');
     App.trip.currency = cur || null;
     const lookups = [];

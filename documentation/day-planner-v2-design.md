@@ -386,7 +386,7 @@ date:
 
 | Key | Holds |
 |---|---|
-| `trip` | `id`, `title`, `tzLabel`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt` |
+| `trip` | `id`, `title`, `tzLabel`, `tz`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt`. `tzLabel` is only a label next to the times; `tz` is a time zone name like `Asia/Tokyo`, used to turn a local time into the instant a timetable service needs |
 | `stay` | `id`, `name`, `localName`, `lat`, `lng`, `area`, `from` (the first night), `nights`, `note`, `osm` |
 | `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs`. `start` and `end` carry the day's times; their place is only a fallback for when no stay covers the day |
 | `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |

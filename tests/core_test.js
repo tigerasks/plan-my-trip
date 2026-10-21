@@ -575,6 +575,21 @@ fit = withDemo((t) => { t.places['made-up-market'].fixed = '15:00'; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar') === 1,
   'a stop slots in before a booked time rather than after it: ' + C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar'));
 
+console.log('\n== Local time, where the trip is ==');
+ok(C.goodZone('Asia/Tokyo') && !C.goodZone('Mars/Olympus') && !C.goodZone(''),
+  'a time zone is only kept if the browser knows it');
+ok(C.instantOf('2026-11-21', 9 * 60 + 30, 'Asia/Tokyo') === '2026-11-21T00:30:00.000Z',
+  'a Kyoto morning is nine hours ahead of the instant to ask about');
+ok(C.instantOf('2026-11-21', 9 * 60 + 30, 'Europe/Berlin') === '2026-11-21T08:30:00.000Z',
+  'in November Berlin is one hour ahead');
+ok(C.instantOf('2026-07-21', 9 * 60 + 30, 'Europe/Berlin') === '2026-07-21T07:30:00.000Z',
+  'and in July two, because the browser knows about summer time');
+ok(C.instantOf('2026-03-29', 2 * 60 + 30, 'Europe/Berlin') === '2026-03-29T01:30:00.000Z',
+  'a half hour that the clocks skip still lands on a real instant');
+ok(C.instantOf('not a date', 60, 'Asia/Tokyo') === null && C.instantOf('2026-11-21', null, 'Asia/Tokyo') === null,
+  'and nonsense in is nothing out');
+ok(typeof C.instantOf('2026-11-21', 570, null) === 'string', 'with no zone it falls back to this device\'s own');
+
 console.log('\n== Keeping what was checked ==');
 ok(C.legKey('start', 'example-temple') === 'start>example-temple', 'a leg is keyed by its two ends, in order');
 ok(C.legEnds('a>b').join() === 'a,b' && C.legEnds('nonsense') === null, 'and the key reads back, or does not');

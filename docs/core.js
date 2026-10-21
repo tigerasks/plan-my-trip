@@ -413,6 +413,7 @@ function normTrip(raw, now) {
   t.title = str(r.title, 80) || 'Untitled trip';
   t.id = cleanId(r.id) || slug(t.title) || 'trip';
   t.tzLabel = str(r.tzLabel, 12);
+  t.tz = goodZone(r.tz) ? str(r.tz, 60) : null;
   t.transit = TRANSIT_TYPES.includes(r.transit) ? r.transit : 'city';
   t.currency = str(r.currency, 3).toUpperCase().replace(/[^A-Z]/g, '') || null;
   const fx = {};
@@ -1058,6 +1059,40 @@ function tidyLegs(trip, dayId) {
     if (!ok) { delete d.legs[key]; gone++; }
   }
   return gone;
+}
+
+// ---------- local time, where the trip is ----------
+// Every time in the planner is local to where you are going, which is all a person needs. A
+// timetable service needs the actual instant, so a trip can say which time zone it is in and the
+// browser's own time zone database does the rest — daylight saving included.
+function goodZone(name) {
+  const tz = str(name, 60);
+  if (!tz) return false;
+  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return true; } catch (e) { return false; }
+}
+// How far a zone is from UTC at one moment, in milliseconds.
+function zoneOffset(ms, tz) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms));
+  const p = {};
+  for (const bit of parts) p[bit.type] = bit.value;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - ms;
+}
+// The instant a local date and time falls on. Without a zone it falls back to this browser's own,
+// which is right when you are already there and the best guess when you are not.
+function instantOf(dateISO, minutes, tz) {
+  const date = str(dateISO).slice(0, 10);
+  const bits = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const mins = toNum(minutes);
+  if (!bits || mins == null) return null;
+  const naive = Date.UTC(+bits[1], +bits[2] - 1, +bits[3], 0, 0, 0) + Math.round(mins) * 60000;
+  if (!goodZone(tz)) return new Date(naive + new Date(naive).getTimezoneOffset() * 60000).toISOString();
+  const first = naive - zoneOffset(naive, tz);
+  // One correction is enough: it only differs where the clocks go forward or back that day.
+  const second = naive - zoneOffset(first, tz);
+  return new Date(second).toISOString();
 }
 
 // ---------- estimating a leg ----------
@@ -1824,7 +1859,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  legPath, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  legPath, goodZone, instantOf, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,
