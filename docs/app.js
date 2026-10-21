@@ -1201,21 +1201,49 @@ function departureOf(dayId, fromId, toId) {
   return item && item.leaves != null ? C.instantOf(day.date, item.leaves, App.trip.tz) : null;
 }
 
+// Nothing came back, which can mean two quite different things: there are no timetables for this
+// part of the world, or there are and nothing runs at that time. Asking which stops Transitous
+// knows at each end tells them apart — Kyoto has rail but no city buses, which the fourth service
+// test showed by finding places at both ends and no stops at all.
+function whyNoJourney(from, to, departs) {
+  const stopsAt = (point) => {
+    const url = C.transitStopsUrl(point);
+    return url ? Live.fetchJson(url).then((json) => C.parseStops(json), () => null) : Promise.resolve(null);
+  };
+  const place = (p, fallback) => (p && p.name ? p.name : fallback);
+  return Promise.all([stopsAt(from), stopsAt(to)]).then(([a, b]) => {
+    const when = departs ? ' at ' + C.fmtTime(C.minutesOfDay(departs, App.trip.tz)) : ' then';
+    if (!a || !b) return 'Transitous found no journey' + when + ', and could not say which stops it knows.';
+    if (!a.length && !b.length) {
+      return 'Transitous knows no stops at either end, so it has no timetables for this kind of '
+        + 'service here. The planner\'s own estimate stands.';
+    }
+    if (!a.length) return 'Transitous knows no stops near ' + place(from, 'where you set off') + ', so it cannot plan from there.';
+    if (!b.length) return 'Transitous knows no stops near ' + place(to, 'where you are going') + ', so it cannot plan to there.';
+    // A short leg can have the same stop at both ends, so name each one once.
+    const named = a.concat(b).filter((name, i, all) => all.indexOf(name) === i).slice(0, 3);
+    return 'Transitous knows stops at both ends (' + named.join(', ') + ') but found nothing leaving' + when + '.';
+  });
+}
+
 // Ask Transitous what public transport would do with this leg, leaving when the plan says you
-// would. An answer that says nothing is still kept: it stops the planner asking the same question
-// of the same service over and over.
+// would. An answer that says nothing is still kept, with the reason: it stops the planner asking
+// the same question of the same service over and over.
 function askTransit(dayId, fromId, toId) {
   const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
   const departs = departureOf(dayId, fromId, toId);
   const url = departs ? C.transitUrl(from, to, departs) : null;
   if (!url) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
+  const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
   return Live.fetchJson(url).then((json) => {
     const got = C.parseTransit(json, from, to, departs);
     const now = new Date().toISOString();
-    C.setLeg(App.trip, dayId, fromId, toId,
-      { transit: got ? Object.assign({ at: now }, got) : { asked: now, departs, source: 'transitous' } });
-    changed();
-    return got;
+    if (got) { keep(Object.assign({ at: now }, got)); return got; }
+    keep({ asked: now, departs, source: 'transitous' });
+    return whyNoJourney(from, to, departs).then((why) => {
+      keep({ asked: now, departs, source: 'transitous', detail: why });
+      return null;
+    });
   });
 }
 
@@ -1227,6 +1255,10 @@ const NO_ANSWER = {
   transit: 'Transitous found no journey leaving then.',
 };
 const SERVICE_OF = { walk: 'OSRM', car: 'OSRM', transit: 'Transitous' };
+const legNote = (dayId, fromId, toId, mode) => {
+  const rec = C.legFor(App.trip, dayId, fromId, toId);
+  return rec && rec[mode] ? rec[mode].detail : null;
+};
 function checkLeg(dayId, fromId, toId, mode) {
   const sheet = App.ui.sheet;
   const mine = () => (App.ui.sheet === sheet ? sheet : null);
@@ -1242,7 +1274,8 @@ function checkLeg(dayId, fromId, toId, mode) {
     (got) => {
       if (mine()) {
         sheet.busy = false;
-        if (!got) sheet.error = NO_ANSWER[mode];
+        // Where the planner worked out why, the card says so on the row itself; no need to say it twice.
+        if (!got) sheet.error = legNote(dayId, fromId, toId, mode) ? '' : NO_ANSWER[mode];
         render();
       }
       return got;

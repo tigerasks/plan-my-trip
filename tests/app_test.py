@@ -46,17 +46,20 @@ with sync_playwright() as pw:
         '263330850': {'type': 'way', 'id': 263330850, 'center': {'lat': 34.88712, 'lon': 135.80481}, 'tags': {}},
     }
     asked = []
+    # What Transitous has to say, which the tests turn up and down: a journey or nothing, stops
+    # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
+    TRANSIT = {'ride': True, 'stops': True}
 
     def services(r):
         u = r.request.url
         if 'api.transitous.org' in u:
             asked.append(u)
             if 'reverse-geocode' in u:
-                r.fulfill(status=200, headers=H, body=json.dumps([] if 'nostops' in u else FIX['transitStops']))
-            elif 'noride' in u:
-                r.fulfill(status=200, headers=H, body=json.dumps({'itineraries': [], 'direct': []}))
-            else:
+                r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitStops'] if TRANSIT['stops'] else []))
+            elif TRANSIT['ride']:
                 r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitJourney']))
+            else:
+                r.fulfill(status=200, headers=H, body=json.dumps({'itineraries': [], 'direct': []}))
             return True
         if 'routing.openstreetmap.de' in u:
             asked.append(u)
@@ -377,6 +380,38 @@ with sync_playwright() as pw:
     ck('500' in broke['why'], 'a service that fails says so in plain words: ' + broke['why'])
     ck(broke['after'] is True, 'and the next request still goes through')
     ctx.close()
+
+    # ---- when the timetables have nothing to say
+    # Transitous answering with no journey means one of two things, and which one matters: there are
+    # no timetables for this kind of service here, or there are and nothing runs at that hour. The
+    # fourth service test found exactly the first case for Kyoto's buses.
+    TRANSIT['ride'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).detail != null", timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] is None and leg['asked'], 'a journey that came back empty is still written down')
+    ck('stops at both ends' in leg['detail'] and '08:30' in leg['detail'],
+       'and says nothing runs at that hour, since it does know stops there: ' + leg['detail'])
+    ck(leg['detail'].count('東寺') == 1, 'naming each stop once, however many ends it sits by')
+    ck('≈' in pg.inner_text('.timeline'), 'the day falls back to the planner\'s own estimate')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('nothing came back' in pg.inner_text('#sheet'), 'the card says the timetables were asked and had nothing')
+    ck(leg['detail'] in pg.inner_text('#sheet'), 'with the reason under it')
+    ctx.close()
+
+    TRANSIT['stops'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).detail != null", timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck('no stops at either end' in leg['detail'],
+       'where it knows no stops at all, it says so instead: ' + leg['detail'])
+    ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
+    ctx.close()
+    TRANSIT['ride'] = True
+    TRANSIT['stops'] = True
 
     # ---- the map
     ctx, pg = open_page(held=DEMO)

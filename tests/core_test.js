@@ -632,6 +632,9 @@ ok(C.instantOf('2026-03-29', 2 * 60 + 30, 'Europe/Berlin') === '2026-03-29T01:30
 ok(C.instantOf('not a date', 60, 'Asia/Tokyo') === null && C.instantOf('2026-11-21', null, 'Asia/Tokyo') === null,
   'and nonsense in is nothing out');
 ok(typeof C.instantOf('2026-11-21', 570, null) === 'string', 'with no zone it falls back to this device\'s own');
+ok(C.minutesOfDay(C.instantOf('2026-11-21', 8 * 60 + 30, 'Asia/Tokyo'), 'Asia/Tokyo') === 8 * 60 + 30,
+  'and an instant reads back as the local time it is, for saying which departure was asked about');
+ok(C.minutesOfDay('not an instant', 'Asia/Tokyo') === null, 'nonsense in, nothing out, here too');
 
 console.log('\n== Keeping what was checked ==');
 ok(C.legKey('start', 'example-temple') === 'start>example-temple', 'a leg is keyed by its two ends, in order');

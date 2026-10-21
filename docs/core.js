@@ -1082,6 +1082,16 @@ function tidyLegs(trip, dayId) {
   return gone;
 }
 
+// The local time an instant falls at, where the trip is: the other way round from instantOf, for
+// saying back which departure was asked about.
+function minutesOfDay(instantISO, tz) {
+  const ms = Date.parse(str(instantISO));
+  if (!Number.isFinite(ms)) return null;
+  const off = goodZone(tz) ? zoneOffset(ms, tz) : -new Date(ms).getTimezoneOffset() * 60000;
+  const local = new Date(ms + off);
+  return local.getUTCHours() * 60 + local.getUTCMinutes();
+}
+
 // ---------- asking Transitous ----------
 // Public transport from Transitous, which runs MOTIS over timetables that transit agencies publish.
 // Free for open-source, non-commercial use; the browser identifies itself through the Referer and
@@ -1984,7 +1994,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  legPath, encodePath, goodZone, instantOf, openOn, startWindows, estimateLeg,
+  legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
   TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
