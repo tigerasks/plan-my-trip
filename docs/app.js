@@ -912,6 +912,15 @@ const SHEETS = {
       + (rec && rec.detail ? '<p class="note">' + esc(rec.detail) + '</p>' : '')
       + (rows.length ? '<dl class="facts legs">' + rows.join('') + '</dl>' : '')
       + (gap >= 10 ? '<p class="note amber">The estimate is ' + esc(C.fmtDur(gap)) + ' out. The checked time is the one to trust.</p>' : '')
+      + (s.busy ? '<p class="note">Asking…</p>' : '')
+      + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
+      + '<div class="sh-sec"><span class="label">Check it for real</span>'
+      + '<div class="actions">'
+      + '<button type="button" class="btn" data-act="check-leg" data-mode="walk">Walking</button>'
+      + '<button type="button" class="btn" data-act="check-leg" data-mode="car">By taxi</button>'
+      + '</div>'
+      + '<p class="hint">Real streets from OSRM, a second between requests, and the answer kept in the '
+      + 'trip so the same leg is never asked twice. The last check is the one the timeline uses.</p></div>'
       + '<div class="sh-sec"><span class="label">Your own time</span>'
       + '<p class="note">If you know how long this takes, say so. It wins over everything else.</p>'
       + legTimeWheels(rec && rec.mine ? rec.mine.minutes : info.minutes)
@@ -1123,6 +1132,38 @@ function addPlaceTo(place, to) {
 function openPlace(id) {
   if (!C.placeById(App.trip, id)) return;
   openSheet('place', { id: id });
+}
+
+// Ask OSRM what a leg really takes, and keep the answer in the trip. The card may have been closed
+// or moved on by the time it answers, so the sheet is only touched if it is still the same one.
+function checkLeg(dayId, fromId, toId, mode) {
+  const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
+  const url = C.osrmUrl(from, to, mode);
+  const sheet = App.ui.sheet;
+  const mine = () => (App.ui.sheet === sheet ? sheet : null);
+  if (!url) {
+    if (mine()) { sheet.error = 'One end of this leg has no position, so there is nothing to ask about.'; render(); }
+    return Promise.resolve(null);
+  }
+  if (mine()) { sheet.busy = true; sheet.error = ''; render(); }
+  return Live.fetchJson(url).then(
+    (json) => {
+      const got = C.parseOsrm(json, mode, from, to);
+      if (mine()) sheet.busy = false;
+      if (!got) {
+        if (mine()) sheet.error = 'OSRM could not find a way between these two.';
+        render();
+        return null;
+      }
+      C.setLeg(App.trip, dayId, fromId, toId, Object.assign({ at: new Date().toISOString() }, got));
+      changed();
+      return got;
+    },
+    (err) => {
+      if (mine()) { sheet.busy = false; sheet.error = 'OSRM ' + Live.why(err) + '. The estimate still stands.'; }
+      render();
+      return null;
+    });
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
@@ -1603,6 +1644,10 @@ const ACTIONS = {
   'add-place': (el) => { if (App.ui.sheet && App.ui.sheet.place) addPlaceTo(App.ui.sheet.place, el.dataset.to); },
   place: (el) => { closeMenu(); openPlace(el.dataset.id); },
   leg: (el) => openSheet('leg', { from: el.dataset.from, to: el.dataset.to }),
+  'check-leg': (el) => {
+    const s = App.ui.sheet, day = currentDay();
+    if (s && day) checkLeg(day.id, s.from, s.to, el.dataset.mode);
+  },
   'save-my-leg': () => {
     const s = App.ui.sheet, day = currentDay();
     C.setLeg(App.trip, day.id, s.from, s.to, { mine: { minutes: legTimeOf(), at: new Date().toISOString() } });

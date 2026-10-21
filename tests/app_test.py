@@ -7,6 +7,7 @@ import harness
 from harness import SHOTS, Checks
 
 SHOTS.mkdir(exist_ok=True)
+H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 DEMO = json.loads((harness.HERE / 'demo-trip.json').read_text())
 BASE, stop = harness.serve()
 ck = Checks('Day planner — the skeleton')
@@ -34,6 +35,8 @@ with sync_playwright() as pw:
         return False
 
     FIX = json.loads((harness.HERE / 'fixtures.json').read_text())
+    # A polyline from the hotel to the temple, so the shape passes the planner's sanity check.
+    KYOTO_SHAPE = FIX['kyotoShape']
     # What Overpass gives back, by id. Pizza Little Party's tags are from the service test; the
     # other two are made up, since the probe never looked them up.
     OSM_BY_ID = {
@@ -46,6 +49,17 @@ with sync_playwright() as pw:
 
     def services(r):
         u = r.request.url
+        if 'routing.openstreetmap.de' in u:
+            asked.append(u)
+            if 'nowhere' in u:
+                r.fulfill(status=200, body=json.dumps({'code': 'NoRoute', 'routes': []}), headers=H)
+            else:
+                walking = 'routed-foot' in u
+                r.fulfill(status=200, headers=H, body=json.dumps({'code': 'Ok', 'routes': [{
+                    'duration': 1860 if walking else 300,
+                    'distance': 2310 if walking else 2480,
+                    'geometry': KYOTO_SHAPE}]}))
+            return True
         if 'google.com/maps' in u:
             r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
             return True
@@ -110,7 +124,7 @@ with sync_playwright() as pw:
     ctx.close()
 
     # ---- opening a browser that already holds a trip
-    ctx, pg = open_page(held=DEMO)
+    ctx, pg = open_page(held=DEMO, extra=services)
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto (made up)', 'a stored trip opens straight away')
     ck(pg.locator('#dayPick').is_visible() and 'Sat 21 Nov' in pg.inner_text('#dayFace'), 'on its first day: ' + pg.inner_text('#dayFace'))
     ck('Example Hotel · Kyoto Station' in pg.inner_text('#panel'), 'with the day it knows about')
@@ -184,6 +198,35 @@ with sync_playwright() as pw:
     pg.click('[data-act="drop-my-leg"]')
     pg.wait_for_timeout(900)
     ck('≈' in pg.inner_text('.timeline'), 'forgetting it goes back to the estimate')
+
+    # checking it for real
+    asked.clear()
+    pg.click('[data-act="check-leg"][data-mode="walk"]')
+    pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs;"
+                         " return l && l['start>example-temple'] && l['start>example-temple'].source === 'osrm'; }",
+                         timeout=15000)
+    pg.wait_for_timeout(300)
+    ck(len(asked) == 1 and 'routed-foot/route/v1/foot/' in asked[0], 'checking asks OSRM for the walking profile')
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['minutes'] == 31 and leg['source'] == 'osrm', 'and the real time is kept: %d min' % leg['minutes'])
+    ck(leg['km'] == 2.31 and leg['path'], 'with the distance and the shape of the route')
+    ck('✓ checked' in pg.inner_text('.timeline'), 'the timeline marks it as checked rather than guessed')
+    ck('Estimate' in pg.locator('#sheet dt').all_text_contents() and 'Checked' in pg.locator('#sheet dt').all_text_contents(),
+       'and the card shows the guess against the real time')
+    ck('is 11 min out' in pg.inner_text('#sheet'), 'saying how far out the guess was: '
+       + [l for l in pg.inner_text('#sheet').split(chr(10)) if 'out.' in l][0])
+
+    pg.click('[data-act="check-leg"][data-mode="car"]')
+    pg.wait_for_function("() => window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].mode === 'car'",
+                         timeout=15000)
+    pg.wait_for_timeout(300)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
+    ck(leg['mode'] == 'car' and leg['minutes'] == 10, 'a taxi check replaces it, with the pickup allowance: %d min' % leg['minutes'])
+    ck('picked up' in pg.inner_text('#sheet'), 'and says why it is longer than the driving time')
+    pg.click('[data-act="forget-leg"]')
+    pg.wait_for_timeout(900)
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
+       'and the whole leg can be forgotten')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
 
