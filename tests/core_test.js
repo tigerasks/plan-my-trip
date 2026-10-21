@@ -575,5 +575,88 @@ fit = withDemo((t) => { t.places['made-up-market'].fixed = '15:00'; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar') === 1,
   'a stop slots in before a booked time rather than after it: ' + C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar'));
 
+console.log('\n== Keeping what was checked ==');
+ok(C.legKey('start', 'example-temple') === 'start>example-temple', 'a leg is keyed by its two ends, in order');
+ok(C.legEnds('a>b').join() === 'a,b' && C.legEnds('nonsense') === null, 'and the key reads back, or does not');
+
+let L = withDemo((t) => C.setLeg(t, '2026-11-21', 'start', 'example-temple',
+  { mode: 'walk', minutes: 21, km: 1.6, source: 'osrm', at: '2026-10-21T10:00:00Z', path: 'xyz' }));
+ok(L.out.minutes === 21 && L.out.source === 'osrm', 'a checked leg is kept with where it came from');
+ok(C.legFor(L.t, '2026-11-21', 'start', 'example-temple').path === 'xyz', 'and its path, for drawing');
+ok(C.legFor(L.t, '2026-11-21', 'example-temple', 'start') === null, 'the other direction is a different leg');
+ok(JSON.stringify(C.normalise(L.t).trip.days['2026-11-21'].legs) === JSON.stringify(L.t.days['2026-11-21'].legs),
+  'and it survives normalising');
+
+C.setLeg(L.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 18, at: 'now' } });
+const both = C.legFor(L.t, '2026-11-21', 'start', 'example-temple');
+ok(both.minutes === 21 && both.mine.minutes === 18, 'your own time is kept beside the checked one, not instead of it');
+ok(C.clearLeg(L.t, '2026-11-21', 'start', 'example-temple') && !C.legFor(L.t, '2026-11-21', 'start', 'example-temple'),
+  'and a leg can be forgotten');
+ok(!C.clearLeg(L.t, '2026-11-21', 'start', 'nowhere'), 'forgetting one that is not there changes nothing');
+
+const junk = C.normalise({ days: { '2026-11-21': { date: '2026-11-21', legs: {
+  'no-arrow': { minutes: 5 }, 'a>b': { minutes: null }, 'a>c': { minutes: 12, mode: 'walk', source: 'made up' } } } } }).trip;
+ok(!junk.days['2026-11-21'].legs['no-arrow'], 'a key that is not a pair of ends is dropped');
+ok(!junk.days['2026-11-21'].legs['a>b'], 'so is a leg with no time in it at all');
+ok(junk.days['2026-11-21'].legs['a>c'].source === null, 'and a source the planner does not know becomes none');
+
+L = withDemo((t) => { C.setLeg(t, '2026-11-21', 'start', 'example-temple', { minutes: 20, mode: 'walk' });
+  C.setLeg(t, '2026-11-21', 'start', 'ghost', { minutes: 9, mode: 'walk' });
+  return C.tidyLegs(t, '2026-11-21'); });
+ok(L.out === 1 && C.legFor(L.t, '2026-11-21', 'start', 'example-temple'), 'a leg to a place that has gone is tidied away');
+ok(C.pointOf(L.t, '2026-11-21', 'start').name === 'Example Hotel · Kyoto Station', 'start means where the day starts');
+ok(C.pointOf(L.t, '2026-11-21', 'example-temple').name === 'Example Temple', 'and an id means its place');
+
+console.log('\n== Which time the planner believes ==');
+let B = withDemo(() => null);
+const leg = () => C.legBetween(B.t, '2026-11-21', 'start', 'example-temple');
+ok(leg().by === 'estimate' && leg().estimate === true, 'with nothing checked, it is the planner\'s own guess');
+const guessed = leg().minutes;
+
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, km: 2.3, source: 'osrm' });
+ok(leg().minutes === 31 && leg().by === 'osrm' && leg().estimate === false, 'a checked route beats the guess');
+ok(leg().guess === guessed, 'and the guess is kept beside it, to show the gap');
+
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 24 } });
+ok(leg().minutes === 24 && leg().by === 'you', 'your own time beats both');
+ok(leg().checked === 31 && leg().guess === guessed, 'with the other two still there behind it');
+
+const believed = C.planDay(B.t, '2026-11-21', 'balanced');
+ok(believed.items[1].minutes === 24 && believed.items[1].estimate === false, 'and the timeline uses it');
+ok(believed.summary.checked === 1 && believed.summary.estimated === 2, 'the summary counts what is known from what is guessed');
+ok(C.legBetween(B.t, '2026-11-21', 'start', 'nowhere').unknown === true, 'a leg to nowhere is still unknown');
+
+console.log('\n== Learning from what was checked ==');
+let K = withDemo(() => null);
+ok(C.calibration(K.t, 'Kyoto').n === 0 && C.calibration(K.t, 'Kyoto').walk === 1,
+  'with nothing checked, the estimates are left alone');
+const nearby = { lat: 34.9960, lng: 135.7860 };
+const before = C.estimateLeg(K.t.places['example-temple'], nearby, K.t).minutes;
+
+C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, source: 'osrm' });
+C.setLeg(K.t, '2026-11-21', 'example-temple', 'made-up-market', { mode: 'walk', minutes: 26, source: 'osrm' });
+ok(C.calibration(K.t, 'Kyoto').walk === 1, 'two legs are not enough to move the estimates');
+
+C.setLeg(K.t, '2026-11-21', 'made-up-market', 'end', { mode: 'walk', minutes: 28, source: 'osrm' });
+const cal = C.calibration(K.t, 'Kyoto');
+ok(cal.counted.walk === 3 && cal.walk < 1, 'three are, and walking here turns out quicker than the model thought: ' + cal.walk.toFixed(2));
+ok(cal.transit === 1, 'while a mode nothing was checked in is untouched');
+const after = C.estimateLeg(K.t.places['example-temple'], nearby, K.t, cal).minutes;
+ok(after < before, 'so a fresh walk in that city comes down: ' + before + ' → ' + after + ' min');
+ok(C.estimateLeg(K.t.places['example-temple'], K.t.places['made-up-market'], K.t, cal).minutes
+  === C.estimateLeg(K.t.places['example-temple'], K.t.places['made-up-market'], K.t).minutes,
+  'while a leg the network wins is untouched, since nothing was checked by train or bus');
+ok(C.calibration(K.t, 'Nara').n === 0, 'another city learns nothing from this one');
+ok(C.calibration(K.t, '').n === 0, 'and a day with no city teaches nothing');
+
+C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 45, mode: 'walk' } });
+ok(C.calibration(K.t, 'Kyoto').walk > cal.walk, 'your own time teaches it too, and it believes you');
+
+const wild = withDemo(() => null);
+for (const [a, b] of [['start', 'example-temple'], ['example-temple', 'made-up-market'], ['made-up-market', 'end']]) {
+  C.setLeg(wild.t, '2026-11-21', a, b, { mode: 'walk', minutes: 600, source: 'osrm' });
+}
+ok(C.calibration(wild.t, 'Kyoto').walk === 2, 'and one absurd day cannot send the estimates to the moon');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

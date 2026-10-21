@@ -337,7 +337,7 @@ function normDay(raw, issues, now) {
     ? { lat: toNum(c.lat), lng: toNum(c.lng), zoom: clamp(toNum(c.zoom) == null ? 13 : toNum(c.zoom), 1, 20) }
     : null;
   d.note = str(r.note, 2000);
-  d.legs = obj(r.legs);
+  d.legs = normLegs(r.legs);
   return d;
 }
 // ---------- where you sleep ----------
@@ -862,6 +862,92 @@ function startWindows(place, date) {
   return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
 }
 
+// ---------- what is known about a leg ----------
+// A leg is between two points of a day: a place, or the day's own `start` and `end`. Keys are
+// directed and looked up exactly — a leg checked one way says nothing about the other, since one-way
+// streets and timetables both care. A place that is a stop twice needs no second key: the journey
+// between two places is the same whichever visit it is.
+const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+const legKey = (fromId, toId) => cleanId(fromId) + '>' + cleanId(toId);
+const legEnds = (key) => { const bits = String(key).split('>'); return bits.length === 2 ? bits : null; };
+
+function normLeg(raw) {
+  const r = obj(raw);
+  const minutes = toNum(r.minutes);
+  const mine = obj(r.mine);
+  const myMinutes = toNum(mine.minutes);
+  const leg = {
+    mode: MODE_WORD[r.mode] ? r.mode : null,
+    minutes: minutes == null ? null : clamp(Math.round(minutes), 0, 1440),
+    km: toNum(r.km) == null ? null : Math.round(toNum(r.km) * 1000) / 1000,
+    source: LEG_SOURCES.includes(r.source) ? r.source : null,
+    at: str(r.at, 32) || null,
+    asked: str(r.asked, 32) || null,
+    path: str(r.path, 20000) || null,
+    name: str(r.name, 120) || null,
+    detail: str(r.detail, 300) || null,
+    mine: myMinutes == null ? null : {
+      minutes: clamp(Math.round(myMinutes), 0, 1440),
+      mode: MODE_WORD[mine.mode] ? mine.mode : null,
+      at: str(mine.at, 32) || null,
+    },
+  };
+  // Nothing worth keeping: no time from a service and none of your own.
+  return leg.minutes == null && !leg.mine ? null : leg;
+}
+function normLegs(raw) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj(raw))) {
+    const ends = legEnds(k);
+    if (!ends || !ends[0] || !ends[1]) continue;
+    const leg = normLeg(v);
+    if (leg) out[legKey(ends[0], ends[1])] = leg;
+  }
+  return out;
+}
+const legFor = (trip, dayId, fromId, toId) => {
+  const d = obj(obj(trip).days)[dayId];
+  return d ? obj(d.legs)[legKey(fromId, toId)] || null : null;
+};
+function setLeg(trip, dayId, fromId, toId, leg, now) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return null;
+  const key = legKey(fromId, toId);
+  const kept = d.legs[key];
+  const next = normLeg(Object.assign({}, kept, leg));
+  if (!next) { delete d.legs[key]; touch(trip, now); return null; }
+  d.legs[key] = next;
+  touch(trip, now);
+  return next;
+}
+function clearLeg(trip, dayId, fromId, toId, now) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return false;
+  const key = legKey(fromId, toId);
+  if (!d.legs[key]) return false;
+  delete d.legs[key];
+  touch(trip, now);
+  return true;
+}
+// Which point of a day an id means.
+function pointOf(trip, dayId, id) {
+  if (id === 'start') return dayStart(trip, dayId);
+  if (id === 'end') return dayEnd(trip, dayId);
+  return placeById(trip, id);
+}
+// Legs whose ends the day no longer has are worth forgetting; they cannot be shown or used again.
+function tidyLegs(trip, dayId) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return 0;
+  let gone = 0;
+  for (const key of Object.keys(d.legs)) {
+    const ends = legEnds(key);
+    const ok = ends && ends.every((id) => (id === 'start' || id === 'end' ? true : !!placeById(trip, id)));
+    if (!ok) { delete d.legs[key]; gone++; }
+  }
+  return gone;
+}
+
 // ---------- estimating a leg ----------
 // The planner's own numbers, from the straight-line distance: instant, offline and rough, so they
 // are always marked ≈. Milestone 4 replaces them with real routes and keeps this as the fallback.
@@ -878,19 +964,92 @@ function rideMinutes(km, model) {
   const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
   return model.overhead + (km * model.detour / speed) * 60;
 }
-function estimateLeg(from, to, trip) {
-  if (!hasPos(from) || !hasPos(to)) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+// A taxi has to reach you before it can take you anywhere, and OSRM knows nothing of that.
+const TAXI_PICKUP = 5;
+// The raw numbers, before anything the trip has learned is applied.
+function legGuess(from, to, trip) {
+  if (!hasPos(from) || !hasPos(to)) return null;
   const km = kmBetween(from, to);
-  const walk = Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km)));
   const model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
-  const ride = Math.round(rideMinutes(km, model));
+  return {
+    km,
+    walk: Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km))),
+    transit: Math.round(rideMinutes(km, model)),
+    car: Math.round(rideMinutes(km, CAR_MODEL)) + TAXI_PICKUP,
+  };
+}
+function estimateLeg(from, to, trip, cal) {
+  const g = legGuess(from, to, trip);
+  if (!g) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+  const f = obj(cal);
+  const walk = Math.max(g.km < 0.02 ? 0 : 1, Math.round(g.walk * (toNum(f.walk) || 1)));
+  const ride = Math.round(g.transit * (toNum(f.transit) || 1));
   const onFoot = walk <= MAX_WALK && walk <= ride + WALK_BIAS;
   return {
     mode: onFoot ? 'walk' : 'transit',
     minutes: onFoot ? walk : ride,
-    km, estimate: true,
+    km: g.km, estimate: true,
     walkMinutes: walk, rideMinutes: ride,
+    carMinutes: Math.round(g.car * (toNum(f.car) || 1)),
+    calibrated: !!(f.walk || f.transit || f.car),
   };
+}
+
+// The estimates learn from the legs that were checked in the same city, so the numbers improve as
+// you go. Worked out each time rather than stored: a stored factor goes stale the moment a leg is
+// re-checked or a place moves.
+function calibration(trip, city) {
+  const want = str(city);
+  const sums = { walk: { sum: 0, n: 0 }, transit: { sum: 0, n: 0 }, car: { sum: 0, n: 0 } };
+  if (!want) return { walk: 1, transit: 1, car: 1, n: 0 };
+  for (const d of dayList(trip)) {
+    if (str(d.city) !== want) continue;
+    for (const [key, rec] of Object.entries(obj(d.legs))) {
+      const real = rec.mine ? rec.mine.minutes : rec.minutes;
+      const mode = (rec.mine && rec.mine.mode) || rec.mode;
+      const slot = sums[mode];
+      if (real == null || !slot) continue;
+      const ends = legEnds(key);
+      if (!ends) continue;
+      const g = legGuess(pointOf(trip, d.id, ends[0]), pointOf(trip, d.id, ends[1]), trip);
+      if (!g || !g[mode]) continue;
+      slot.sum += real / g[mode];
+      slot.n++;
+    }
+  }
+  // One odd leg should not drag the whole city about, so a factor only counts once there are a few.
+  const factor = (s) => (s.n >= 3 ? clamp(s.sum / s.n, 0.5, 2) : 1);
+  return {
+    walk: factor(sums.walk), transit: factor(sums.transit), car: factor(sums.car),
+    n: sums.walk.n + sums.transit.n + sums.car.n,
+    counted: { walk: sums.walk.n, transit: sums.transit.n, car: sums.car.n },
+  };
+}
+
+// What the planner believes about one leg of a day: your own time if you gave one, otherwise the
+// route that was checked, otherwise its own estimate. Your own entry always wins.
+function legBetween(trip, dayId, fromId, toId, cal) {
+  const from = pointOf(trip, dayId, fromId), to = pointOf(trip, dayId, toId);
+  const est = estimateLeg(from, to, trip, cal);
+  const rec = legFor(trip, dayId, fromId, toId);
+  if (!rec) return Object.assign({ by: 'estimate', guess: est.minutes }, est);
+  const base = {
+    km: rec.km != null ? rec.km : est.km,
+    path: rec.path, name: rec.name, detail: rec.detail, asked: rec.asked, at: rec.at,
+    guess: est.unknown ? null : est.minutes,
+    checked: rec.minutes,
+    source: rec.source,
+  };
+  if (rec.mine) {
+    return Object.assign(base, {
+      mode: rec.mine.mode || rec.mode || est.mode,
+      minutes: rec.mine.minutes, estimate: false, by: 'you',
+    });
+  }
+  if (rec.minutes != null) {
+    return Object.assign(base, { mode: rec.mode || est.mode, minutes: rec.minutes, estimate: false, by: rec.source || 'checked' });
+  }
+  return Object.assign({ by: 'estimate' }, est, base);
 }
 
 // ---------- walking a day ----------
@@ -911,6 +1070,7 @@ function planDay(trip, dayId, key, order) {
   let endBy = end ? parseTime(end.time) : null;
   if (endBy != null && endBy <= startTime) endBy += 1440;
 
+  const cal = calibration(trip, day.city);
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
@@ -919,10 +1079,10 @@ function planDay(trip, dayId, key, order) {
   const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
     : planPlaces(trip, dayId, shown));
 
-  let t = startTime, prev = start, travel = 0, wait = 0, visit = 0;
+  let t = startTime, prev = start, prevId = 'start', travel = 0, wait = 0, visit = 0;
 
   for (const p of stops) {
-    const leg = estimateLeg(prev, p, trip);
+    const leg = legBetween(trip, dayId, prevId, p.id, cal);
     // An unknown leg has an end without a position. Say which one: blaming the destination for a
     // day that has no starting point sends you looking in the wrong place.
     if (leg.unknown) {
@@ -963,10 +1123,11 @@ function planDay(trip, dayId, key, order) {
     });
     t = at + p.duration;
     prev = p;
+    prevId = p.id;
   }
   let finish = t;
   if (end) {
-    const leg = estimateLeg(prev, end, trip);
+    const leg = legBetween(trip, dayId, prevId, 'end', cal);
     if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
@@ -984,6 +1145,7 @@ function planDay(trip, dayId, key, order) {
       stops: stops.length, travel, wait, visit,
       spare: endBy == null ? null : endBy - finish,
       estimated: legs.filter((l) => l.estimate && l.minutes > 0).length,
+      checked: legs.filter((l) => !l.estimate).length,
       errors: issues.filter((i) => i.severity === 'error').length,
     },
   };
@@ -1508,7 +1670,9 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows, estimateLeg, rideMinutes, TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
