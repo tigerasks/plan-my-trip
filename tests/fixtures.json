@@ -229,5 +229,67 @@
       "id": "jp-japan-rail_2784"
     }
   ],
-  "transitStopsNote": "What /api/v1/reverse-geocode?type=STOP gives back: a bare array. An empty one is how the planner tells \"no timetables around here\" from \"nothing runs at that time\"."
+  "transitStopsNote": "What /api/v1/reverse-geocode?type=STOP gives back: a bare array. An empty one is how the planner tells \"no timetables around here\" from \"nothing runs at that time\".",
+  "stopsNearHotel": {
+    "elements": [
+      {
+        "type": "node",
+        "id": 7001,
+        "lat": 34.9862,
+        "lon": 135.7596,
+        "tags": {
+          "highway": "bus_stop",
+          "name": "Hotel-mae (made up)"
+        }
+      },
+      {
+        "type": "node",
+        "id": 7002,
+        "lat": 34.984,
+        "lon": 135.757,
+        "tags": {
+          "railway": "station",
+          "name": "架空駅",
+          "name:en": "Pretend Station"
+        }
+      },
+      {
+        "type": "relation",
+        "id": 7900,
+        "tags": {
+          "type": "route",
+          "route": "bus",
+          "ref": "205",
+          "name": "Bus 205: made up loop",
+          "operator": "Example Bus"
+        }
+      }
+    ]
+  },
+  "stopsNearTemple": {
+    "elements": [
+      {
+        "type": "node",
+        "id": 7003,
+        "lat": 34.9944,
+        "lon": 135.785,
+        "tags": {
+          "highway": "bus_stop",
+          "name": "Temple-mae (made up)"
+        }
+      },
+      {
+        "type": "relation",
+        "id": 7900,
+        "tags": {
+          "type": "route",
+          "route": "bus",
+          "ref": "205",
+          "name": "Bus 205: made up loop",
+          "operator": "Example Bus"
+        }
+      }
+    ]
+  },
+  "stopsNote": "Made-up stops and one bus route near the example hotel and the example temple, in the shape Overpass answers `out tags center` with. The same route relation sits by both ends, which is what lets the planner name the line."
 }

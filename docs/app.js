@@ -1236,6 +1236,43 @@ function whyNoJourney(from, to, departs) {
   });
 }
 
+// Where there are no timetables, the map still knows where the stops are. Overpass took tens of
+// seconds in the fourth service test, so none of this is waited on: the leg keeps its estimate and
+// the stops fill in behind it, or never (design doc, "Travel times").
+const OVERPASS_WAIT = 90000;
+function stopsNear(point) {
+  const ask = (metres) => {
+    const url = C.stopsNearUrl(point, metres);
+    return url ? Live.fetchJson(url, { timeout: OVERPASS_WAIT }).then((j) => C.parseNear(j), () => null)
+      : Promise.resolve(null);
+  };
+  return ask(C.STOP_REACH).then((near) => {
+    // Nothing within ten minutes' walk is worth a wider look before giving up on the leg.
+    if (!near || near.stops.length || near.capped) return near;
+    return ask(C.STOP_REACH_WIDE).then((wider) => wider || near);
+  });
+}
+function askStops(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
+  const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
+  if (!day || !C.hasPos(from) || !C.hasPos(to)) return Promise.resolve(null);
+  return Promise.all([stopsNear(from), stopsNear(to)]).then(([a, b]) => {
+    if (!a || !b) return null;
+    const now = new Date().toISOString();
+    const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
+    const plan = C.stopPlan(from, to, a.stops, b.stops, App.trip, C.calibration(App.trip, day.city));
+    if (!plan) {
+      keep({ asked: now, source: 'stops',
+        detail: 'The map has no stops within twenty minutes\' walk of both ends, so the planner has '
+          + 'no public transport to offer for this leg.' });
+      return null;
+    }
+    const slot = C.stopSlot(plan, C.commonLine(a.lines, b.lines), now);
+    keep(slot);
+    return slot;
+  }, () => null);
+}
+
 // Ask Transitous what public transport would do with this leg, leaving when the plan says you
 // would. An answer that says nothing is still kept, with the reason: it stops the planner asking
 // the same question of the same service over and over.
@@ -1249,6 +1286,8 @@ function askTransit(dayId, fromId, toId) {
   const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
   const nothing = () => whyNoJourney(from, to, departs).then((why) => {
     keep({ asked: now, departs, source: 'transitous', detail: why });
+    // The map is asked next, but nothing waits for it: Overpass can take most of a minute.
+    askStops(dayId, fromId, toId);
     return null;
   });
   return Live.fetchJson(url).then((json) => {

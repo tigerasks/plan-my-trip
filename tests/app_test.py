@@ -50,7 +50,7 @@ with sync_playwright() as pw:
     # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
     # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
     # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
-    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none'}
+    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none', 'map': False}
 
     def services(r):
         u = r.request.url
@@ -79,7 +79,15 @@ with sync_playwright() as pw:
             return True
         if 'overpass-api.de' in u:
             asked.append(u)
-            want = re.search(r'(node|way|relation)\((\d+)\)', urllib.parse.unquote(u))
+            q = urllib.parse.unquote(u)
+            if 'around:' in q:                      # the stop-based fallback asking what is nearby
+                if not TRANSIT['map']:
+                    r.fulfill(status=200, headers=H, body=json.dumps({'elements': []}))
+                else:
+                    near = FIX['stopsNearTemple'] if '34.994800' in q else FIX['stopsNearHotel']
+                    r.fulfill(status=200, headers=H, body=json.dumps(near))
+                return True
+            want = re.search(r'(node|way|relation)\((\d+)\)', q)
             r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
                       body=json.dumps({'elements': [OSM_BY_ID[want.group(2)]] if want and want.group(2) in OSM_BY_ID else []}))
             return True
@@ -412,8 +420,45 @@ with sync_playwright() as pw:
        'where it knows no stops at all, it says so instead: ' + leg['detail'])
     ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
     ctx.close()
+
+    # ---- working it out from the stops on the map
+    # No timetables does not mean no buses. The map knows where the stops are and which lines run by
+    # them, which is the method anyone would use by hand (design doc, "Travel times").
+    TRANSIT['map'] = True
+    asked.clear()
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=60000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] and leg['minutes'] < 60, 'the stops give a time after all: %s min' % leg['minutes'])
+    ck('walk' in leg['detail'] and '·' in leg['detail'],
+       'spelled out as walk, ride, walk: ' + leg['detail'])
+    ck('Hotel-mae' in leg['detail'] and 'Temple-mae' in leg['detail'], 'naming the stops at each end')
+    ck('205' in (leg['name'] or ''), 'and the line that runs by both ends: ' + str(leg['name']))
+    ck('probably' in (leg['name'] or ''), 'hedged, since the map cannot promise it stops at both')
+    maps = [u for u in asked if 'around:' in urllib.parse.unquote(u)]
+    ck(len(maps) == 2, 'the map is asked once per end, not once per leg: %d queries' % len(maps))
+    ck('around:800' in urllib.parse.unquote(maps[0]), 'within ten minutes\' walk')
+    ck('≈' in pg.inner_text('.timeline'), 'and the day still says it is an estimate, because it is')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('from the stops nearby' in pg.inner_text('#sheet'), 'the card says where the time came from')
+    ck(leg['detail'] in pg.inner_text('#sheet'), 'and spells the journey out')
+    ctx.close()
+
+    # where the map has nothing either, the planner says so and stops asking
+    TRANSIT['map'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=60000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] is None and 'no stops within twenty' in leg['detail'].lower(),
+       'with nothing on the map either, it gives up on public transport for that leg: ' + leg['detail'])
+    ctx.close()
+
     TRANSIT['ride'] = True
     TRANSIT['stops'] = True
+    TRANSIT['map'] = False
 
     # ---- a trip further out than the timetables reach
     # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and

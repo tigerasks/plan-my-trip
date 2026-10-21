@@ -13,6 +13,7 @@ CSS = {'Content-Type': 'text/css'}
 JSON_H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 NO_ROUTE = '{"code": "NoRoute", "routes": []}'
 NO_JOURNEY = '{"itineraries": [], "direct": []}'
+NO_ELEMENTS = '{"elements": []}'
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -40,6 +41,10 @@ def offline(base, extra=None):
             return r.continue_()
         if extra and extra(r):
             return None
+        if 'overpass-api.de' in u:
+            # The stop-based fallback asks the map about every leg with no timetable, so this is
+            # another request every page makes on its own. An empty answer means "no stops here".
+            return r.fulfill(status=200, body=NO_ELEMENTS, headers=JSON_H)
         if 'api.transitous.org' in u:
             # As with OSRM: the planner asks about the legs of a day by itself, so an unanswered
             # request would be a console error in every test. "No journey" leaves the estimate.
