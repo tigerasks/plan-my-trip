@@ -5,6 +5,155 @@ Raw output from `docs/probe.html`, run by the owner against the published page. 
 
 Runs 1 and 2 (Fri 25 Sep 2026) were not kept as blocks — only their summary in the design doc.
 
+## Run 4 — Wed 21 Oct 2026, 14:41 UTC · the public transport probe
+
+`docs/probe-transit.html`, Chrome 155 on macOS. Two journeys: one only a bus could do
+(Daisen-in → Kinkaku-ji) and one a train can (Tō-ji → Kyoto Station).
+
+**Read the Overpass counts with care.** The probe asked for `out tags 60`, and every one of the four
+ends came back with stops + routes summing to exactly 60, so all of them are truncated. In
+particular the "0 route relations" at Kyoto Station is an artefact of 60 bus stops filling the
+answer, not a fact about the map. The limit was raised to 400 afterwards. Everything else in the
+block stands.
+
+```json
+{
+ "probe": "day-planner transit probe 2",
+ "ranAt": "2026-10-21T14:41:53.140Z",
+ "page": {
+  "origin": "https://tigerasks.github.io",
+  "secureContext": true,
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+ },
+ "runs": [
+  {
+   "from": { "name": "Daisen-in", "at": [35.04452, 135.74581], "how": "search" },
+   "to": { "name": "Kinkaku-ji", "at": [35.03953, 135.72954], "how": "search" },
+   "journey": {
+    "ok": true, "ms": 293, "time": "2026-10-22T08:00:00.000Z",
+    "itineraries": 0, "withTransit": 0, "direct": 1, "modes": [],
+    "bestLegs": null, "bestMinutes": null
+   },
+   "stops": [
+    { "ok": true, "path": "/api/v1/reverse-geocode", "ms": 50, "end": "A", "shape": "array",
+      "count": 0, "stops": [], "anythingCount": 10,
+      "anything": [
+       { "name": "玄関", "type": "PLACE", "id": "way/[975153610]" },
+       { "name": "Daisen-in Zen Garden", "type": "PLACE", "id": "node/[5110367297]" },
+       { "name": "史跡 及 名勝 大仙院庭園", "type": "PLACE", "id": "node/[9024263049]" },
+       { "name": "大仙院", "type": "PLACE", "id": "node/[9024263058]" },
+       { "name": "大仙院", "type": "PLACE", "id": "way/[972811494]" },
+       { "name": "史跡 及 名勝 真珠庵庭園", "type": "PLACE", "id": "node/[9024263108]" },
+       { "name": "真珠庵", "type": "PLACE", "id": "way/[972811495]" },
+       { "name": "宗務本所", "type": "PLACE", "id": "way/[963345099]" }
+      ],
+      "anyTypes": ["PLACE"] },
+    { "ok": true, "path": "/api/v1/reverse-geocode", "ms": 43, "end": "B", "shape": "array",
+      "count": 0, "stops": [], "anythingCount": 10,
+      "anything": [
+       { "name": "金閣寺町", "type": "PLACE", "id": "node/[9247484447]" },
+       { "name": "庫裡", "type": "PLACE", "id": "way/[345464005]" },
+       { "name": "書院", "type": "PLACE", "id": "way/[345464009]" },
+       { "name": "方丈", "type": "PLACE", "id": "way/[188772157]" },
+       { "name": "唐門", "type": "PLACE", "id": "way/[347012938]" },
+       { "name": "布袋石", "type": "PLACE", "id": "node/[3537674658]" },
+       { "name": "女龍石", "type": "PLACE", "id": "node/[3537674657]" },
+       { "name": "相馬石", "type": "PLACE", "id": "node/[3537674659]" }
+      ],
+      "anyTypes": ["PLACE"] }
+   ],
+   "map": [
+    { "ok": true, "ms": 29541, "end": "A", "within": "800 m", "busStops": 38,
+      "stopNames": ["Murasakino Sendocho", "Murasakino Sendocho", "Murasakino Sendocho",
+                    "Jotokuji-mae", "Senbon Kitaoji", "Daitokuji-mae"],
+      "routeRelations": 22, "routesWithRef": 22,
+      "routes": [
+       { "ref": "102", "name": "Bus 102: 北大路バスターミナル => 錦林車庫前", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "102", "name": "Bus 102: 錦林車庫前 => 北大路バスターミナル", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "6", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "6", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "9", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "12", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "12", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "37", "name": "Bus 37: 三条京阪前 => 西賀茂車庫前", "kind": "bus", "operator": "京都市交通局" }
+      ] },
+    { "ok": true, "ms": 43759, "end": "B", "within": "800 m", "busStops": 20,
+      "stopNames": ["Ritsumeikan Daigaku-mae (Ritsumeikan Univ.)", "Waratenjin-mae", "Waratenjin-mae",
+                    "Ritsumeikan Daigaku-mae (Ritsumeikan Univ.)", "Kinkakuji-michi (Kinkakuji Temple)", "Senbon Kitaoji"],
+      "routeRelations": 40, "routesWithRef": 40,
+      "routes": [
+       { "ref": "102", "name": "Bus 102: 北大路バスターミナル => 錦林車庫前", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "102", "name": "Bus 102: 錦林車庫前 => 北大路バスターミナル", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "12", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "12", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "15", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "15", "name": "", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "50", "name": "Bus 50: 立命館大学前 => 京都駅前", "kind": "bus", "operator": "京都市交通局" },
+       { "ref": "50", "name": "Bus 50: 京都駅前 => 立命館大学前", "kind": "bus", "operator": "京都市交通局" }
+      ] }
+   ]
+  },
+  {
+   "from": { "name": "To-ji Temple", "at": [34.98063, 135.74772], "how": "search" },
+   "to": { "name": "京都駅ビル東第１駐車場 (Kyoto Station Building East First Parkinglot)", "at": [34.98593, 135.76087], "how": "search" },
+   "journey": {
+    "ok": true, "ms": 161, "time": "2026-10-22T08:00:00.000Z",
+    "itineraries": 5, "withTransit": 5, "direct": 1,
+    "modes": ["WALK", "REGIONAL_RAIL"],
+    "bestLegs": [
+     { "mode": "WALK", "duration": 780, "distance": 805, "fromStop": "START", "toStop": "東寺",
+       "legGeometry": { "length": 80, "chars": 224 },
+       "keysSent": ["mode","from","to","duration","startTime","endTime","scheduledStartTime","scheduledEndTime","realTime","scheduled","distance","legGeometry","steps"] },
+     { "mode": "REGIONAL_RAIL", "duration": 120,
+       "routeShortName": "8999421", "displayName": "8999421", "headsign": "京都",
+       "agencyName": "近畿日本鉄道", "routeType": 106,
+       "tripId": "20261022_16:07_jp-japan-rail_8999421", "routeId": "jp-japan-rail_8999421",
+       "fromStop": "東寺", "toStop": "京都",
+       "legGeometry": { "length": 39, "chars": 157 },
+       "keysSent": ["mode","from","to","duration","startTime","endTime","scheduledStartTime","scheduledEndTime","realTime","scheduled","interlineWithPreviousLeg","headsign","tripFrom","tripTo","routeId","routeUrl","directionId","routeType","agencyName","agencyUrl","agencyFareUrl","agencyId","tripId","routeShortName","routeLongName","tripShortName","displayName","cancelled","source","intermediateStops","legGeometry","bikesAllowed","wheelchairAccessible","reservation","alternatives"] },
+     { "mode": "WALK", "duration": 540, "distance": 592, "fromStop": "京都", "toStop": "END",
+       "legGeometry": { "length": 63, "chars": 176 },
+       "keysSent": ["mode","from","to","duration","startTime","endTime","scheduledStartTime","scheduledEndTime","realTime","scheduled","distance","legGeometry","steps"] }
+    ],
+    "bestMinutes": 24
+   },
+   "stops": [
+    { "ok": true, "path": "/api/v1/reverse-geocode", "ms": 64, "end": "A", "shape": "array",
+      "count": 1, "stops": [{ "name": "東寺", "type": "STOP", "id": "jp-japan-rail_9639" }],
+      "anythingCount": 10, "anyTypes": ["PLACE"] },
+    { "ok": true, "path": "/api/v1/reverse-geocode", "ms": 56, "end": "B", "shape": "array",
+      "count": 3,
+      "stops": [
+       { "name": "京都駅八条口", "type": "STOP", "id": "jp-kochi-seinan-kotsu-Seinan-Expressbus_" },
+       { "name": "京都", "type": "STOP", "id": "jp-japan-rail_2784" },
+       { "name": "京都駅", "type": "STOP", "id": "jp-Limon-Bus_1002_02" }
+      ],
+      "anythingCount": 10, "anyTypes": ["PLACE"] }
+   ],
+   "map": [
+    { "ok": true, "ms": 37079, "end": "A", "within": "800 m", "busStops": 41,
+      "stopNames": ["Hachijo Aburanokoji", "Kujo Kintetsu-mae", "Kujo Kintetsu-mae",
+                    "Minamiku Sogochosha-mae (Minami Ward Office)", "Shimin Bosai Center-mae (Kyoto City Disaster Preve", "Rajomon"],
+      "routeRelations": 19, "routesWithRef": 3,
+      "routes": [
+       { "ref": "サンダーバード", "name": "Thunderbird: Osaka -> Tsuruga", "kind": "train", "operator": "西日本旅客鉄道" },
+       { "ref": null, "name": "Limited Express Haruka (Kyoto => Kansai Airport)", "kind": "train", "operator": "西日本旅客鉄道" },
+       { "ref": null, "name": "Nozomi", "kind": "train", "operator": "東海旅客鉄道株式会社" },
+       { "ref": null, "name": "Kodama (Shin-Osaka => Tokyo)", "kind": "train", "operator": "東海旅客鉄道" },
+       { "ref": null, "name": "Kodama (Tokyo => Shin-Osaka)", "kind": "train", "operator": "東海旅客鉄道" },
+       { "ref": null, "name": "Nozomi (Hakata => Tokyo)", "kind": "train", "operator": "東海旅客鉄道株式会社" },
+       { "ref": null, "name": "Nozomi (Tokyo => Hakata)", "kind": "train", "operator": "東海旅客鉄道株式会社" }
+      ] },
+    { "ok": true, "ms": 26359, "end": "B", "within": "800 m", "busStops": 60,
+      "stopNames": ["Karasuma Nanajo", "Shiokoji Takakura / Kyoto Shiritsu Geijutsudaigaku",
+                    "Karasuma Nanajo", "Karasuma Rokujo", "京都駅八条口", "Kyoto Sta. (Hachijoguchi)"],
+      "routeRelations": 0, "routesWithRef": 0, "routes": [] }
+   ]
+  }
+ ]
+}
+```
+
 ## Run 3 — Fri 25 Sep 2026, 15:27 UTC
 
 GitHub Pages, Chrome 154 on macOS, around Kyoto Station and Tō-ji.
