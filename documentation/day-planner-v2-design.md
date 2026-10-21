@@ -193,9 +193,10 @@ Without timetables, it falls back to a stop-based estimate. This is the manual m
 - it considers every station and stop within 10 minutes' walk of each end, from the map data, not just the nearest one. Where an end has none, it widens the search to 20 minutes' walk. If there are still none, it gives up on public transport for that leg and says so;
 - **the map queries run in the background.** Overpass took tens of seconds for an 800 m query in the
   fourth run, so a leg shows its estimate at once and the stops and the line name arrive afterwards,
-  cached in the trip, or never. Nothing waits on them;
-- where OpenStreetMap has the bus and rail lines mapped (fetched through Overpass), it checks which lines serve both a start stop and an end stop, and names the line;
-- it takes the real walking times to and from the stops, estimates the ride from distance, and picks the quickest combination;
+  cached in the trip, or never. Nothing waits on them. One query per end, not per leg, so a day's
+  stops are asked about once however many legs touch them;
+- where OpenStreetMap has the bus and rail lines mapped (fetched through Overpass), it looks for a line relation near both ends and names it — "probably the 205 bus". Near both ends is not proof that it stops at both, which the wording admits;
+- it pairs the nearest dozen stops at each end, estimating both walks and the ride from distance, and takes the quickest pairing. Then it checks that pairing's two walks for real against OSRM — only those two, since asking about every candidate would be hundreds of requests for one leg. The ride stays an estimate, which is why the whole result is marked ≈;
 - it suggests public transport only when that clearly beats walking; otherwise the leg stays a walk.
 
 The result is marked ≈ and spells out the stops, and the line where known. For example: "walk 3 min to Imamiya-jinja-mae · ≈ 14 min by bus · walk 5 min". You can correct it with your own time.

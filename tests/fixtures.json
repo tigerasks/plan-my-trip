@@ -235,8 +235,8 @@
       {
         "type": "node",
         "id": 7001,
-        "lat": 34.9862,
-        "lon": 135.7596,
+        "lat": 34.989,
+        "lon": 135.76,
         "tags": {
           "highway": "bus_stop",
           "name": "Hotel-mae (made up)"

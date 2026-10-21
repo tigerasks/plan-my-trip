@@ -1252,6 +1252,25 @@ function stopsNear(point) {
     return ask(C.STOP_REACH_WIDE).then((wider) => wider || near);
   });
 }
+// The two walks of the pairing that won, checked for real. Only those two: asking about every stop
+// at both ends would be hundreds of requests for one leg, and the ride is a guess either way.
+function realWalks(plan, from, to) {
+  const walk = (a, b) => {
+    const url = C.osrmUrl(a, b, 'walk');
+    if (!url) return Promise.resolve(null);
+    return Live.fetchJson(url).then((json) => {
+      const got = C.parseOsrm(json, 'walk', a, b);
+      return got ? got.minutes : null;
+    }, () => null);
+  };
+  return Promise.all([walk(from, plan.from), walk(plan.to, to)]).then(([on, off]) => {
+    if (on == null && off == null) return plan;
+    const walkOn = on == null ? plan.walkOn : on;
+    const walkOff = off == null ? plan.walkOff : off;
+    return Object.assign({}, plan, { walkOn, walkOff, minutes: walkOn + plan.ride + walkOff });
+  });
+}
+
 function askStops(dayId, fromId, toId) {
   const day = App.trip ? App.trip.days[dayId] : null;
   const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
@@ -1267,9 +1286,15 @@ function askStops(dayId, fromId, toId) {
           + 'no public transport to offer for this leg.' });
       return null;
     }
-    const slot = C.stopSlot(plan, C.commonLine(a.lines, b.lines), now);
-    keep(slot);
-    return slot;
+    const line = C.commonLine(a.lines, b.lines);
+    keep(C.stopSlot(plan, line, now));
+    // The walks at each end can be real even where the ride cannot, so they are checked after the
+    // leg already has something to show.
+    return realWalks(plan, from, to).then((walked) => {
+      const slot = C.stopSlot(walked, line, now);
+      keep(slot);
+      return slot;
+    }, () => null);
   }, () => null);
 }
 
