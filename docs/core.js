@@ -995,6 +995,37 @@ function estimateLeg(from, to, trip, cal) {
   };
 }
 
+// The estimates learn from the legs that were checked in the same city, so the numbers improve as
+// you go. Worked out each time rather than stored: a stored factor goes stale the moment a leg is
+// re-checked or a place moves.
+function calibration(trip, city) {
+  const want = str(city);
+  const sums = { walk: { sum: 0, n: 0 }, transit: { sum: 0, n: 0 }, car: { sum: 0, n: 0 } };
+  if (!want) return { walk: 1, transit: 1, car: 1, n: 0 };
+  for (const d of dayList(trip)) {
+    if (str(d.city) !== want) continue;
+    for (const [key, rec] of Object.entries(obj(d.legs))) {
+      const real = rec.mine ? rec.mine.minutes : rec.minutes;
+      const mode = (rec.mine && rec.mine.mode) || rec.mode;
+      const slot = sums[mode];
+      if (real == null || !slot) continue;
+      const ends = legEnds(key);
+      if (!ends) continue;
+      const g = legGuess(pointOf(trip, d.id, ends[0]), pointOf(trip, d.id, ends[1]), trip);
+      if (!g || !g[mode]) continue;
+      slot.sum += real / g[mode];
+      slot.n++;
+    }
+  }
+  // One odd leg should not drag the whole city about, so a factor only counts once there are a few.
+  const factor = (s) => (s.n >= 3 ? clamp(s.sum / s.n, 0.5, 2) : 1);
+  return {
+    walk: factor(sums.walk), transit: factor(sums.transit), car: factor(sums.car),
+    n: sums.walk.n + sums.transit.n + sums.car.n,
+    counted: { walk: sums.walk.n, transit: sums.transit.n, car: sums.car.n },
+  };
+}
+
 // What the planner believes about one leg of a day: your own time if you gave one, otherwise the
 // route that was checked, otherwise its own estimate. Your own entry always wins.
 function legBetween(trip, dayId, fromId, toId, cal) {
@@ -1039,7 +1070,7 @@ function planDay(trip, dayId, key, order) {
   let endBy = end ? parseTime(end.time) : null;
   if (endBy != null && endBy <= startTime) endBy += 1440;
 
-  const cal = null;   // what the trip has learned about its estimates arrives in a moment
+  const cal = calibration(trip, day.city);
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
@@ -1639,7 +1670,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows, estimateLeg, legGuess, legBetween, rideMinutes, TAXI_PICKUP,
+  openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
   planDay,

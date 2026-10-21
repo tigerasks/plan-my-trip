@@ -626,5 +626,37 @@ ok(believed.items[1].minutes === 24 && believed.items[1].estimate === false, 'an
 ok(believed.summary.checked === 1 && believed.summary.estimated === 2, 'the summary counts what is known from what is guessed');
 ok(C.legBetween(B.t, '2026-11-21', 'start', 'nowhere').unknown === true, 'a leg to nowhere is still unknown');
 
+console.log('\n== Learning from what was checked ==');
+let K = withDemo(() => null);
+ok(C.calibration(K.t, 'Kyoto').n === 0 && C.calibration(K.t, 'Kyoto').walk === 1,
+  'with nothing checked, the estimates are left alone');
+const nearby = { lat: 34.9960, lng: 135.7860 };
+const before = C.estimateLeg(K.t.places['example-temple'], nearby, K.t).minutes;
+
+C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, source: 'osrm' });
+C.setLeg(K.t, '2026-11-21', 'example-temple', 'made-up-market', { mode: 'walk', minutes: 26, source: 'osrm' });
+ok(C.calibration(K.t, 'Kyoto').walk === 1, 'two legs are not enough to move the estimates');
+
+C.setLeg(K.t, '2026-11-21', 'made-up-market', 'end', { mode: 'walk', minutes: 28, source: 'osrm' });
+const cal = C.calibration(K.t, 'Kyoto');
+ok(cal.counted.walk === 3 && cal.walk < 1, 'three are, and walking here turns out quicker than the model thought: ' + cal.walk.toFixed(2));
+ok(cal.transit === 1, 'while a mode nothing was checked in is untouched');
+const after = C.estimateLeg(K.t.places['example-temple'], nearby, K.t, cal).minutes;
+ok(after < before, 'so a fresh walk in that city comes down: ' + before + ' → ' + after + ' min');
+ok(C.estimateLeg(K.t.places['example-temple'], K.t.places['made-up-market'], K.t, cal).minutes
+  === C.estimateLeg(K.t.places['example-temple'], K.t.places['made-up-market'], K.t).minutes,
+  'while a leg the network wins is untouched, since nothing was checked by train or bus');
+ok(C.calibration(K.t, 'Nara').n === 0, 'another city learns nothing from this one');
+ok(C.calibration(K.t, '').n === 0, 'and a day with no city teaches nothing');
+
+C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 45, mode: 'walk' } });
+ok(C.calibration(K.t, 'Kyoto').walk > cal.walk, 'your own time teaches it too, and it believes you');
+
+const wild = withDemo(() => null);
+for (const [a, b] of [['start', 'example-temple'], ['example-temple', 'made-up-market'], ['made-up-market', 'end']]) {
+  C.setLeg(wild.t, '2026-11-21', a, b, { mode: 'walk', minutes: 600, source: 'osrm' });
+}
+ok(C.calibration(wild.t, 'Kyoto').walk === 2, 'and one absurd day cannot send the estimates to the moon');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
