@@ -211,8 +211,12 @@
     for (const k of LEG_KEYS) if (l[k] != null && l[k] !== '') out[k] = typeof l[k] === 'string' ? l[k].slice(0, 80) : l[k];
     out.fromStop = l.from && l.from.name ? String(l.from.name).slice(0, 60) : null;
     out.toStop = l.to && l.to.name ? String(l.to.name).slice(0, 60) : null;
+    // Precision matters: MOTIS says 7 overflows beyond longitude 107.37, and Japan is at 135.
     out.legGeometry = l.legGeometry && l.legGeometry.points
-      ? { length: l.legGeometry.length == null ? null : l.legGeometry.length, chars: String(l.legGeometry.points).length }
+      ? { length: l.legGeometry.length == null ? null : l.legGeometry.length,
+          precision: l.legGeometry.precision == null ? null : l.legGeometry.precision,
+          chars: String(l.legGeometry.points).length,
+          firstChars: String(l.legGeometry.points).slice(0, 24) }
       : null;
     out.keysSent = Object.keys(l).slice(0, 40);
     return out;

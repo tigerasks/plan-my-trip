@@ -688,5 +688,38 @@ ok(!C.pathLooksRight([{ lat: 0, lng: 0 }, { lat: 1, lng: 1 }], kyoto[0], kyoto[2
 ok(!C.pathLooksRight([kyoto[0]], kyoto[0], kyoto[2]), 'a single point is not a shape');
 ok(!C.pathLooksRight(kyoto, {}, kyoto[2]), 'and a leg with no position cannot vouch for one');
 
+console.log('\n== Asking OSRM ==');
+const osrmA = { lat: 34.9806, lng: 135.7477 }, osrmB = { lat: 34.9859, lng: 135.7609 };
+const walkUrl = C.osrmUrl(osrmA, osrmB, 'walk');
+ok(walkUrl.indexOf('https://routing.openstreetmap.de/routed-foot/route/v1/foot/') === 0, 'the walking profile: ' + walkUrl.slice(0, 62));
+ok(walkUrl.indexOf('135.747700,34.980600;135.760900,34.985900') > 0, 'with the points longitude first, as OSRM wants');
+ok(/geometries=polyline/.test(walkUrl), 'and the shape as a polyline, which is a tenth of the size of coordinates');
+ok(C.osrmUrl(osrmA, osrmB, 'car').indexOf('routed-car/route/v1/driving/') > 0, 'the car profile for a taxi');
+ok(C.osrmUrl(osrmA, osrmB, 'transit') === null && C.osrmUrl(osrmA, {}, 'walk') === null,
+  'and nothing to ask for public transport, or for a place with no position');
+
+let route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 1290.4, distance: 1712.3 }] }, 'walk', osrmA, osrmB);
+ok(route.minutes === 22 && route.km === 1.712 && route.source === 'osrm', 'a route reads back as minutes and kilometres');
+route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 300, distance: 2100 }] }, 'car', osrmA, osrmB);
+ok(route.minutes === 10 && /picked up/.test(route.name), 'a taxi carries the allowance for reaching you: ' + route.name);
+ok(C.parseOsrm({ code: 'NoRoute', routes: [] }, 'walk', osrmA, osrmB) === null, 'no route is no answer');
+ok(C.parseOsrm({}, 'walk', osrmA, osrmB) === null && C.parseOsrm(null, 'walk', osrmA, osrmB) === null, 'and neither is nonsense');
+
+const good = (() => {
+  const one = (n) => { let v = n < 0 ? -(n * 2) - 1 : n * 2, out = '';
+    while (v >= 0x20) { out += String.fromCharCode((0x20 | (v % 32)) + 63); v = Math.floor(v / 32); }
+    return out + String.fromCharCode(v + 63); };
+  let la = 0, ln = 0, o = '';
+  for (const q of [osrmA, { lat: 34.983, lng: 135.754 }, osrmB]) {
+    const a = Math.round(q.lat * 1e5), b = Math.round(q.lng * 1e5);
+    o += one(a - la) + one(b - ln); la = a; ln = b;
+  }
+  return o;
+})();
+route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: good }] }, 'walk', osrmA, osrmB);
+ok(route.path === good, 'a shape that matches the leg is kept');
+route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: '_p~iF~ps|U_ulLnnqC' }] }, 'walk', osrmA, osrmB);
+ok(route.path === null && route.minutes === 10, 'one that lands in California is dropped, and the time kept');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

@@ -862,6 +862,43 @@ function startWindows(place, date) {
   return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
 }
 
+// ---------- asking OSRM ----------
+// Real routes on OpenStreetMap's own streets, from the FOSSGIS servers: reasonable non-commercial
+// use, at most one request a second. The walking profile is the one the planner leans on; the car
+// profile answers "what would a taxi do", with an allowance for it reaching you.
+const OSRM = 'https://routing.openstreetmap.de/';
+const OSRM_PROFILE = { walk: { prefix: 'routed-foot', profile: 'foot' }, car: { prefix: 'routed-car', profile: 'driving' } };
+function osrmUrl(from, to, mode) {
+  const p = OSRM_PROFILE[mode];
+  if (!p || !hasPos(from) || !hasPos(to)) return null;
+  // polyline rather than geojson: a few hundred bytes a leg instead of a few thousand, and every
+  // leg is saved in the trip and sent to the chat.
+  return OSRM + p.prefix + '/route/v1/' + p.profile + '/'
+    + from.lng.toFixed(6) + ',' + from.lat.toFixed(6) + ';' + to.lng.toFixed(6) + ',' + to.lat.toFixed(6)
+    + '?overview=full&geometries=polyline';
+}
+// What came back, or null. A shape that does not match the leg is dropped and the time kept.
+function parseOsrm(json, mode, from, to) {
+  const j = obj(json);
+  if (str(j.code) !== 'Ok') return null;
+  const route = arr(j.routes)[0];
+  if (!route) return null;
+  const seconds = toNum(obj(route).duration);
+  const metres = toNum(obj(route).distance);
+  if (seconds == null) return null;
+  let path = typeof route.geometry === 'string' ? route.geometry : null;
+  if (path && !pathLooksRight(decodePath(path, 5), from, to)) path = null;
+  const minutes = Math.max(mode === 'walk' ? 1 : 1, Math.round(seconds / 60)) + (mode === 'car' ? TAXI_PICKUP : 0);
+  return {
+    mode,
+    minutes,
+    km: metres == null ? null : Math.round(metres) / 1000,
+    source: 'osrm',
+    path,
+    name: mode === 'car' ? 'by taxi, with ' + fmtDur(TAXI_PICKUP) + ' to be picked up' : null,
+  };
+}
+
 // ---------- the shape of a route ----------
 // Routes come back as Google-encoded polylines: a few hundred bytes where a list of coordinates
 // would be a few thousand, which matters when every leg of every day is saved and exported.
@@ -1719,7 +1756,7 @@ const Core = {
   openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
-  decodePath, pathLooksRight, PATH_SLACK,
+  decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
