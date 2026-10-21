@@ -607,5 +607,24 @@ ok(L.out === 1 && C.legFor(L.t, '2026-11-21', 'start', 'example-temple'), 'a leg
 ok(C.pointOf(L.t, '2026-11-21', 'start').name === 'Example Hotel · Kyoto Station', 'start means where the day starts');
 ok(C.pointOf(L.t, '2026-11-21', 'example-temple').name === 'Example Temple', 'and an id means its place');
 
+console.log('\n== Which time the planner believes ==');
+let B = withDemo(() => null);
+const leg = () => C.legBetween(B.t, '2026-11-21', 'start', 'example-temple');
+ok(leg().by === 'estimate' && leg().estimate === true, 'with nothing checked, it is the planner\'s own guess');
+const guessed = leg().minutes;
+
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, km: 2.3, source: 'osrm' });
+ok(leg().minutes === 31 && leg().by === 'osrm' && leg().estimate === false, 'a checked route beats the guess');
+ok(leg().guess === guessed, 'and the guess is kept beside it, to show the gap');
+
+C.setLeg(B.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 24 } });
+ok(leg().minutes === 24 && leg().by === 'you', 'your own time beats both');
+ok(leg().checked === 31 && leg().guess === guessed, 'with the other two still there behind it');
+
+const believed = C.planDay(B.t, '2026-11-21', 'balanced');
+ok(believed.items[1].minutes === 24 && believed.items[1].estimate === false, 'and the timeline uses it');
+ok(believed.summary.checked === 1 && believed.summary.estimated === 2, 'the summary counts what is known from what is guessed');
+ok(C.legBetween(B.t, '2026-11-21', 'start', 'nowhere').unknown === true, 'a leg to nowhere is still unknown');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

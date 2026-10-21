@@ -964,19 +964,61 @@ function rideMinutes(km, model) {
   const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
   return model.overhead + (km * model.detour / speed) * 60;
 }
-function estimateLeg(from, to, trip) {
-  if (!hasPos(from) || !hasPos(to)) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+// A taxi has to reach you before it can take you anywhere, and OSRM knows nothing of that.
+const TAXI_PICKUP = 5;
+// The raw numbers, before anything the trip has learned is applied.
+function legGuess(from, to, trip) {
+  if (!hasPos(from) || !hasPos(to)) return null;
   const km = kmBetween(from, to);
-  const walk = Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km)));
   const model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
-  const ride = Math.round(rideMinutes(km, model));
+  return {
+    km,
+    walk: Math.max(km < 0.02 ? 0 : 1, Math.round(walkMinutes(km))),
+    transit: Math.round(rideMinutes(km, model)),
+    car: Math.round(rideMinutes(km, CAR_MODEL)) + TAXI_PICKUP,
+  };
+}
+function estimateLeg(from, to, trip, cal) {
+  const g = legGuess(from, to, trip);
+  if (!g) return { mode: 'unknown', minutes: 0, km: null, estimate: true, unknown: true };
+  const f = obj(cal);
+  const walk = Math.max(g.km < 0.02 ? 0 : 1, Math.round(g.walk * (toNum(f.walk) || 1)));
+  const ride = Math.round(g.transit * (toNum(f.transit) || 1));
   const onFoot = walk <= MAX_WALK && walk <= ride + WALK_BIAS;
   return {
     mode: onFoot ? 'walk' : 'transit',
     minutes: onFoot ? walk : ride,
-    km, estimate: true,
+    km: g.km, estimate: true,
     walkMinutes: walk, rideMinutes: ride,
+    carMinutes: Math.round(g.car * (toNum(f.car) || 1)),
+    calibrated: !!(f.walk || f.transit || f.car),
   };
+}
+
+// What the planner believes about one leg of a day: your own time if you gave one, otherwise the
+// route that was checked, otherwise its own estimate. Your own entry always wins.
+function legBetween(trip, dayId, fromId, toId, cal) {
+  const from = pointOf(trip, dayId, fromId), to = pointOf(trip, dayId, toId);
+  const est = estimateLeg(from, to, trip, cal);
+  const rec = legFor(trip, dayId, fromId, toId);
+  if (!rec) return Object.assign({ by: 'estimate', guess: est.minutes }, est);
+  const base = {
+    km: rec.km != null ? rec.km : est.km,
+    path: rec.path, name: rec.name, detail: rec.detail, asked: rec.asked, at: rec.at,
+    guess: est.unknown ? null : est.minutes,
+    checked: rec.minutes,
+    source: rec.source,
+  };
+  if (rec.mine) {
+    return Object.assign(base, {
+      mode: rec.mine.mode || rec.mode || est.mode,
+      minutes: rec.mine.minutes, estimate: false, by: 'you',
+    });
+  }
+  if (rec.minutes != null) {
+    return Object.assign(base, { mode: rec.mode || est.mode, minutes: rec.minutes, estimate: false, by: rec.source || 'checked' });
+  }
+  return Object.assign({ by: 'estimate' }, est, base);
 }
 
 // ---------- walking a day ----------
@@ -997,6 +1039,7 @@ function planDay(trip, dayId, key, order) {
   let endBy = end ? parseTime(end.time) : null;
   if (endBy != null && endBy <= startTime) endBy += 1440;
 
+  const cal = null;   // what the trip has learned about its estimates arrives in a moment
   const items = [{ type: 'start', name: start.name, at: startTime, place: start }];
   const issues = [], checks = [];
   const flag = (sev, text, id) => issues.push({ severity: sev, text, id: id || null });
@@ -1005,10 +1048,10 @@ function planDay(trip, dayId, key, order) {
   const stops = (order ? arr(order).map((id) => placeById(trip, id)).filter((p) => p && p.dayId === dayId)
     : planPlaces(trip, dayId, shown));
 
-  let t = startTime, prev = start, travel = 0, wait = 0, visit = 0;
+  let t = startTime, prev = start, prevId = 'start', travel = 0, wait = 0, visit = 0;
 
   for (const p of stops) {
-    const leg = estimateLeg(prev, p, trip);
+    const leg = legBetween(trip, dayId, prevId, p.id, cal);
     // An unknown leg has an end without a position. Say which one: blaming the destination for a
     // day that has no starting point sends you looking in the wrong place.
     if (leg.unknown) {
@@ -1049,10 +1092,11 @@ function planDay(trip, dayId, key, order) {
     });
     t = at + p.duration;
     prev = p;
+    prevId = p.id;
   }
   let finish = t;
   if (end) {
-    const leg = estimateLeg(prev, end, trip);
+    const leg = legBetween(trip, dayId, prevId, 'end', cal);
     if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
@@ -1070,6 +1114,7 @@ function planDay(trip, dayId, key, order) {
       stops: stops.length, travel, wait, visit,
       spare: endBy == null ? null : endBy - finish,
       estimated: legs.filter((l) => l.estimate && l.minutes > 0).length,
+      checked: legs.filter((l) => !l.estimate).length,
       errors: issues.filter((i) => i.severity === 'error').length,
     },
   };
@@ -1594,7 +1639,8 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows, estimateLeg, rideMinutes, TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  openOn, startWindows, estimateLeg, legGuess, legBetween, rideMinutes, TAXI_PICKUP,
+  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
