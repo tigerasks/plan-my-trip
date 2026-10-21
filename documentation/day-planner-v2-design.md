@@ -208,7 +208,14 @@ is not.
 
 ## The model
 
-A trip has a backlog and days. Every place lives in exactly one spot: the backlog, or one day. Within its day, a place is either among the ideas for today or in one or more of the day's three plan versions. For example, a place can be in Balanced and Packed but not in Do less.
+A trip has a backlog and days. Every place lives in exactly one spot: the backlog, or one day. Within
+its day, a place may be in any, all or none of the day's three plan versions — it can be in Balanced
+and Packed but not in Do less, and it can be a stop twice in the same version.
+
+**"Ideas for today" means the day's places that the version on screen does not hold**, not the places
+in no version at all. So removing a stop from Balanced drops it into the ideas, where you can still
+see it, even while Packed still holds it. An idea that another version does hold says so, with a chip
+naming them, so switching version holds no surprises.
 
 | Thing | Holds |
 |---|---|

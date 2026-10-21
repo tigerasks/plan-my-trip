@@ -45,6 +45,11 @@ If an older `probe.html` is still at the repository root, delete it: the copy in
 - **UK conventions.** UK English, dates like "Sat 21 Nov", 24-hour times.
 - **Currency.** Prices show in their original currency. A conversion appears only if the user picks a preferred currency in the trip settings; never assume one.
 - **Small commits.** Keep commits small and focused, with clear messages; the app must keep working after every commit.
+- **Git.** `main` holds only merge commits. Every change goes on a feature branch and is merged with
+  `--no-ff`. Write the commit subject only, never a body, and no `Co-Authored-By` or similar
+  trailers. If a subject needs an "and", the work probably wants splitting into two commits.
+- **Nothing hover-only.** Every option is visible without a mouse — drag handles, menus, the labels on
+  the add buttons. If you have to hover to discover what you can do, that is a bug, not a preference.
 
 ## Hard constraints
 
