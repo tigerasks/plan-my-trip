@@ -267,18 +267,27 @@
     } catch (e) { return { ok: false, end: label, error: errText(e) }; }
   }
   async function mapTransit(point, label) {
-    const q = '[out:json][timeout:25];('
-      + 'node(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[highway=bus_stop];'
-      + 'relation(around:800,' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
-      + ');out tags 400;';   // high enough that a busy corner's stops cannot crowd out its routes
+    // Word for word the query the planner's stop-based fallback sends (core.js, stopsNearUrl), so a
+    // run of this probe says whether that query works, not whether some other one would.
+    const at = ',' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')';
+    const q = '[out:json][timeout:50];('
+      + 'nwr(around:800' + at + '[highway=bus_stop];'
+      + 'nwr(around:800' + at + '[railway~"^(station|halt|tram_stop)$"];'
+      + 'nwr(around:800' + at + '[public_transport=station];'
+      + 'relation(around:800' + at + '[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
+      + ');out tags center 400;';   // high enough that a busy corner's stops cannot crowd out its routes
     try {
       const { data, ms } = await getJson('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
       const els = data.elements || [];
-      const stops = els.filter((e) => e.type === 'node');
-      const routes = els.filter((e) => e.type === 'relation');
+      const routes = els.filter((e) => e.type === 'relation' && e.tags && e.tags.type === 'route');
+      const stops = els.filter((e) => !routes.includes(e));
+      const placed = stops.filter((e) => (e.lat != null && e.lon != null) || (e.center && e.center.lat != null));
       return {
         ok: true, ms, end: label, within: '800 m',
         capped: els.length >= 400,
+        // The fallback can only use a stop it can measure a walk to, so this is the number that matters.
+        withPosition: placed.length,
+        kinds: Array.from(new Set(stops.map((e) => e.type))),
         busStops: stops.length,
         stopNames: stops.slice(0, 6).map((e) => String((e.tags && (e.tags['name:en'] || e.tags.name)) || '(no name)').slice(0, 50)),
         routeRelations: routes.length,
