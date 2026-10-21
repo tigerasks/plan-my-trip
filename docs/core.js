@@ -337,7 +337,7 @@ function normDay(raw, issues, now) {
     ? { lat: toNum(c.lat), lng: toNum(c.lng), zoom: clamp(toNum(c.zoom) == null ? 13 : toNum(c.zoom), 1, 20) }
     : null;
   d.note = str(r.note, 2000);
-  d.legs = obj(r.legs);
+  d.legs = normLegs(r.legs);
   return d;
 }
 // ---------- where you sleep ----------
@@ -860,6 +860,92 @@ function startWindows(place, date) {
     slots = slots.map(([a, b]) => [Math.max(a, from), Math.min(b, to)]);
   }
   return { open, slots: slots.filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]) };
+}
+
+// ---------- what is known about a leg ----------
+// A leg is between two points of a day: a place, or the day's own `start` and `end`. Keys are
+// directed and looked up exactly — a leg checked one way says nothing about the other, since one-way
+// streets and timetables both care. A place that is a stop twice needs no second key: the journey
+// between two places is the same whichever visit it is.
+const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+const legKey = (fromId, toId) => cleanId(fromId) + '>' + cleanId(toId);
+const legEnds = (key) => { const bits = String(key).split('>'); return bits.length === 2 ? bits : null; };
+
+function normLeg(raw) {
+  const r = obj(raw);
+  const minutes = toNum(r.minutes);
+  const mine = obj(r.mine);
+  const myMinutes = toNum(mine.minutes);
+  const leg = {
+    mode: MODE_WORD[r.mode] ? r.mode : null,
+    minutes: minutes == null ? null : clamp(Math.round(minutes), 0, 1440),
+    km: toNum(r.km) == null ? null : Math.round(toNum(r.km) * 1000) / 1000,
+    source: LEG_SOURCES.includes(r.source) ? r.source : null,
+    at: str(r.at, 32) || null,
+    asked: str(r.asked, 32) || null,
+    path: str(r.path, 20000) || null,
+    name: str(r.name, 120) || null,
+    detail: str(r.detail, 300) || null,
+    mine: myMinutes == null ? null : {
+      minutes: clamp(Math.round(myMinutes), 0, 1440),
+      mode: MODE_WORD[mine.mode] ? mine.mode : null,
+      at: str(mine.at, 32) || null,
+    },
+  };
+  // Nothing worth keeping: no time from a service and none of your own.
+  return leg.minutes == null && !leg.mine ? null : leg;
+}
+function normLegs(raw) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj(raw))) {
+    const ends = legEnds(k);
+    if (!ends || !ends[0] || !ends[1]) continue;
+    const leg = normLeg(v);
+    if (leg) out[legKey(ends[0], ends[1])] = leg;
+  }
+  return out;
+}
+const legFor = (trip, dayId, fromId, toId) => {
+  const d = obj(obj(trip).days)[dayId];
+  return d ? obj(d.legs)[legKey(fromId, toId)] || null : null;
+};
+function setLeg(trip, dayId, fromId, toId, leg, now) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return null;
+  const key = legKey(fromId, toId);
+  const kept = d.legs[key];
+  const next = normLeg(Object.assign({}, kept, leg));
+  if (!next) { delete d.legs[key]; touch(trip, now); return null; }
+  d.legs[key] = next;
+  touch(trip, now);
+  return next;
+}
+function clearLeg(trip, dayId, fromId, toId, now) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return false;
+  const key = legKey(fromId, toId);
+  if (!d.legs[key]) return false;
+  delete d.legs[key];
+  touch(trip, now);
+  return true;
+}
+// Which point of a day an id means.
+function pointOf(trip, dayId, id) {
+  if (id === 'start') return dayStart(trip, dayId);
+  if (id === 'end') return dayEnd(trip, dayId);
+  return placeById(trip, id);
+}
+// Legs whose ends the day no longer has are worth forgetting; they cannot be shown or used again.
+function tidyLegs(trip, dayId) {
+  const d = obj(obj(trip).days)[dayId];
+  if (!d) return 0;
+  let gone = 0;
+  for (const key of Object.keys(d.legs)) {
+    const ends = legEnds(key);
+    const ok = ends && ends.every((id) => (id === 'start' || id === 'end' ? true : !!placeById(trip, id)));
+    if (!ok) { delete d.legs[key]; gone++; }
+  }
+  return gone;
 }
 
 // ---------- estimating a leg ----------
@@ -1509,6 +1595,7 @@ const Core = {
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
   openOn, startWindows, estimateLeg, rideMinutes, TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,

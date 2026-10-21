@@ -575,5 +575,37 @@ fit = withDemo((t) => { t.places['made-up-market'].fixed = '15:00'; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar') === 1,
   'a stop slots in before a booked time rather than after it: ' + C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar'));
 
+console.log('\n== Keeping what was checked ==');
+ok(C.legKey('start', 'example-temple') === 'start>example-temple', 'a leg is keyed by its two ends, in order');
+ok(C.legEnds('a>b').join() === 'a,b' && C.legEnds('nonsense') === null, 'and the key reads back, or does not');
+
+let L = withDemo((t) => C.setLeg(t, '2026-11-21', 'start', 'example-temple',
+  { mode: 'walk', minutes: 21, km: 1.6, source: 'osrm', at: '2026-10-21T10:00:00Z', path: 'xyz' }));
+ok(L.out.minutes === 21 && L.out.source === 'osrm', 'a checked leg is kept with where it came from');
+ok(C.legFor(L.t, '2026-11-21', 'start', 'example-temple').path === 'xyz', 'and its path, for drawing');
+ok(C.legFor(L.t, '2026-11-21', 'example-temple', 'start') === null, 'the other direction is a different leg');
+ok(JSON.stringify(C.normalise(L.t).trip.days['2026-11-21'].legs) === JSON.stringify(L.t.days['2026-11-21'].legs),
+  'and it survives normalising');
+
+C.setLeg(L.t, '2026-11-21', 'start', 'example-temple', { mine: { minutes: 18, at: 'now' } });
+const both = C.legFor(L.t, '2026-11-21', 'start', 'example-temple');
+ok(both.minutes === 21 && both.mine.minutes === 18, 'your own time is kept beside the checked one, not instead of it');
+ok(C.clearLeg(L.t, '2026-11-21', 'start', 'example-temple') && !C.legFor(L.t, '2026-11-21', 'start', 'example-temple'),
+  'and a leg can be forgotten');
+ok(!C.clearLeg(L.t, '2026-11-21', 'start', 'nowhere'), 'forgetting one that is not there changes nothing');
+
+const junk = C.normalise({ days: { '2026-11-21': { date: '2026-11-21', legs: {
+  'no-arrow': { minutes: 5 }, 'a>b': { minutes: null }, 'a>c': { minutes: 12, mode: 'walk', source: 'made up' } } } } }).trip;
+ok(!junk.days['2026-11-21'].legs['no-arrow'], 'a key that is not a pair of ends is dropped');
+ok(!junk.days['2026-11-21'].legs['a>b'], 'so is a leg with no time in it at all');
+ok(junk.days['2026-11-21'].legs['a>c'].source === null, 'and a source the planner does not know becomes none');
+
+L = withDemo((t) => { C.setLeg(t, '2026-11-21', 'start', 'example-temple', { minutes: 20, mode: 'walk' });
+  C.setLeg(t, '2026-11-21', 'start', 'ghost', { minutes: 9, mode: 'walk' });
+  return C.tidyLegs(t, '2026-11-21'); });
+ok(L.out === 1 && C.legFor(L.t, '2026-11-21', 'start', 'example-temple'), 'a leg to a place that has gone is tidied away');
+ok(C.pointOf(L.t, '2026-11-21', 'start').name === 'Example Hotel · Kyoto Station', 'start means where the day starts');
+ok(C.pointOf(L.t, '2026-11-21', 'example-temple').name === 'Example Temple', 'and an id means its place');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);
