@@ -98,6 +98,10 @@ function restore() {
   App.savedAt = null;
   App.undo = readUndo();
 }
+// The time zone this device is in, which is what the planner falls back to.
+const hereZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; }
+};
 const two = (n) => String(n).padStart(2, '0');
 const fmtClock = (d) => two(d.getHours()) + ':' + two(d.getMinutes());
 
@@ -554,13 +558,23 @@ function backlogHtml() {
     listHtml(places, () => '<span class="dot"></span>',
       'The backlog is empty. It holds ideas that do not have a day yet.', 'backlog'), toggle);
 }
+// Every service here is free on the understanding that it is credited and used lightly. The
+// "fix the map" link is part of what the routing servers ask for: a wrong route is usually a wrong
+// map, and anyone can put it right.
+const CREDIT = (href, text) => '<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
 function creditsHtml() {
   return '<p class="credits">'
-    + 'Map: <a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer">OpenFreeMap</a>'
-    + ' · <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles</a>'
-    + ' · Data <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a><br>'
-    + 'Planner by <a href="https://github.com/tigerasks" target="_blank" rel="noopener noreferrer">tigerasks</a>'
-    + ' · <a href="https://github.com/tigerasks/plan-my-trip" target="_blank" rel="noopener noreferrer">source code</a> (AGPL-3.0)'
+    + 'Map: ' + CREDIT('https://openfreemap.org/', 'OpenFreeMap')
+    + ' · ' + CREDIT('https://www.openmaptiles.org/', '© OpenMapTiles')
+    + ' · Data ' + CREDIT('https://www.openstreetmap.org/copyright', '© OpenStreetMap contributors')
+    + ' · ' + CREDIT('https://www.openstreetmap.org/fixthemap', 'fix the map') + '<br>'
+    + 'Search: ' + CREDIT('https://photon.komoot.io/', 'Photon')
+    + ' · Place details: ' + CREDIT('https://overpass-api.de/', 'Overpass')
+    + ' · Walking and taxi: ' + CREDIT('https://routing.openstreetmap.de/about.html', 'OSRM at FOSSGIS')
+    + ' · Timetables: ' + CREDIT('https://transitous.org/', 'Transitous')
+    + ' (' + CREDIT('https://transitous.org/sources/', 'data sources') + ')<br>'
+    + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
+    + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
     + '</p>';
 }
 
@@ -911,7 +925,15 @@ const SHEETS = {
     if (rec.mine) rows.push(row('Your time', esc(C.fmtDur(rec.mine.minutes)), inUse('mine')));
     for (const m of C.LEG_MODES) {
       const slot = rec[m];
-      if (!slot || slot.minutes == null) continue;
+      if (!slot) continue;
+      // A service that was asked and had nothing to say is worth a line of its own: it is the
+      // difference between "not looked at" and "looked at, and there is nothing there".
+      if (slot.minutes == null) {
+        rows.push(row(LEG_LABEL[m], '<span class="muted">nothing came back</span>',
+          [LEG_FROM[slot.source] || '', slot.asked ? C.fmtDateUK(slot.asked.slice(0, 10)) : '']
+            .filter(Boolean).join(' · '), slot.detail || ''));
+        continue;
+      }
       rows.push(row(LEG_LABEL[m], esc(C.fmtDur(slot.minutes)),
         [LEG_FROM[slot.source] || 'checked', slot.km != null ? slot.km.toFixed(1) + ' km' : '',
           slot.at ? C.fmtDateUK(slot.at.slice(0, 10)) : '', inUse(m)].filter(Boolean).join(' · '),
@@ -941,11 +963,12 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">Check it for real</span>'
       + '<div class="actions">'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="walk">Walking</button>'
+      + '<button type="button" class="btn" data-act="check-leg" data-mode="transit">Public transport</button>'
       + '<button type="button" class="btn" data-act="check-leg" data-mode="car">By taxi</button>'
       + '</div>'
-      + '<p class="hint">Real streets from OSRM, a second between requests, and the answer kept in the '
-      + 'trip so the same leg is never asked twice. Each way is kept beside the others, so checking '
-      + 'the taxi never loses the walk.</p></div>'
+      + '<p class="hint">Real streets from OSRM, timetables from Transitous, a second between '
+      + 'requests, and the answer kept in the trip so the same leg is never asked twice. Each way '
+      + 'is kept beside the others, so checking the taxi never loses the walk.</p></div>'
       + '<div class="sh-sec"><span class="label">Your own time</span>'
       + '<p class="note">If you know how long this takes, say so. It wins over everything else.</p>'
       + legTimeWheels(rec.mine ? rec.mine.minutes : info.minutes)
@@ -1089,6 +1112,9 @@ const SHEETS = {
       + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
       + field('trTitle', 'Title', textIn('trTitle', t.title, ' maxlength="80"'), 'Shown at the top, and in what you hand back to the chat.')
       + field('trTz', 'Time zone label', textIn('trTz', t.tzLabel, ' maxlength="12" placeholder="JST"'), 'Just a label next to the times. Every time in the planner is local to where you are going.')
+      + field('trZone', 'Time zone', textIn('trZone', t.tz, ' maxlength="60" placeholder="' + esc(hereZone()) + '"'),
+        'Only the timetable service needs this, to work out which departures to look up. '
+        + 'Leave it empty and the planner uses this device\'s own, ' + esc(hereZone()) + '.')
       + field('trTransit', 'Getting around, by default',
         '<select class="in" id="trTransit">' + C.TRANSIT_TYPES.map((k) =>
           '<option value="' + k + '"' + (k === t.transit ? ' selected' : '') + '>' + esc(C.TRANSIT_LABEL[k]) + '</option>').join('') + '</select>',
@@ -1175,27 +1201,115 @@ function askOsrm(dayId, fromId, toId, mode) {
   });
 }
 
+// When you would set off on this leg, as the instant a timetable can be asked about. It comes from
+// the plan on screen, so moving a stop about changes which departures the planner looks up.
+function departureOf(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
+  if (!day) return null;
+  const plan = C.planDay(App.trip, dayId);
+  const item = plan && plan.items.find((it) => it.type === 'travel' && it.fromId === fromId && it.toId === toId);
+  return item && item.leaves != null ? C.instantOf(day.date, item.leaves, App.trip.tz) : null;
+}
+
+// Nothing came back, which can mean two quite different things: there are no timetables for this
+// part of the world, or there are and nothing runs at that time. Asking which stops Transitous
+// knows at each end tells them apart — Kyoto has rail but no city buses, which the fourth service
+// test showed by finding places at both ends and no stops at all.
+function whyNoJourney(from, to, departs) {
+  const stopsAt = (point) => {
+    const url = C.transitStopsUrl(point);
+    return url ? Live.fetchJson(url).then((json) => C.parseStops(json), () => null) : Promise.resolve(null);
+  };
+  const place = (p, fallback) => (p && p.name ? p.name : fallback);
+  return Promise.all([stopsAt(from), stopsAt(to)]).then(([a, b]) => {
+    const when = departs ? ' at ' + C.fmtTime(C.minutesOfDay(departs, App.trip.tz)) : ' then';
+    if (!a || !b) return 'Transitous found no journey' + when + ', and could not say which stops it knows.';
+    if (!a.length && !b.length) {
+      return 'Transitous knows no stops at either end, so it has no timetables for this kind of '
+        + 'service here. The planner\'s own estimate stands.';
+    }
+    if (!a.length) return 'Transitous knows no stops near ' + place(from, 'where you set off') + ', so it cannot plan from there.';
+    if (!b.length) return 'Transitous knows no stops near ' + place(to, 'where you are going') + ', so it cannot plan to there.';
+    // A short leg can have the same stop at both ends, so name each one once.
+    const named = a.concat(b).filter((name, i, all) => all.indexOf(name) === i).slice(0, 3);
+    return 'Transitous knows stops at both ends (' + named.join(', ') + ') but found nothing leaving' + when + '.';
+  });
+}
+
+// Ask Transitous what public transport would do with this leg, leaving when the plan says you
+// would. An answer that says nothing is still kept, with the reason: it stops the planner asking
+// the same question of the same service over and over.
+function askTransit(dayId, fromId, toId) {
+  const day = App.trip ? App.trip.days[dayId] : null;
+  const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
+  const departs = departureOf(dayId, fromId, toId);
+  const url = departs ? C.transitUrl(from, to, departs) : null;
+  if (!url || !day) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
+  const now = new Date().toISOString();
+  const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
+  const nothing = () => whyNoJourney(from, to, departs).then((why) => {
+    keep({ asked: now, departs, source: 'transitous', detail: why });
+    return null;
+  });
+  return Live.fetchJson(url).then((json) => {
+    const got = C.parseTransit(json, from, to, departs);
+    if (got) { keep(Object.assign({ at: now }, got)); return got; }
+    // Keep the empty answer straight away, so nothing asks again while the rest is worked out.
+    keep({ asked: now, departs, source: 'transitous' });
+    // Before deciding nothing runs, see whether the timetable reaches that far at all.
+    const instead = C.farAhead(day.date, isoToday()) ? C.sameWeekdaySoon(day.date, isoToday()) : null;
+    const when = instead ? C.instantOf(instead, C.minutesOfDay(departs, App.trip.tz), App.trip.tz) : null;
+    const other = when ? C.transitUrl(from, to, when) : null;
+    if (!other) return nothing();
+    return Live.fetchJson(other).then((json2) => {
+      const ride = C.parseTransit(json2, from, to, when);
+      if (!ride) return nothing();
+      ride.detail = 'Times from ' + C.fmtDateUK(instead) + ', the same weekday: the timetable does not '
+        + 'reach ' + C.fmtDateUK(day.date) + ' yet.' + (ride.detail ? ' · ' + ride.detail : '');
+      keep(Object.assign({ at: now }, ride));
+      return ride;
+    }, () => nothing());
+  });
+}
+
 // The same check, asked for from a leg card. The card may have been closed or moved on by the time
 // the answer comes, so the sheet is only touched if it is still the same one.
+const NO_ANSWER = {
+  walk: 'OSRM could not find a way between these two.',
+  car: 'OSRM could not find a way between these two.',
+  transit: 'Transitous found no journey leaving then.',
+};
+const SERVICE_OF = { walk: 'OSRM', car: 'OSRM', transit: 'Transitous' };
+const legNote = (dayId, fromId, toId, mode) => {
+  const rec = C.legFor(App.trip, dayId, fromId, toId);
+  return rec && rec[mode] ? rec[mode].detail : null;
+};
 function checkLeg(dayId, fromId, toId, mode) {
   const sheet = App.ui.sheet;
   const mine = () => (App.ui.sheet === sheet ? sheet : null);
-  if (!C.osrmUrl(C.pointOf(App.trip, dayId, fromId), C.pointOf(App.trip, dayId, toId), mode)) {
+  const ask = mode === 'transit'
+    ? () => askTransit(dayId, fromId, toId)
+    : () => askOsrm(dayId, fromId, toId, mode);
+  if (mode !== 'transit' && !C.osrmUrl(C.pointOf(App.trip, dayId, fromId), C.pointOf(App.trip, dayId, toId), mode)) {
     if (mine()) { sheet.error = 'One end of this leg has no position, so there is nothing to ask about.'; render(); }
     return Promise.resolve(null);
   }
   if (mine()) { sheet.busy = true; sheet.error = ''; render(); }
-  return askOsrm(dayId, fromId, toId, mode).then(
+  return ask().then(
     (got) => {
       if (mine()) {
         sheet.busy = false;
-        if (!got) sheet.error = 'OSRM could not find a way between these two.';
+        // Where the planner worked out why, the card says so on the row itself; no need to say it twice.
+        if (!got) sheet.error = legNote(dayId, fromId, toId, mode) ? '' : NO_ANSWER[mode];
         render();
       }
       return got;
     },
     (err) => {
-      if (mine()) { sheet.busy = false; sheet.error = 'OSRM ' + Live.why(err) + '. The estimate still stands.'; }
+      if (mine()) {
+        sheet.busy = false;
+        sheet.error = SERVICE_OF[mode] + ' ' + Live.why(err) + '. The estimate still stands.';
+      }
       render();
       return null;
     });
@@ -1215,10 +1329,13 @@ function sweepWants() {
   const plan = C.planDay(App.trip, App.ui.dayId);
   if (!plan) return [];
   // The walking time is worth having on every leg, even a long one: it is what a ride has to beat,
-  // and it is the one thing OSRM can always answer. A ride itself waits for Transitous.
-  return plan.items
-    .filter((it) => it.type === 'travel' && !it.unknown && it.fromId && it.toId && !(it.known || {}).walk)
-    .map((it) => ({ dayId: App.ui.dayId, fromId: it.fromId, toId: it.toId, mode: 'walk' }))
+  // and it is the one thing OSRM can always answer. Timetables are only worth asking about where
+  // the planner expects you to ride, and they are the slower, scarcer service of the two.
+  const legs = plan.items.filter((it) => it.type === 'travel' && !it.unknown && it.fromId && it.toId);
+  const want = (it, mode) => ({ dayId: App.ui.dayId, fromId: it.fromId, toId: it.toId, mode });
+  return legs.filter((it) => !(it.known || {}).walk).map((it) => want(it, 'walk'))
+    .concat(legs.filter((it) => it.guessMode === 'transit' && !(it.known || {}).transit)
+      .map((it) => want(it, 'transit')))
     .filter((w) => !Sweep.tried[sweepKey(w)]);
 }
 function sweepSoon() {
@@ -1235,7 +1352,8 @@ function sweepStep() {
   Sweep.tried[sweepKey(w)] = true;
   Sweep.going = true;
   const done = () => { Sweep.going = false; if (sweepWants().length) sweepSoon(); };
-  askOsrm(w.dayId, w.fromId, w.toId, w.mode).then(done, done);
+  const ask = w.mode === 'transit' ? askTransit(w.dayId, w.fromId, w.toId) : askOsrm(w.dayId, w.fromId, w.toId, w.mode);
+  ask.then(done, done);
 }
 
 // A place found anywhere — search, the map, a dropped pin — is shown before it is added.
@@ -1570,7 +1688,15 @@ const ACTIONS = {
       return;
     }
     App.trip.title = val('trTitle') || App.trip.title;
+    const zone = val('trZone');
+    if (zone && !C.goodZone(zone)) {
+      App.ui.sheet.error = 'This browser does not know the time zone "' + zone + '". It wants a name '
+        + 'like Asia/Tokyo or Europe/Berlin. Leave it empty to use this device\'s own, ' + hereZone() + '.';
+      render();
+      return;
+    }
     App.trip.tzLabel = val('trTz');
+    App.trip.tz = zone || null;
     App.trip.transit = val('trTransit');
     App.trip.currency = cur || null;
     const lookups = [];

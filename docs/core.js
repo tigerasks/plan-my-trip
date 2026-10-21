@@ -413,6 +413,7 @@ function normTrip(raw, now) {
   t.title = str(r.title, 80) || 'Untitled trip';
   t.id = cleanId(r.id) || slug(t.title) || 'trip';
   t.tzLabel = str(r.tzLabel, 12);
+  t.tz = goodZone(r.tz) ? str(r.tz, 60) : null;
   t.transit = TRANSIT_TYPES.includes(r.transit) ? r.transit : 'city';
   t.currency = str(r.currency, 3).toUpperCase().replace(/[^A-Z]/g, '') || null;
   const fx = {};
@@ -937,6 +938,26 @@ function decodePath(encoded, precision) {
   }
   return out;
 }
+// Points back into an encoded polyline, so a journey stitched from several legs is kept the same
+// way a single route is. Arithmetic rather than bitwise, for the same reason as decoding.
+function encodePath(points, precision) {
+  const digits = toNum(precision);
+  const factor = Math.pow(10, digits == null ? 5 : clamp(Math.round(digits), 1, 9));
+  const one = (n) => {
+    let v = n < 0 ? -n * 2 - 1 : n * 2;
+    let out = '';
+    while (v >= 32) { out += String.fromCharCode((32 | (v % 32)) + 63); v = Math.floor(v / 32); }
+    return out + String.fromCharCode(v + 63);
+  };
+  let lat = 0, lng = 0, out = '';
+  for (const p of arr(points)) {
+    if (!hasPos(p)) continue;
+    const la = Math.round(p.lat * factor), ln = Math.round(p.lng * factor);
+    out += one(la - lat) + one(ln - lng);
+    lat = la; lng = ln;
+  }
+  return out;
+}
 // The points of a leg's path, decoded the way that leg was encoded. OSRM uses 5 digits, MOTIS 7.
 const legPath = (leg) => (obj(leg).path ? decodePath(obj(leg).path, obj(leg).precision) : []);
 // A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
@@ -970,6 +991,7 @@ function normLegMode(raw) {
     source: LEG_SOURCES.includes(r.source) ? r.source : null,
     at: str(r.at, 32) || null,
     asked: str(r.asked, 32) || null,
+    departs: str(r.departs, 32) || null,
     path: str(r.path, 20000) || null,
     precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
@@ -1058,6 +1080,176 @@ function tidyLegs(trip, dayId) {
     if (!ok) { delete d.legs[key]; gone++; }
   }
   return gone;
+}
+
+// The local time an instant falls at, where the trip is: the other way round from instantOf, for
+// saying back which departure was asked about.
+function minutesOfDay(instantISO, tz) {
+  const ms = Date.parse(str(instantISO));
+  if (!Number.isFinite(ms)) return null;
+  const off = goodZone(tz) ? zoneOffset(ms, tz) : -new Date(ms).getTimezoneOffset() * 60000;
+  const local = new Date(ms + off);
+  return local.getUTCHours() * 60 + local.getUTCMinutes();
+}
+
+// Timetables are usually published only a few months ahead, so a trip further out gets nothing
+// back — not because nothing runs, but because nobody has said yet what will. The nearest honest
+// answer is the same weekday in the coming week, said plainly as what it is (design doc,
+// "Travel times").
+const TIMETABLE_REACH = 30;        // days: past this, an empty answer says more about the timetable
+const daysApart = (fromISO, toISO) => {
+  const a = Date.parse(str(fromISO).slice(0, 10) + 'T00:00:00Z');
+  const b = Date.parse(str(toISO).slice(0, 10) + 'T00:00:00Z');
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 86400000) : null;
+};
+const farAhead = (dateISO, todayISO) => {
+  const days = daysApart(todayISO, dateISO);
+  return days != null && days > TIMETABLE_REACH;
+};
+// The next date with the same weekday, never today: today's services may already have run.
+function sameWeekdaySoon(dateISO, todayISO) {
+  const want = Date.parse(str(dateISO).slice(0, 10) + 'T00:00:00Z');
+  const now = Date.parse(str(todayISO).slice(0, 10) + 'T00:00:00Z');
+  if (!Number.isFinite(want) || !Number.isFinite(now) || want <= now) return null;
+  const shift = ((new Date(want).getUTCDay() - new Date(now).getUTCDay()) + 7) % 7 || 7;
+  return new Date(now + shift * 86400000).toISOString().slice(0, 10);
+}
+
+// ---------- asking Transitous ----------
+// Public transport from Transitous, which runs MOTIS over timetables that transit agencies publish.
+// Free for open-source, non-commercial use; the browser identifies itself through the Referer and
+// the site carries contact details. Answers are cached in the trip, one request a second like the
+// rest (design doc, "Travel times", and the fourth service test).
+const TRANSITOUS = 'https://api.transitous.org/api/';
+// Anything that is not under your own steam is a ride someone else is driving.
+const ON_YOUR_OWN = ['WALK', 'BIKE', 'CAR', 'RENTAL', 'ODM', 'FLEX'];
+const isRide = (mode) => {
+  const m = str(mode).toUpperCase();
+  return !!m && !ON_YOUR_OWN.includes(m);
+};
+// v6 is what the service test used. v5 is there because the design doc named it as the fallback,
+// and an older deployment may still be on it.
+function transitUrl(from, to, timeISO, version) {
+  if (!hasPos(from) || !hasPos(to) || !str(timeISO)) return null;
+  return TRANSITOUS + (version === 5 ? 'v5' : 'v6') + '/plan'
+    + '?fromPlace=' + from.lat.toFixed(6) + ',' + from.lng.toFixed(6)
+    + '&toPlace=' + to.lat.toFixed(6) + ',' + to.lng.toFixed(6)
+    + '&time=' + encodeURIComponent(str(timeISO));
+}
+// Which stops it knows about near a point. An empty answer here is what tells "there are no
+// timetables for this kind of service around here" from "nothing runs at that time".
+function transitStopsUrl(point, version) {
+  if (!hasPos(point)) return null;
+  return TRANSITOUS + (version === 6 ? 'v6' : 'v1') + '/reverse-geocode'
+    + '?place=' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6)
+    + '&type=STOP&numResults=10';
+}
+function parseStops(json) {
+  const list = Array.isArray(json) ? json : arr(obj(json).places);
+  return list.filter((x) => str(obj(x).type).toUpperCase() === 'STOP')
+    .map((x) => str(obj(x).name, 60)).filter(Boolean);
+}
+// The name of a line, settled by the fourth service test: `routeShortName` and `displayName` came
+// back as a numeric id (8999421) and `routeLongName` was empty, so a line is named from who runs it
+// and where it is heading. A short name is used only where it reads like a line number.
+function lineName(leg) {
+  const l = obj(leg);
+  const short = str(l.routeShortName, 20).trim();
+  const agency = str(l.agencyName, 60).trim();
+  const towards = str(l.headsign, 60).trim();
+  const isNumber = short && short.length <= 6 && !/^\d{5,}$/.test(short);
+  if (isNumber) return towards ? short + ' towards ' + towards : short;
+  if (agency && towards) return agency + ' towards ' + towards;
+  return agency || towards || null;
+}
+// The shape of a whole journey, decoded from the legs and joined. MOTIS says which precision it
+// used; where it does not, both are tried and the one that lands on the leg is kept, so a wrong
+// guess draws nothing rather than a line across the sea.
+function journeyPath(legs, from, to) {
+  const tries = [];
+  const said = toNum(obj(obj(arr(legs)[0]).legGeometry).precision);
+  if (said != null) tries.push(said);
+  for (const d of [7, 5]) if (!tries.includes(d)) tries.push(d);
+  for (const digits of tries) {
+    const points = [];
+    for (const leg of arr(legs)) {
+      const geo = obj(obj(leg).legGeometry);
+      for (const pt of decodePath(geo.points, digits)) {
+        // Each leg starts where the last one ended, so the joins would be doubled.
+        const last = points[points.length - 1];
+        if (!last || last.lat !== pt.lat || last.lng !== pt.lng) points.push(pt);
+      }
+    }
+    if (points.length > 1 && pathLooksRight(points, from, to)) return encodePath(points, 5);
+  }
+  return null;
+}
+// One journey, turned into what a leg keeps. The first itinerary that uses a ride is the one you
+// would catch leaving then; a walk-only answer is left alone, since the planner has OSRM for that.
+function parseTransit(json, from, to, departsISO) {
+  const best = arr(obj(json).itineraries).find((it) => arr(obj(it).legs).some((l) => isRide(obj(l).mode)));
+  if (!best) return null;
+  const legs = arr(best.legs);
+  const from_ = Date.parse(str(best.startTime)), to_ = Date.parse(str(best.endTime));
+  let minutes = Number.isFinite(from_) && Number.isFinite(to_) ? Math.round((to_ - from_) / 60000) : null;
+  if (minutes == null) {
+    const seconds = legs.reduce((n, l) => n + (toNum(obj(l).duration) || 0), 0);
+    minutes = seconds ? Math.round(seconds / 60) : null;
+  }
+  if (minutes == null) return null;
+  const names = legs.filter((l) => isRide(obj(l).mode)).map(lineName).filter(Boolean);
+  const steps = legs.map((l) => {
+    const mins = Math.max(1, Math.round((toNum(obj(l).duration) || 0) / 60));
+    // START and END are what MOTIS calls the two ends you handed it, which you already know.
+    const name = str(obj(obj(l).to).name, 40);
+    const stop = name === 'START' || name === 'END' ? '' : name;
+    if (!isRide(obj(l).mode)) return 'walk ' + fmtDur(mins) + (stop ? ' to ' + stop : '');
+    return fmtDur(mins) + (stop ? ' to ' + stop : '');
+  });
+  return {
+    minutes: clamp(minutes, 0, 1440),
+    km: null,
+    source: 'transitous',
+    path: journeyPath(legs, from, to),
+    precision: 5,
+    name: names.join(' · ').slice(0, 120) || null,
+    detail: steps.join(' · ').slice(0, 300) || null,
+    departs: str(departsISO, 32) || null,
+  };
+}
+
+// ---------- local time, where the trip is ----------
+// Every time in the planner is local to where you are going, which is all a person needs. A
+// timetable service needs the actual instant, so a trip can say which time zone it is in and the
+// browser's own time zone database does the rest — daylight saving included.
+function goodZone(name) {
+  const tz = str(name, 60);
+  if (!tz) return false;
+  try { new Intl.DateTimeFormat('en-GB', { timeZone: tz }); return true; } catch (e) { return false; }
+}
+// How far a zone is from UTC at one moment, in milliseconds.
+function zoneOffset(ms, tz) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms));
+  const p = {};
+  for (const bit of parts) p[bit.type] = bit.value;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - ms;
+}
+// The instant a local date and time falls on. Without a zone it falls back to this browser's own,
+// which is right when you are already there and the best guess when you are not.
+function instantOf(dateISO, minutes, tz) {
+  const date = str(dateISO).slice(0, 10);
+  const bits = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const mins = toNum(minutes);
+  if (!bits || mins == null) return null;
+  const naive = Date.UTC(+bits[1], +bits[2] - 1, +bits[3], 0, 0, 0) + Math.round(mins) * 60000;
+  if (!goodZone(tz)) return new Date(naive + new Date(naive).getTimezoneOffset() * 60000).toISOString();
+  const first = naive - zoneOffset(naive, tz);
+  // One correction is enough: it only differs where the clocks go forward or back that day.
+  const second = naive - zoneOffset(first, tz);
+  return new Date(second).toISOString();
 }
 
 // ---------- estimating a leg ----------
@@ -1270,7 +1462,8 @@ function planDay(trip, dayId, key, order) {
     const waited = at - arrive;
     wait += waited;
     visit += p.duration;
-    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: p.id }, leg));
+    // `leaves` is when you would set off, which is the only thing a timetable can be asked about.
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: p.id, leaves: t }, leg));
     items.push({
       type: 'visit', id: p.id, name: p.name, place: p, leg,
       arrive, at, until: at + p.duration, waited,
@@ -1285,7 +1478,7 @@ function planDay(trip, dayId, key, order) {
     if (leg.unknown && !hasPos(end)) flag('warn', 'Where the day ends is not set, so the time back is unknown' + advice(), 'end');
     travel += leg.minutes;
     finish = t + leg.minutes;
-    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: 'end' }, leg));
+    items.push(Object.assign({ type: 'travel', fromId: prevId, toId: 'end', leaves: t }, leg));
     items.push({ type: 'end', name: end.name, at: finish, place: end });
     if (endBy != null && finish > endBy) {
       flag('error', 'You would be back ' + fmtTime(finish) + ', ' + fmtDur(finish - endBy) + ' after ' + hhmm(endBy), 'end');
@@ -1824,7 +2017,9 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  legPath, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
+  TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
+  TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,

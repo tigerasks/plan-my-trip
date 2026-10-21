@@ -386,13 +386,13 @@ date:
 
 | Key | Holds |
 |---|---|
-| `trip` | `id`, `title`, `tzLabel`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt` |
+| `trip` | `id`, `title`, `tzLabel`, `tz`, `transit`, `currency`, `fx`, `fxAt`, `lookups[]`, `places{}`, `backlog[]`, `stays[]`, `days{}`, `createdAt`, `updatedAt`. `tzLabel` is only a label next to the times; `tz` is a time zone name like `Asia/Tokyo`, used to turn a local time into the instant a timetable service needs |
 | `stay` | `id`, `name`, `localName`, `lat`, `lng`, `area`, `from` (the first night), `nights`, `note`, `osm` |
 | `day` | `id` and `date` (both the ISO date), `city`, `start`, `end`, `plans{less,balanced,packed}`, `shown`, `centre`, `note`, `legs`. `start` and `end` carry the day's times; their place is only a fallback for when no stay covers the day |
 | `place` | `id`, `name`, `localName`, `lat`, `lng`, `kind`, `area`, `duration`, `fixed`, `window`, `hours`, `closed[]`, `booked`, `priority`, `price`, `check`, `note`, `links[]`, `osm`, `added`, `dayId` |
 | `hours` | `source` (`osm`, `you` or `chat`), `verified`, `raw` (the text it came from), `week` (seven days, each a list of open–close pairs, `[]` for closed, absent for unknown), `lastEntry` |
 | `added` | `by` (`you` or `chat`), `how` (`search`, `map`, `pin` or `package`), `at` |
-| `leg` | keyed `fromId>toId` within its day, where an end is a place id or `start`/`end`. Holds `pick` (the way you chose, or none), `mine` (`minutes`, `mode`, `at`) and one slot per way — `walk`, `transit`, `car` — each with `minutes`, `km`, `source` (`osrm`, `transitous` or `stops`), `at`, `asked`, `path`, `precision` (5 from OSRM, 7 from MOTIS), `name` and `detail`. A slot with `asked` but no `minutes` is a service that was asked and had nothing, so it is not asked again |
+| `leg` | keyed `fromId>toId` within its day, where an end is a place id or `start`/`end`. Holds `pick` (the way you chose, or none), `mine` (`minutes`, `mode`, `at`) and one slot per way — `walk`, `transit`, `car` — each with `minutes`, `km`, `source` (`osrm`, `transitous` or `stops`), `at`, `asked`, `departs` (the departure a timetable answer is about), `path`, `precision`, `name` and `detail`. A slot with `asked` but no `minutes` is a service that was asked and had nothing, so it is not asked again |
 
 Three rules hold at all times, and the planner repairs anything that breaks them on the way in:
 

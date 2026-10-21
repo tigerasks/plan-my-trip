@@ -575,6 +575,76 @@ fit = withDemo((t) => { t.places['made-up-market'].fixed = '15:00'; });
 ok(C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar') === 1,
   'a stop slots in before a booked time rather than after it: ' + C.bestSlot(fit.t, '2026-11-21', 'balanced', 'pretend-noodle-bar'));
 
+console.log('\n== Asking Transitous ==');
+const TFX = JSON.parse(require('fs').readFileSync(__dirname + '/fixtures.json', 'utf8'));
+const tHotel = { lat: 34.9858, lng: 135.7588 }, tTemple = { lat: 34.9948, lng: 135.7858 };
+const tUrl = C.transitUrl(tHotel, tTemple, '2026-11-21T00:30:00.000Z');
+ok(tUrl.startsWith('https://api.transitous.org/api/v6/plan?'), 'the journey goes to v6 of the planning api');
+ok(tUrl.includes('fromPlace=34.985800,135.758800') && tUrl.includes('toPlace=34.994800,135.785800'),
+  'with both ends as latitude first, which is the other way round from OSRM');
+ok(tUrl.includes('time=2026-11-21T00%3A30%3A00.000Z'), 'and the instant to ask about');
+ok(C.transitUrl(tHotel, tTemple, '2026-11-21T00:30:00.000Z', 5).includes('/v5/plan'), 'v5 is there as the fallback');
+ok(C.transitUrl(tHotel, { lat: null, lng: null }, 'now') === null, 'a place with no position is nothing to ask about');
+ok(C.transitStopsUrl(tHotel).includes('/v1/reverse-geocode?place=34.985800,135.758800&type=STOP'),
+  'the stops question goes to the endpoint the service test found answering');
+
+ok(C.parseStops(TFX.transitStops).join() === '東寺,京都', 'stops read back by name');
+ok(C.parseStops([]).length === 0 && C.parseStops(null).length === 0, 'and no stops is no stops');
+ok(C.parseStops([{ name: 'somewhere', type: 'PLACE' }]).length === 0,
+  'a place that is not a stop does not count: that is the whole point of asking');
+
+const tRide = C.parseTransit(TFX.transitJourney, tHotel, tTemple, '2026-11-21T00:30:00.000Z');
+ok(tRide.minutes === 24 && tRide.source === 'transitous', 'a journey reads back end to end: ' + tRide.minutes + ' min');
+ok(tRide.name === '近畿日本鉄道 towards 京都',
+  'named from who runs it and where it is heading, since the short name was a numeric id: ' + tRide.name);
+ok(tRide.detail === 'walk 13 min to 東寺 · 2 min to 京都 · walk 9 min', 'and spelled out step by step: ' + tRide.detail);
+ok(tRide.departs === '2026-11-21T00:30:00.000Z', 'with the departure it is an answer for');
+const tDrawn = C.legPath(tRide);
+ok(tDrawn.length === 4 && Math.abs(tDrawn[0].lat - tHotel.lat) < 1e-4,
+  'the whole journey is drawable, legs joined and the seams not doubled: ' + tDrawn.length + ' points');
+ok(C.lineName({ routeShortName: '205', headsign: 'Kyoto Station' }) === '205 towards Kyoto Station',
+  'a line number that reads like one is used as it is');
+ok(C.lineName({ routeShortName: '8999421', agencyName: 'A', headsign: 'B' }) === 'A towards B',
+  'and one that is really an id is not');
+ok(C.lineName({}) === null, 'a leg that says nothing about its line is left unnamed');
+ok(C.parseTransit({ itineraries: [{ legs: [{ mode: 'WALK', duration: 600 }] }] }, tHotel, tTemple, 'now') === null,
+  'a walk-only answer is no answer: the planner has OSRM for walking');
+ok(C.parseTransit({}, tHotel, tTemple, 'now') === null && C.parseTransit(null, tHotel, tTemple, 'now') === null,
+  'and nothing at all is no answer either');
+
+// A shape read at the tWrong precision lands in the tWrong place, so it is thrown away rather than tDrawn.
+const tWrong = JSON.parse(JSON.stringify(TFX.transitJourney));
+tWrong.itineraries[0].legs.forEach((l) => { l.legGeometry.points = C.encodePath([{ lat: 1, lng: 1 }, { lat: 2, lng: 2 }], 7); });
+ok(C.parseTransit(tWrong, tHotel, tTemple, 'now').path === null, 'a journey drawn across the sea is not drawn at all');
+ok(C.parseTransit(tWrong, tHotel, tTemple, 'now').minutes === 24, 'though its time is still worth keeping');
+
+// Timetables reach only a few months ahead, so a trip beyond that is asked about differently.
+ok(C.farAhead('2026-11-21', '2026-10-21') === true, 'a month and a day out is past where timetables reach');
+ok(C.farAhead('2026-11-20', '2026-10-21') === false, 'a month out is not');
+ok(C.sameWeekdaySoon('2026-11-21', '2026-10-21') === '2026-10-24',
+  'the stand-in is the next Saturday, since the trip day is one: ' + C.sameWeekdaySoon('2026-11-21', '2026-10-21'));
+ok(C.sameWeekdaySoon('2026-10-28', '2026-10-21') === '2026-10-28', 'a week out stands in for itself');
+ok(C.sameWeekdaySoon('2026-10-21', '2026-10-21') === null, 'today is no stand-in: its services may have run');
+ok(C.daysApart('2026-10-21', '2026-11-21') === 31 && C.daysApart('x', 'y') === null, 'and days count plainly');
+
+console.log('\n== Local time, where the trip is ==');
+ok(C.goodZone('Asia/Tokyo') && !C.goodZone('Mars/Olympus') && !C.goodZone(''),
+  'a time zone is only kept if the browser knows it');
+ok(C.instantOf('2026-11-21', 9 * 60 + 30, 'Asia/Tokyo') === '2026-11-21T00:30:00.000Z',
+  'a Kyoto morning is nine hours ahead of the instant to ask about');
+ok(C.instantOf('2026-11-21', 9 * 60 + 30, 'Europe/Berlin') === '2026-11-21T08:30:00.000Z',
+  'in November Berlin is one hour ahead');
+ok(C.instantOf('2026-07-21', 9 * 60 + 30, 'Europe/Berlin') === '2026-07-21T07:30:00.000Z',
+  'and in July two, because the browser knows about summer time');
+ok(C.instantOf('2026-03-29', 2 * 60 + 30, 'Europe/Berlin') === '2026-03-29T01:30:00.000Z',
+  'a half hour that the clocks skip still lands on a real instant');
+ok(C.instantOf('not a date', 60, 'Asia/Tokyo') === null && C.instantOf('2026-11-21', null, 'Asia/Tokyo') === null,
+  'and nonsense in is nothing out');
+ok(typeof C.instantOf('2026-11-21', 570, null) === 'string', 'with no zone it falls back to this device\'s own');
+ok(C.minutesOfDay(C.instantOf('2026-11-21', 8 * 60 + 30, 'Asia/Tokyo'), 'Asia/Tokyo') === 8 * 60 + 30,
+  'and an instant reads back as the local time it is, for saying which departure was asked about');
+ok(C.minutesOfDay('not an instant', 'Asia/Tokyo') === null, 'nonsense in, nothing out, here too');
+
 console.log('\n== Keeping what was checked ==');
 ok(C.legKey('start', 'example-temple') === 'start>example-temple', 'a leg is keyed by its two ends, in order');
 ok(C.legEnds('a>b').join() === 'a,b' && C.legEnds('nonsense') === null, 'and the key reads back, or does not');

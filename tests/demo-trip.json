@@ -9,6 +9,7 @@
     "id": "example-kyoto",
     "title": "Example · Kyoto (made up)",
     "tzLabel": "JST",
+    "tz": "Asia/Tokyo",
     "transit": "city",
     "currency": null,
     "fx": null,

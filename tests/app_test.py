@@ -46,9 +46,23 @@ with sync_playwright() as pw:
         '263330850': {'type': 'way', 'id': 263330850, 'center': {'lat': 34.88712, 'lon': 135.80481}, 'tags': {}},
     }
     asked = []
+    # What Transitous has to say, which the tests turn up and down: a journey or nothing, stops
+    # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
+    # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
+    # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
+    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none'}
 
     def services(r):
         u = r.request.url
+        if 'api.transitous.org' in u:
+            asked.append(u)
+            if 'reverse-geocode' in u:
+                r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitStops'] if TRANSIT['stops'] else []))
+            elif TRANSIT['ride'] is True or (TRANSIT['ride'] == 'soon' and TRANSIT['far'] not in u):
+                r.fulfill(status=200, headers=H, body=json.dumps(FIX['transitJourney']))
+            else:
+                r.fulfill(status=200, headers=H, body=json.dumps({'itineraries': [], 'direct': []}))
+            return True
         if 'routing.openstreetmap.de' in u:
             asked.append(u)
             if 'nowhere' in u:
@@ -181,19 +195,28 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(150)
 
     # Left alone for a moment, the planner checks the legs of the plan itself, one at a time: there
-    # is no point making someone open every card to ask (design doc, decision 8). Walking is what
-    # OSRM can always answer, and it is the time a ride has to beat.
+    # is no point making someone open every card to ask (design doc, decision 8). Walking is asked
+    # of OSRM on every leg, since it is what a ride has to beat; the timetables are only asked about
+    # where the planner expects you to ride.
     asked.clear()
     pg.wait_for_function("() => { const l = window.DayPlannerApp.trip.days['2026-11-21'].legs || {};"
-                         " const k = Object.keys(l);"
-                         " return k.length === 2 && k.every((x) => (l[x].walk || {}).source === 'osrm'); }",
-                         timeout=30000)
+                         " const k = Object.keys(l); return k.length === 2 && k.every((x) =>"
+                         " (l[x].walk || {}).source === 'osrm' && (l[x].transit || {}).source === 'transitous'); }",
+                         timeout=40000)
     routes = [u for u in asked if 'routing.openstreetmap.de' in u]
+    rides = [u for u in asked if 'api.transitous.org' in u]
     ck(len(routes) == 2 and all('routed-foot/route/v1/foot/' in u for u in routes),
        'both legs of the plan get their walking time without being asked: %d calls' % len(routes))
+    ck(len(rides) == 2 and all('/api/v6/plan?' in u for u in rides),
+       'and both get asked of the timetables: %d calls' % len(rides))
+    ck('fromPlace=34.985800,135.758800' in rides[0], 'with the ends latitude first, as Transitous wants')
+    ck('time=2026-11-20T23%3A30%3A00.000Z' in rides[0],
+       'for the instant you would set off, 08:30 in Kyoto: ' + rides[0].split('time=')[1])
     ck(pg.evaluate('window.DayPlannerLive.idle()') is True, 'and the planner is quiet again afterwards')
-    ck('≈' in pg.inner_text('.timeline'),
-       'the timeline keeps its estimate, since half an hour on foot is not what you would do here')
+    ck('✓ checked' in pg.inner_text('.timeline'), 'the timeline stops guessing at the legs')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'and uses the ride, which clearly beats half an hour on foot: '
+       + [l for l in pg.inner_text('.timeline').split(chr(10)) if 'checked' in l][0])
 
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
@@ -201,12 +224,17 @@ with sync_playwright() as pw:
     ck('Example Hotel · Kyoto Station → Example Temple' in pg.inner_text('.sh-sub'),
        'naming both ends: ' + pg.inner_text('.sh-sub'))
     labels = pg.locator('#sheet .facts.legs dt').all_text_contents()
-    ck(labels == ['Walking', 'Estimate'], 'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
+    ck(labels == ['Walking', 'Train or bus', 'Estimate'],
+       'the card lists every way it knows, and the estimate: ' + ' / '.join(labels))
     ck('31 min' in pg.inner_text('#sheet') and 'OSRM' in pg.inner_text('#sheet'),
        'with the real walking time and who said so')
     ck('2.3 km' in pg.inner_text('#sheet'), 'and how far it is on foot')
+    ck('近畿日本鉄道 towards 京都' in pg.inner_text('#sheet'),
+       'the ride is named from who runs it and where it is heading')
+    ck('walk 13 min to 東寺 · 2 min to 京都 · walk 9 min' in pg.inner_text('#sheet'),
+       'and spelled out step by step')
     ck('in use' in pg.inner_text('#sheet .facts.legs dd >> nth=1'),
-       'the estimate is still the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
+       'the ride is the one in use: ' + pg.inner_text('#sheet .facts.legs dd >> nth=1'))
 
     # putting the walk in its place, since the choice is yours
     pg.click('[data-act="pick-leg"][data-mode="walk"]')
@@ -243,7 +271,8 @@ with sync_playwright() as pw:
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'false', 'the card stays open, so you can change your mind')
     pg.click('[data-act="drop-my-leg"]')
     pg.wait_for_timeout(900)
-    ck('≈' in pg.inner_text('.timeline'), 'forgetting it leaves the planner to choose again')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'forgetting it leaves the planner to choose again, which brings back the ride')
 
     # a taxi, which is never assumed: it is there once you ask
     asked.clear()
@@ -255,7 +284,8 @@ with sync_playwright() as pw:
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
     ck(leg['car']['minutes'] == 10, 'and keeps it with the allowance for being picked up: %d min' % leg['car']['minutes'])
     ck(leg['walk']['minutes'] == 31, 'beside the walk, which it does not touch')
-    ck('≈' in pg.inner_text('.timeline'), 'the leg itself is unchanged, since a taxi is a decision')
+    ck('24 min train or bus' in pg.inner_text('.timeline'),
+       'the leg itself is unchanged, since taking a taxi is a decision')
     ck('picked up' in pg.inner_text('#sheet'), 'the card says why a taxi takes longer than the driving time')
     ck('By taxi' in pg.locator('#sheet .facts.legs dt').all_text_contents(), 'and lists it as one of the ways')
     pg.screenshot(path=str(SHOTS / 'app_leg_desktop_light.png'))
@@ -351,6 +381,85 @@ with sync_playwright() as pw:
     }''')
     ck('500' in broke['why'], 'a service that fails says so in plain words: ' + broke['why'])
     ck(broke['after'] is True, 'and the next request still goes through')
+    ctx.close()
+
+    # ---- when the timetables have nothing to say
+    # Transitous answering with no journey means one of two things, and which one matters: there are
+    # no timetables for this kind of service here, or there are and nothing runs at that hour. The
+    # fourth service test found exactly the first case for Kyoto's buses.
+    TRANSIT['ride'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).detail != null", timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] is None and leg['asked'], 'a journey that came back empty is still written down')
+    ck('stops at both ends' in leg['detail'] and '08:30' in leg['detail'],
+       'and says nothing runs at that hour, since it does know stops there: ' + leg['detail'])
+    ck(leg['detail'].count('東寺') == 1, 'naming each stop once, however many ends it sits by')
+    ck('≈' in pg.inner_text('.timeline'), 'the day falls back to the planner\'s own estimate')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('nothing came back' in pg.inner_text('#sheet'), 'the card says the timetables were asked and had nothing')
+    ck(leg['detail'] in pg.inner_text('#sheet'), 'with the reason under it')
+    ctx.close()
+
+    TRANSIT['stops'] = False
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).detail != null", timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck('no stops at either end' in leg['detail'],
+       'where it knows no stops at all, it says so instead: ' + leg['detail'])
+    ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
+    ctx.close()
+    TRANSIT['ride'] = True
+    TRANSIT['stops'] = True
+
+    # ---- a trip further out than the timetables reach
+    # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and
+    # the honest answer is the same weekday in the coming week, said plainly (design doc).
+    far = json.loads(json.dumps(DEMO))
+    base = datetime.date.today() + datetime.timedelta(days=200)
+    moved = {old: (base + datetime.timedelta(days=i)).isoformat()
+             for i, old in enumerate(sorted(far['trip']['days']))}
+    far['trip']['days'] = {moved[k]: dict(v, id=moved[k], date=moved[k]) for k, v in far['trip']['days'].items()}
+    for place in far['trip']['places'].values():
+        if place.get('dayId'):
+            place['dayId'] = moved[place['dayId']]
+    firstDay = moved[sorted(moved)[0]]
+    TRANSIT['ride'] = 'soon'
+    TRANSIT['far'] = 'time=' + firstDay[:8]        # nothing is published for that month
+    ctx, pg = open_page(held=far, extra=services)
+    pg.wait_for_function("() => { const d = window.DayPlannerApp.trip.days['%s'];"
+                         " return ((d.legs['start>example-temple'] || {}).transit || {}).minutes != null; }" % firstDay,
+                         timeout=40000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['%s'].legs['start>example-temple'].transit" % firstDay)
+    ck(leg['minutes'] == 24, 'a journey is found after all, on the same weekday in the coming week')
+    ck('the same weekday' in leg['detail'] and 'does not reach' in leg['detail'],
+       'and the leg says where its times come from: ' + leg['detail'])
+    ck(leg['departs'][:7] != firstDay[:7], 'the departure it answers for is that other date, not the trip\'s')
+    asked_far = [u for u in asked if '/plan?' in u]
+    ck(any(TRANSIT['far'] in u for u in asked_far), 'the trip\'s own date is still what it asks about first')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('the same weekday' in pg.inner_text('#sheet'), 'and the card says so too')
+    ctx.close()
+    TRANSIT['ride'] = True
+
+    # ---- crediting the services
+    # Every one of them is free on the understanding that it is named, and two of them ask for
+    # particular links: a way to fix the map, and where Transitous gets its timetables.
+    ctx, pg = open_page(held=DEMO, extra=services)
+    credits = pg.inner_text('.credits')
+    for name in ['OpenFreeMap', 'OpenMapTiles', 'OpenStreetMap contributors', 'Photon', 'Overpass',
+                 'OSRM at FOSSGIS', 'Transitous']:
+        ck(name in credits, 'the page credits ' + name)
+    links = pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.href)')
+    ck('https://www.openstreetmap.org/fixthemap' in links, 'with a way to put the map right')
+    ck('https://transitous.org/sources/' in links, 'and where the timetables come from')
+    ck(all(pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.rel === "noopener noreferrer")')),
+       'every outgoing link opens safely')
+    ck('https://github.com/tigerasks' in links, 'and the planner says who to talk to')
     ctx.close()
 
     # ---- the map
@@ -1010,6 +1119,12 @@ with sync_playwright() as pw:
     pg.click('[data-act="save-trip"]')
     pg.wait_for_timeout(150)
     ck('three letters' in pg.inner_text('#sheet'), 'a currency that is not a code is explained, not swallowed: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#trZone', 'Mars/Olympus')
+    pg.click('[data-act="save-trip"]')
+    pg.wait_for_timeout(150)
+    ck('does not know the time zone' in pg.inner_text('#sheet .note.bad'),
+       'a time zone the browser never heard of is explained too: ' + pg.inner_text('#sheet .note.bad'))
+    pg.fill('#trZone', 'Asia/Tokyo')
     pg.fill('#trCur', 'chf')
     pg.fill('#trTitle', 'Example · Kyoto')
     pg.click('[data-act="save-trip"]')
@@ -1017,6 +1132,9 @@ with sync_playwright() as pw:
     ck(pg.inner_text('#tripBtn') == 'Example · Kyoto', 'saving renames the trip')
     held = pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/trip'))")
     ck(held['trip']['currency'] == 'CHF' and held['trip']['id'] == 'example-kyoto', 'the currency is stored, and the id never moves')
+    ck(held['trip']['tz'] == 'Asia/Tokyo', 'and the trip knows which time zone its times are in')
+    ck(pg.evaluate("window.DayPlannerCore.instantOf('2026-11-21', 570, 'Asia/Tokyo')") == '2026-11-21T00:30:00.000Z',
+       'so 09:30 on a Kyoto morning is the right instant to ask a timetable about')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
     ck(pg.locator('#sheet').get_attribute('aria-hidden') == 'true', 'Escape closes a sheet')
