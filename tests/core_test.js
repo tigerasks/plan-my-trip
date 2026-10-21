@@ -774,6 +774,9 @@ const before = C.estimateLeg(K.t.places['example-temple'], nearby, K.t).minutes;
 C.setLeg(K.t, '2026-11-21', 'start', 'example-temple', { mode: 'walk', minutes: 31, source: 'osrm' });
 C.setLeg(K.t, '2026-11-21', 'example-temple', 'made-up-market', { mode: 'walk', minutes: 26, source: 'osrm' });
 ok(C.calibration(K.t, 'Kyoto').walk === 1, 'two legs are not enough to move the estimates');
+C.setLeg(K.t, '2026-11-21', 'start', 'made-up-market', { transit: { minutes: 40, source: 'stops' } });
+ok(C.calibration(K.t, 'Kyoto').counted.transit === 0,
+  'a stop-based time teaches nothing: it is the planner\'s own guess coming back round');
 
 C.setLeg(K.t, '2026-11-21', 'made-up-market', 'end', { mode: 'walk', minutes: 28, source: 'osrm' });
 const cal = C.calibration(K.t, 'Kyoto');

@@ -975,6 +975,8 @@ function pathLooksRight(points, from, to) {
 // streets and timetables both care. A place that is a stop twice needs no second key: the journey
 // between two places is the same whichever visit it is.
 const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+// Of those, the ones that measured something. 'stops' is the planner's own arithmetic over map data.
+const MEASURED = ['osrm', 'transitous'];
 const LEG_MODES = ['walk', 'transit', 'car'];
 const legKey = (fromId, toId) => cleanId(fromId) + '>' + cleanId(toId);
 const legEnds = (key) => { const bits = String(key).split('>'); return bits.length === 2 ? bits : null; };
@@ -1410,10 +1412,13 @@ function calibration(trip, city) {
       if (!ends) continue;
       const g = legGuess(pointOf(trip, d.id, ends[0]), pointOf(trip, d.id, ends[1]), trip);
       if (!g) continue;
-      // Every way that has a real time teaches the estimate for that way. Your own time is the best
-      // evidence there is, so where you gave one it stands in for the way you gave it for.
+      // A time only teaches the estimate if it came from outside: a stop-based time is the
+      // planner's own guess wearing a hat, and calibrating against it would be circular. Your own
+      // time is the best evidence there is, so where you gave one it stands in for its way.
       const real = {};
-      for (const m of LEG_MODES) if (rec[m] && rec[m].minutes != null) real[m] = rec[m].minutes;
+      for (const m of LEG_MODES) {
+        if (rec[m] && rec[m].minutes != null && MEASURED.includes(rec[m].source)) real[m] = rec[m].minutes;
+      }
       if (rec.mine && rec.mine.minutes != null) {
         const m = rec.mine.mode || legChoice(rec, null);
         if (m) real[m] = rec.mine.minutes;
