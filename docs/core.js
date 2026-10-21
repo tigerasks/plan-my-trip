@@ -895,6 +895,7 @@ function parseOsrm(json, mode, from, to) {
     km: metres == null ? null : Math.round(metres) / 1000,
     source: 'osrm',
     path,
+    precision: 5,
     name: mode === 'car' ? 'by taxi, with ' + fmtDur(TAXI_PICKUP) + ' to be picked up' : null,
   };
 }
@@ -936,6 +937,8 @@ function decodePath(encoded, precision) {
   }
   return out;
 }
+// The points of a leg's path, decoded the way that leg was encoded. OSRM uses 5 digits, MOTIS 7.
+const legPath = (leg) => (obj(leg).path ? decodePath(obj(leg).path, obj(leg).precision) : []);
 // A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
 // Better no line on the map than a line across the sea.
 const PATH_SLACK = 2;   // km: a route snaps to the road network, so the ends move a little
@@ -967,6 +970,7 @@ function normLeg(raw) {
     at: str(r.at, 32) || null,
     asked: str(r.asked, 32) || null,
     path: str(r.path, 20000) || null,
+    precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
     detail: str(r.detail, 300) || null,
     mine: myMinutes == null ? null : {
@@ -1118,7 +1122,8 @@ function legBetween(trip, dayId, fromId, toId, cal) {
   if (!rec) return Object.assign({ by: 'estimate', guess: est.minutes }, est);
   const base = {
     km: rec.km != null ? rec.km : est.km,
-    path: rec.path, name: rec.name, detail: rec.detail, asked: rec.asked, at: rec.at,
+    path: rec.path, precision: rec.precision, name: rec.name, detail: rec.detail,
+    asked: rec.asked, at: rec.at,
     guess: est.unknown ? null : est.minutes,
     checked: rec.minutes,
     source: rec.source,
@@ -1753,7 +1758,7 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  legPath, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, legKey, legEnds, normLeg, normLegs, legFor, setLeg, clearLeg, pointOf, tidyLegs,
   decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,

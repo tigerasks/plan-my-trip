@@ -6,6 +6,7 @@
 
 const C = root.DayPlannerCore;
 const ROUTE = 'day-route';
+const REAL = 'day-real';
 // The line takes the page's own ink, so it stays legible when the theme changes.
 const inkColour = () => {
   try { return getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#1c1917'; }
@@ -89,28 +90,50 @@ const MapView = {
     try { const c = this.map.getCenter(); return { lat: c.lat, lng: c.lng }; } catch (e) { return null; }
   },
 
-  // The day's stops, joined in order. Dashed on purpose: these are straight lines between places,
-  // not the way you would actually walk or ride. Milestone 4 draws the real paths, solid.
-  drawRoute(points) {
+  // The day's thread, one hop at a time. A hop we have only guessed at is dashed and straight: that
+  // is not the way you would walk or ride. A hop checked against a routing service is drawn solid,
+  // along the path it really takes.
+  drawRoute(hops) {
     if (!this.ready || !this.map) return;
-    const line = {
+    const shape = (real) => ({
       type: 'Feature',
       properties: {},
-      geometry: { type: 'LineString', coordinates: points.map((p) => [p.lng, p.lat]) },
-    };
-    try {
-      if (!this.map.getSource(ROUTE)) {
-        this.map.addSource(ROUTE, { type: 'geojson', data: line });
+      geometry: {
+        type: 'MultiLineString',
+        coordinates: (hops || []).filter((h) => !!h.real === real)
+          .map((h) => h.points.map((p) => [p.lng, p.lat])),
+      },
+    });
+    const put = (src, real) => {
+      if (!this.map.getSource(src)) {
+        this.map.addSource(src, { type: 'geojson', data: shape(real) });
         this.map.addLayer({
-          id: ROUTE + '-line', type: 'line', source: ROUTE,
+          id: src + '-line', type: 'line', source: src,
           layout: { 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': inkColour(), 'line-width': 2.5, 'line-opacity': 0.55, 'line-dasharray': [1.6, 1.6] },
+          paint: real
+            ? { 'line-color': inkColour(), 'line-width': 3.5, 'line-opacity': 0.75 }
+            : { 'line-color': inkColour(), 'line-width': 2.5, 'line-opacity': 0.55, 'line-dasharray': [1.6, 1.6] },
         });
       } else {
-        this.map.getSource(ROUTE).setData(line);
-        this.map.setPaintProperty(ROUTE + '-line', 'line-color', inkColour());
+        this.map.getSource(src).setData(shape(real));
+        this.map.setPaintProperty(src + '-line', 'line-color', inkColour());
       }
-    } catch (e) { /* the map can carry on without the thread */ }
+    };
+    // The guesses go down first, so a real path sits on top of the straight line it replaces.
+    try { put(ROUTE, false); put(REAL, true); } catch (e) { /* the map can carry on without the thread */ }
+  },
+
+  // One hop per pair on the thread: its real path where that leg has been checked, the straight
+  // line between the two where it has not.
+  hopsAlong(trip, dayId, thread) {
+    const hops = [];
+    for (let i = 1; i < thread.length; i++) {
+      const a = thread[i - 1], b = thread[i];
+      const path = C.legPath(C.legFor(trip, dayId, a.id, b.id));
+      const real = path.length > 1;
+      hops.push({ points: real ? path : [a.p, b.p], real });
+    }
+    return hops;
   },
 
   clear() {
@@ -141,14 +164,14 @@ const MapView = {
     };
     const start = C.dayStart(trip, dayId), end = C.dayEnd(trip, dayId);
     const thread = [];
-    if (C.hasPos(start)) { put(start, 'mk-anchor', '', start.name || 'Where the day starts'); thread.push(start); }
+    if (C.hasPos(start)) { put(start, 'mk-anchor', '', start.name || 'Where the day starts'); thread.push({ p: start, id: 'start' }); }
     const stops = C.planPlaces(trip, dayId, day.shown);
-    stops.forEach((p, i) => { put(p, 'mk-plan', String(i + 1), p.name); if (C.hasPos(p)) thread.push(p); });
+    stops.forEach((p, i) => { put(p, 'mk-plan', String(i + 1), p.name); if (C.hasPos(p)) thread.push({ p, id: p.id }); });
     if (end && C.hasPos(end)) {
       if (!C.hasPos(start) || end.lat !== start.lat || end.lng !== start.lng) put(end, 'mk-anchor', '', end.name || 'Where the day ends');
-      thread.push(end);
+      thread.push({ p: end, id: 'end' });
     }
-    this.drawRoute(thread.length > 1 ? thread : []);
+    this.drawRoute(thread.length > 1 ? this.hopsAlong(trip, dayId, thread) : []);
     C.ideasFor(trip, dayId, day.shown).forEach((p) => put(p, 'mk-idea', '', p.name));
     // Backlog dots are there to spot an idea near today's route; they never pull the view about.
     const dots = !!(opts && opts.backlog);

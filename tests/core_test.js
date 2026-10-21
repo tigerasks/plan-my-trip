@@ -721,5 +721,16 @@ ok(route.path === good, 'a shape that matches the leg is kept');
 route = C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: '_p~iF~ps|U_ulLnnqC' }] }, 'walk', osrmA, osrmB);
 ok(route.path === null && route.minutes === 10, 'one that lands in California is dropped, and the time kept');
 
+// A leg says how its own path was encoded, so whoever draws it never has to guess: OSRM at 5 digits,
+// MOTIS at 7. The same characters mean different places at the two precisions.
+ok(C.parseOsrm({ code: 'Ok', routes: [{ duration: 600, distance: 900, geometry: good }] }, 'walk', osrmA, osrmB)
+  .precision === 5, 'an OSRM shape is marked as encoded at five digits');
+const drawn = C.legPath({ path: good, precision: 5 });
+ok(drawn.length === 3 && Math.abs(drawn[0].lat - osrmA.lat) < 1e-5, 'a leg hands back the points of its path');
+ok(C.legPath({ path: good, precision: 7 })[0].lat < 1, 'read at the wrong precision it would land in the sea');
+ok(C.legPath({ path: null }).length === 0 && C.legPath(null).length === 0, 'a leg with no path has no points');
+ok(C.normLeg({ minutes: 9, path: good }).precision === 5, 'a stored leg that never said defaults to five');
+ok(C.normLeg({ minutes: 9, path: good, precision: 7 }).precision === 7, 'and one that said seven keeps seven');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

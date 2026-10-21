@@ -210,6 +210,12 @@ with sync_playwright() as pw:
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']")
     ck(leg['minutes'] == 31 and leg['source'] == 'osrm', 'and the real time is kept: %d min' % leg['minutes'])
     ck(leg['km'] == 2.31 and leg['path'], 'with the distance and the shape of the route')
+    real = pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")
+    dashed = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(real) == 1 and len(real[0]) > 2,
+       'and the map draws it along the real path, not as a straight line: %d hops, %d points'
+       % (len(real), len(real[0]) if real else 0))
+    ck(len(dashed) == 1, 'leaving the hop back to the hotel, which nobody has checked, dashed: %d' % len(dashed))
     ck('✓ checked' in pg.inner_text('.timeline'), 'the timeline marks it as checked rather than guessed')
     ck('Estimate' in pg.locator('#sheet dt').all_text_contents() and 'Checked' in pg.locator('#sheet dt').all_text_contents(),
        'and the card shows the guess against the real time')
@@ -227,6 +233,8 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(900)
     ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']") is None,
        'and the whole leg can be forgotten')
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
+       'and the real path on the map goes with it')
     pg.keyboard.press('Escape')
     pg.wait_for_timeout(150)
 
@@ -324,16 +332,21 @@ with sync_playwright() as pw:
     ck(pg.evaluate('window.__fitted.length') == 4, 'the view is fitted around everything on the day')
 
     # the day's thread
-    line = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
-    ck(len(line) == 4, 'the stops are joined in order, out from the hotel and back: %d points' % len(line))
-    ck(line[0] == line[-1], 'a day that ends where it started closes the loop')
-    ck(round(line[0][1], 4) == 34.9858 and round(line[1][1], 4) == 34.9948,
-       'starting at the hotel, then stop 1: ' + str([round(c[1], 4) for c in line]))
+    hops = pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")
+    ck(len(hops) == 3, 'one hop per pair of stops, out from the hotel and back: %d hops' % len(hops))
+    ck(all(len(h) == 2 for h in hops), 'each hop nobody has checked is a straight line between two places')
+    ck(hops[0][0] == hops[-1][-1], 'a day that ends where it started closes the loop')
+    ck(round(hops[0][0][1], 4) == 34.9858 and round(hops[0][1][1], 4) == 34.9948,
+       'starting at the hotel, then stop 1: ' + str([round(h[0][1], 4) for h in hops]))
     layer = pg.evaluate("window.__lastMap.getLayer('day-route-line')")
     ck(layer['paint']['line-dasharray'] == [1.6, 1.6], 'drawn dashed, since a straight line is not a real route')
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-real'].data.geometry.coordinates")) == 0,
+       'with nothing solid on it yet, since no leg here has been checked')
+    ck('line-dasharray' not in pg.evaluate("window.__lastMap.getLayer('day-real-line')")['paint'],
+       'and the layer that holds checked legs is solid')
     pg.click('[data-act="version"][data-v="packed"]')
     pg.wait_for_timeout(250)
-    ck(len(pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")) == 5,
+    ck(len(pg.evaluate("window.__lastMap.__sources['day-route'].data.geometry.coordinates")) == 4,
        'and it follows the version on screen')
     pg.click('[data-act="version"][data-v="balanced"]')
     pg.wait_for_timeout(250)
