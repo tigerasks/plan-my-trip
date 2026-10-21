@@ -938,6 +938,26 @@ function decodePath(encoded, precision) {
   }
   return out;
 }
+// Points back into an encoded polyline, so a journey stitched from several legs is kept the same
+// way a single route is. Arithmetic rather than bitwise, for the same reason as decoding.
+function encodePath(points, precision) {
+  const digits = toNum(precision);
+  const factor = Math.pow(10, digits == null ? 5 : clamp(Math.round(digits), 1, 9));
+  const one = (n) => {
+    let v = n < 0 ? -n * 2 - 1 : n * 2;
+    let out = '';
+    while (v >= 32) { out += String.fromCharCode((32 | (v % 32)) + 63); v = Math.floor(v / 32); }
+    return out + String.fromCharCode(v + 63);
+  };
+  let lat = 0, lng = 0, out = '';
+  for (const p of arr(points)) {
+    if (!hasPos(p)) continue;
+    const la = Math.round(p.lat * factor), ln = Math.round(p.lng * factor);
+    out += one(la - lat) + one(ln - lng);
+    lat = la; lng = ln;
+  }
+  return out;
+}
 // The points of a leg's path, decoded the way that leg was encoded. OSRM uses 5 digits, MOTIS 7.
 const legPath = (leg) => (obj(leg).path ? decodePath(obj(leg).path, obj(leg).precision) : []);
 // A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
@@ -971,6 +991,7 @@ function normLegMode(raw) {
     source: LEG_SOURCES.includes(r.source) ? r.source : null,
     at: str(r.at, 32) || null,
     asked: str(r.asked, 32) || null,
+    departs: str(r.departs, 32) || null,
     path: str(r.path, 20000) || null,
     precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
@@ -1059,6 +1080,109 @@ function tidyLegs(trip, dayId) {
     if (!ok) { delete d.legs[key]; gone++; }
   }
   return gone;
+}
+
+// ---------- asking Transitous ----------
+// Public transport from Transitous, which runs MOTIS over timetables that transit agencies publish.
+// Free for open-source, non-commercial use; the browser identifies itself through the Referer and
+// the site carries contact details. Answers are cached in the trip, one request a second like the
+// rest (design doc, "Travel times", and the fourth service test).
+const TRANSITOUS = 'https://api.transitous.org/api/';
+// Anything that is not under your own steam is a ride someone else is driving.
+const ON_YOUR_OWN = ['WALK', 'BIKE', 'CAR', 'RENTAL', 'ODM', 'FLEX'];
+const isRide = (mode) => {
+  const m = str(mode).toUpperCase();
+  return !!m && !ON_YOUR_OWN.includes(m);
+};
+// v6 is what the service test used. v5 is there because the design doc named it as the fallback,
+// and an older deployment may still be on it.
+function transitUrl(from, to, timeISO, version) {
+  if (!hasPos(from) || !hasPos(to) || !str(timeISO)) return null;
+  return TRANSITOUS + (version === 5 ? 'v5' : 'v6') + '/plan'
+    + '?fromPlace=' + from.lat.toFixed(6) + ',' + from.lng.toFixed(6)
+    + '&toPlace=' + to.lat.toFixed(6) + ',' + to.lng.toFixed(6)
+    + '&time=' + encodeURIComponent(str(timeISO));
+}
+// Which stops it knows about near a point. An empty answer here is what tells "there are no
+// timetables for this kind of service around here" from "nothing runs at that time".
+function transitStopsUrl(point, version) {
+  if (!hasPos(point)) return null;
+  return TRANSITOUS + (version === 6 ? 'v6' : 'v1') + '/reverse-geocode'
+    + '?place=' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6)
+    + '&type=STOP&numResults=10';
+}
+function parseStops(json) {
+  const list = Array.isArray(json) ? json : arr(obj(json).places);
+  return list.filter((x) => str(obj(x).type).toUpperCase() === 'STOP')
+    .map((x) => str(obj(x).name, 60)).filter(Boolean);
+}
+// The name of a line, settled by the fourth service test: `routeShortName` and `displayName` came
+// back as a numeric id (8999421) and `routeLongName` was empty, so a line is named from who runs it
+// and where it is heading. A short name is used only where it reads like a line number.
+function lineName(leg) {
+  const l = obj(leg);
+  const short = str(l.routeShortName, 20).trim();
+  const agency = str(l.agencyName, 60).trim();
+  const towards = str(l.headsign, 60).trim();
+  const isNumber = short && short.length <= 6 && !/^\d{5,}$/.test(short);
+  if (isNumber) return towards ? short + ' towards ' + towards : short;
+  if (agency && towards) return agency + ' towards ' + towards;
+  return agency || towards || null;
+}
+// The shape of a whole journey, decoded from the legs and joined. MOTIS says which precision it
+// used; where it does not, both are tried and the one that lands on the leg is kept, so a wrong
+// guess draws nothing rather than a line across the sea.
+function journeyPath(legs, from, to) {
+  const tries = [];
+  const said = toNum(obj(obj(arr(legs)[0]).legGeometry).precision);
+  if (said != null) tries.push(said);
+  for (const d of [7, 5]) if (!tries.includes(d)) tries.push(d);
+  for (const digits of tries) {
+    const points = [];
+    for (const leg of arr(legs)) {
+      const geo = obj(obj(leg).legGeometry);
+      for (const pt of decodePath(geo.points, digits)) {
+        // Each leg starts where the last one ended, so the joins would be doubled.
+        const last = points[points.length - 1];
+        if (!last || last.lat !== pt.lat || last.lng !== pt.lng) points.push(pt);
+      }
+    }
+    if (points.length > 1 && pathLooksRight(points, from, to)) return encodePath(points, 5);
+  }
+  return null;
+}
+// One journey, turned into what a leg keeps. The first itinerary that uses a ride is the one you
+// would catch leaving then; a walk-only answer is left alone, since the planner has OSRM for that.
+function parseTransit(json, from, to, departsISO) {
+  const best = arr(obj(json).itineraries).find((it) => arr(obj(it).legs).some((l) => isRide(obj(l).mode)));
+  if (!best) return null;
+  const legs = arr(best.legs);
+  const from_ = Date.parse(str(best.startTime)), to_ = Date.parse(str(best.endTime));
+  let minutes = Number.isFinite(from_) && Number.isFinite(to_) ? Math.round((to_ - from_) / 60000) : null;
+  if (minutes == null) {
+    const seconds = legs.reduce((n, l) => n + (toNum(obj(l).duration) || 0), 0);
+    minutes = seconds ? Math.round(seconds / 60) : null;
+  }
+  if (minutes == null) return null;
+  const names = legs.filter((l) => isRide(obj(l).mode)).map(lineName).filter(Boolean);
+  const steps = legs.map((l) => {
+    const mins = Math.max(1, Math.round((toNum(obj(l).duration) || 0) / 60));
+    // START and END are what MOTIS calls the two ends you handed it, which you already know.
+    const name = str(obj(obj(l).to).name, 40);
+    const stop = name === 'START' || name === 'END' ? '' : name;
+    if (!isRide(obj(l).mode)) return 'walk ' + fmtDur(mins) + (stop ? ' to ' + stop : '');
+    return fmtDur(mins) + (stop ? ' to ' + stop : '');
+  });
+  return {
+    minutes: clamp(minutes, 0, 1440),
+    km: null,
+    source: 'transitous',
+    path: journeyPath(legs, from, to),
+    precision: 5,
+    name: names.join(' · ').slice(0, 120) || null,
+    detail: steps.join(' · ').slice(0, 300) || null,
+    departs: str(departsISO, 32) || null,
+  };
 }
 
 // ---------- local time, where the trip is ----------
@@ -1859,7 +1983,8 @@ const Core = {
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,
-  legPath, goodZone, instantOf, openOn, startWindows, estimateLeg, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  legPath, encodePath, goodZone, instantOf, openOn, startWindows, estimateLeg,
+  TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,
