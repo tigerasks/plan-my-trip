@@ -4,7 +4,7 @@ Run: python3 tests/probe_test.py   (or set PROBE_URL to test a copy that is alre
 import json, os
 from playwright.sync_api import sync_playwright
 import harness
-from harness import SHOTS
+from harness import SHOTS, Checks
 
 SHOTS.mkdir(exist_ok=True)
 BASE, stop = ('', None) if os.environ.get('PROBE_URL') else harness.serve()
@@ -17,8 +17,8 @@ TRANSIT = {"itineraries": [{"duration": 1500, "startTime": "2026-09-26T01:03:00Z
             "legs": [{"mode": "WALK"}, {"mode": "BUS", "displayName": "206"}, {"mode": "WALK"}]}], "direct": []}
 OVERPASS = {"elements": [{"type": "node", "id": 3141592, "tags": {"name": "清水寺", "name:en": "Kiyomizu-dera", "opening_hours": "06:00-18:00", "website": "https://example.org/", "wikipedia": "ja:清水寺", "amenity": "place_of_worship"}}]}
 H = {"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"}
-errs, log, seen, gseen = [], [], [], []
-def check(c, m): log.append(('PASS  ' if c else 'FAIL  ') + m)
+seen, gseen = [], []
+ck = Checks('Service probe — docs/probe.html')
 def services(r):
     """The outside services the probe talks to. Returns True once it has answered."""
     u = r.request.url
@@ -41,36 +41,34 @@ with sync_playwright() as pw:
     br = pw.chromium.launch()
     ctx = br.new_context(viewport={'width': 1280, 'height': 800})
     ctx.route('**/*', harness.offline(BASE, services))
-    pg = ctx.new_page()
-    pg.on('pageerror', lambda e: errs.append('pageerror: ' + str(e)))
-    pg.on('console', lambda m: errs.append('console.' + m.type + ': ' + m.text) if m.type == 'error' else None)
+    pg = ck.watch(ctx.new_page())
     pg.goto(URL); pg.wait_for_timeout(400)
-    check('Liberty loaded' in pg.inner_text('#r-map'), 'map starts on Liberty: ' + pg.inner_text('#r-map'))
+    ck('Liberty loaded' in pg.inner_text('#r-map'), 'map starts on Liberty: ' + pg.inner_text('#r-map'))
     pg.click('#go'); pg.wait_for_timeout(1300)
-    check('Found Kyoto' in pg.inner_text('#r-area'), 'area: ' + pg.inner_text('#r-area'))
-    check(pg.is_disabled('#details'), 'details disabled before a tap')
+    ck('Found Kyoto' in pg.inner_text('#r-area'), 'area: ' + pg.inner_text('#r-area'))
+    ck(pg.is_disabled('#details'), 'details disabled before a tap')
     pg.evaluate("window.__lastMap.__fire('click', {point: {x: 10, y: 10}, lngLat: {lng: 135.785, lat: 34.9949}})"); pg.wait_for_timeout(100)
-    check('Kiyomizu-dera' in pg.inner_text('#r-tap'), 'tap: ' + pg.inner_text('#r-tap').replace('\n', ' | '))
+    ck('Kiyomizu-dera' in pg.inner_text('#r-tap'), 'tap: ' + pg.inner_text('#r-tap').replace('\n', ' | '))
     pg.click('#details'); pg.wait_for_timeout(1400)
     t = pg.inner_text('#r-details')
-    check('Found node/3141592' in t and 'matched by id' in t and 'opening_hours: 06:00-18:00' in t, 'details: ' + t.replace('\n', ' | '))
-    check(len(seen) == 1 and ('node(3141592)' in seen[0] or 'node%283141592%29' in seen[0]), 'one Overpass lookup, by decoded id')
+    ck('Found node/3141592' in t and 'matched by id' in t and 'opening_hours: 06:00-18:00' in t, 'details: ' + t.replace('\n', ' | '))
+    ck(len(seen) == 1 and ('node(3141592)' in seen[0] or 'node%283141592%29' in seen[0]), 'one Overpass lookup, by decoded id')
     with pg.expect_popup() as pop:
         pg.click('#gmaps')
     pop.value.wait_for_timeout(300)
-    check(any('google.com/maps/search/?api=1&query=' in u for u in gseen), 'Google Maps opens in a separate window: ' + (gseen[-1][:100] if gseen else 'no request'))
-    check('opened' in pg.inner_text('#r-gmaps'), 'gmaps note: ' + pg.inner_text('#r-gmaps'))
+    ck(any('google.com/maps/search/?api=1&query=' in u for u in gseen), 'Google Maps opens in a separate window: ' + (gseen[-1][:100] if gseen else 'no request'))
+    ck('opened' in pg.inner_text('#r-gmaps'), 'gmaps note: ' + pg.inner_text('#r-gmaps'))
     pg.click('#search'); pg.wait_for_timeout(1300)
-    check('2 results' in pg.inner_text('#r-search'), 'search: ' + pg.inner_text('#r-search').split('\n')[0])
+    ck('2 results' in pg.inner_text('#r-search'), 'search: ' + pg.inner_text('#r-search').split('\n')[0])
     pg.click('#route'); pg.wait_for_timeout(4200)
     t = pg.inner_text('#r-route')
-    check('Walking: 22 min' in t and 'Public transport: 21 min' in t, 'routes: ' + t.replace('\n', ' | '))
+    ck('Walking: 22 min' in t and 'Public transport: 21 min' in t, 'routes: ' + t.replace('\n', ' | '))
     pg.click('[data-style=positron]'); pg.wait_for_timeout(200)
-    check('Positron loaded' in pg.inner_text('#r-map'), 'style switch works')
+    ck('Positron loaded' in pg.inner_text('#r-map'), 'style switch works')
     out = pg.input_value('#out'); res = json.loads(out.split('\n', 1)[1].rsplit('\n', 1)[0])
-    check(res['probe'].endswith('2') and res['details']['method'] == 'id' and res['details']['useful']['opening_hours'] == '06:00-18:00' and res['gmaps']['opened'],
+    ck(res['probe'].endswith('2') and res['details']['method'] == 'id' and res['details']['useful']['opening_hours'] == '06:00-18:00' and res['gmaps']['opened'],
           'results block: details + gmaps recorded; query = ' + res['gmaps']['query'])
     pg.screenshot(path=str(SHOTS / 'probe_desktop.png'), full_page=False)
     br.close()
 if stop: stop()
-print('\n'.join(log)); print('ERRORS (%d):' % len(errs)); print('\n'.join(errs[:10]))
+ck.finish()
