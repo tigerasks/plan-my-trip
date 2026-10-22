@@ -105,13 +105,39 @@ def is_stop(tags):
             or tags.get('public_transport') == 'station')
 
 
+class Spill:
+    """Collects stops by tile and writes them out in batches.
+
+    Holding one open file per tile is the obvious way to do this and it falls over: the world is a
+    few thousand tiles, and a process may have only a few hundred files open. Holding every stop in
+    memory instead would want gigabytes. So rows pile up in memory and go out together, which bounds
+    both, and touches each file a few dozen times over a whole run rather than once per stop.
+    """
+    def __init__(self, folder, rows=200000):
+        self.folder, self.limit = folder, rows
+        self.rows, self.held = collections.defaultdict(list), 0
+
+    def write(self, tile, row):
+        self.rows[tile].append(row)
+        self.held += 1
+        if self.held >= self.limit:
+            self.flush()
+
+    def flush(self):
+        for tile, rows in self.rows.items():
+            with open(self.folder / (tile + '.ndjson'), 'a', encoding='utf-8') as fh:
+                fh.write(''.join(rows))
+        self.rows.clear()
+        self.held = 0
+
+
 def harvest(pbf, degrees, spill):
     """Read one extract and write each stop to the file for the tile it falls in.
 
-    Going out to disk a stop at a time looks wasteful, but it is what keeps this bounded: the whole
-    world is nearly nine million stops, and holding them all in memory to sort at the end would want
-    several gigabytes. A tile can also straddle two continents, so spilling and compacting later is
-    how the two halves meet.
+    Going out to disk rather than keeping everything is what makes this bounded: the whole world is
+    nearly nine million stops, and holding them all to sort at the end would want several gigabytes.
+    A tile can also straddle two continents, so spilling and compacting later is how the two halves
+    meet.
     """
     import osmium
 
@@ -131,7 +157,7 @@ def harvest(pbf, degrees, spill):
                 member_lines[(m.type, m.ref)].add(rel.id)
     say('   %d lines, %d objects on one' % (len(lines), len(member_lines)))
 
-    handles, counted = {}, 0
+    tiles, counted = set(), 0
     for obj in osmium.FileProcessor(pbf, osmium.osm.NODE | osmium.osm.WAY).with_locations():
         tags = dict(obj.tags)
         if not tags or not is_stop(tags):
@@ -155,16 +181,13 @@ def harvest(pbf, degrees, spill):
         # would look for in the wrong file.
         lat, lng = round(lat, 5), round(lng, 5)
         tile = '%d_%d' % (math.floor(lat / degrees), math.floor(lng / degrees))
-        fh = handles.get(tile)
-        if fh is None:
-            fh = handles[tile] = open(spill / (tile + '.ndjson'), 'a', encoding='utf-8')
+        tiles.add(tile)
         # The id goes along so the same stop met twice in overlapping extracts is only kept once.
-        fh.write(json.dumps([key[0] + str(key[1]), name, lat, lng,
-                             kind_of(tags), on], ensure_ascii=False) + '\n')
+        spill.write(tile, json.dumps([key[0] + str(key[1]), name, lat, lng,
+                                      kind_of(tags), on], ensure_ascii=False) + '\n')
         counted += 1
-    for fh in handles.values():
-        fh.close()
-    say('   %d stops in %d tiles' % (counted, len(handles)))
+    spill.flush()
+    say('   %d stops in %d tiles' % (counted, len(tiles)))
     return counted
 
 
@@ -340,7 +363,7 @@ def main():
         say('[%d/%d] %s' % (i, len(paths), path))
         pbf = download(path, work)
         small = filtered(pbf, work)
-        total += harvest(str(small), args.degrees, spill)
+        total += harvest(str(small), args.degrees, Spill(spill))
         if not args.keep_downloads:
             pbf.unlink(missing_ok=True)       # a continent is tens of gigabytes; the filtered copy is not
         say('   %.0f min so far' % ((time.time() - started) / 60))
