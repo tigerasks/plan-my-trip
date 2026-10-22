@@ -1241,11 +1241,16 @@ function whyNoJourney(from, to, departs) {
 // Where there are no timetables, the map still knows where the stops are. Overpass took tens of
 // seconds in the fourth service test, so none of this is waited on: the leg keeps its estimate and
 // the stops fill in behind it, or never (design doc, "Travel times").
+// Overpass is slow and often busy: by Kyoto Station the fifth service test waited 33 to 40 seconds
+// for every answer and was refused outright three times in a row, so the planner waits and asks
+// again rather than quietly deciding there are no stops.
 const OVERPASS_WAIT = 90000;
+const OVERPASS_TRIES = 4;
+const overpass = (url) => Live.fetchPatiently(url, { timeout: OVERPASS_WAIT, tries: OVERPASS_TRIES });
 function stopsNear(point) {
   const ask = (metres) => {
     const url = C.stopsNearUrl(point, metres);
-    return url ? Live.fetchJson(url, { timeout: OVERPASS_WAIT }).then((j) => C.parseNear(j), () => null)
+    return url ? overpass(url).then((j) => C.parseNear(j), () => null)
       : Promise.resolve(null);
   };
   return ask(C.STOP_REACH).then((near) => {
@@ -1432,7 +1437,7 @@ function openPreview(place, lookAt) {
   openSheet('preview', { place: place, details: null, detailsBusy: !!C.overpassUrl(place.osm), detailsError: '' });
   const url = C.overpassUrl(place.osm);
   if (!url) return;
-  Live.fetchJson(url).then(
+  overpass(url).then(
     (json) => {
       if (mine !== previewSeq || !App.ui.sheet) return;
       const got = C.parseOverpass(json);
