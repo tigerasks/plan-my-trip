@@ -905,7 +905,7 @@ function parseOsrm(json, mode, from, to) {
 // Routes come back as Google-encoded polylines: a few hundred bytes where a list of coordinates
 // would be a few thousand, which matters when every leg of every day is saved and exported.
 //
-// The accumulation is arithmetic rather than bitwise on purpose. MOTIS warns that at precision 7 a
+// The accumulation is arithmetic rather than bitwise on purpose. At precision 7 a
 // longitude beyond 107.37 overflows, and Japan is at 135 — a bitwise decoder would silently produce
 // nonsense there. This one does not, though it cannot repair a shape that was already encoded wrong,
 // which is what `pathLooksRight` is for.
@@ -958,7 +958,8 @@ function encodePath(points, precision) {
   }
   return out;
 }
-// The points of a leg's path, decoded the way that leg was encoded. OSRM uses 5 digits, MOTIS 7.
+// The points of a leg's path, decoded the way that leg was encoded. Everything the planner stores is
+// re-encoded at 5 digits, whatever the service sent.
 const legPath = (leg) => (obj(leg).path ? decodePath(obj(leg).path, obj(leg).precision) : []);
 // A shape that does not begin and end near the leg it belongs to is wrong, whatever went wrong.
 // Better no line on the map than a line across the sea.
@@ -1164,9 +1165,10 @@ function lineName(leg) {
   if (agency && towards) return agency + ' towards ' + towards;
   return agency || towards || null;
 }
-// The shape of a whole journey, decoded from the legs and joined. MOTIS says which precision it
-// used; where it does not, both are tried and the one that lands on the leg is kept, so a wrong
-// guess draws nothing rather than a line across the sea.
+// The shape of a whole journey, decoded from the legs and joined. MOTIS states the precision on the
+// leg itself — 6, in the fifth service test — and that is what gets used. The guesses behind it are
+// for a deployment that leaves the field out, and a shape that misses the leg draws nothing rather
+// than a line across the sea.
 function journeyPath(legs, from, to) {
   const tries = [];
   const said = toNum(obj(obj(arr(legs)[0]).legGeometry).precision);

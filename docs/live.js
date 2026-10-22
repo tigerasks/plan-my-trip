@@ -7,7 +7,9 @@
 'use strict';
 
 const GAP = 1100;              // a little over the one request a second they ask for
-const TIMEOUT = 20000;         // Overpass can take a couple of seconds, and sometimes much longer
+const TIMEOUT = 20000;         // enough for Photon, OSRM and Transitous, which all answer in under a second
+const BUSY = [429, 502, 503, 504];   // the service is up but will not take this request now
+const BACKOFF = 2000;          // doubling from here, which is what Overpass asks for
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const Live = {
@@ -32,7 +34,12 @@ const Live = {
       const timer = setTimeout(() => stop.abort(), (opts && opts.timeout) || TIMEOUT);
       try {
         const res = await fetch(key, { signal: stop.signal });
-        if (!res.ok) throw new Error('the service answered ' + res.status);
+        if (!res.ok) {
+          // The status is kept on the error so a caller can tell "come back later" from "no".
+          const err = new Error('the service answered ' + res.status);
+          err.status = res.status;
+          throw err;
+        }
         const json = await res.json();
         this.cache.set(key, json);
         return json;
@@ -44,6 +51,21 @@ const Live = {
     // A failed call must not poison the queue for the next one.
     this.queue = run.then(() => undefined, () => undefined);
     return run;
+  },
+
+  // Overpass asks to be retried with exponential backoff when it is at capacity, and by a busy
+  // station it often is: three refusals in a row and then an answer, in the fifth service test.
+  // A failure is never cached, so asking again is a fresh call that waits its turn like any other,
+  // and the backoff happens outside the queue so nothing else is held up behind it.
+  busy(err) { return BUSY.includes((err && err.status) || 0); },
+
+  fetchPatiently(url, opts) {
+    const tries = Math.max(1, Math.round((opts && opts.tries) || 1));
+    const again = (left, wait) => this.fetchJson(url, opts).catch((err) => {
+      if (left <= 1 || !this.busy(err)) throw err;
+      return sleep(wait).then(() => again(left - 1, wait * 2));
+    });
+    return again(tries, (opts && opts.backoff) || BACKOFF);
   },
 
   // Plain words for a failure, since the planner carries on either way.

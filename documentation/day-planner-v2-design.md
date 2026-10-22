@@ -142,6 +142,40 @@ The price is the live link: data moves between planner and chat as a pasted text
   exactly 60, so its stop and route counts are truncated; the "0 relations" at Kyoto Station is that
   limit, not the map. Raised to 400 afterwards.
 
+**Fifth run, Thu 22 Oct 2026** (the queries milestone 4 actually sends, asked directly against the
+live services from the repository, one at a time 1.2 s apart):
+- **The stop query works, and every stop has a position.** The planner's own
+  `nwr(around:800,…)[highway=bus_stop]` and friends with `out tags center 400;` — the part earlier
+  runs never proved — came back with 115 stops and 189 route relations by Kyoto Station, and 15 stops
+  and 21 relations by the demo trip's temple. *All* of them carried a position, by `lat`/`lon` on a
+  node or `center` on a way, so the fallback can measure a walk to every stop it is told about. The
+  400 limit was not reached at either end (304 elements at the busiest).
+- **Overpass is slower and ruder than the fourth run suggested.** Every answer took 33 to 40 seconds,
+  including a one-element place lookup, over eight samples with no fast case at all. Worse, it refuses
+  outright with a 502 and "all query workers are busy": three refusals in a row before the stop query
+  got through, and one in six for the light query. It asks to be retried with exponential backoff.
+  This broke two things, both now fixed: the planner gave up on the first refusal and reported "no
+  stops" where there were a hundred, and its 20-second default timeout was shorter than Overpass's
+  normal reply, so place details in the preview would have failed nearly every time.
+- **MOTIS states the precision, and it is 6.** `legGeometry` carries a `precision` field alongside
+  `points` and `length`, set to 6 on every leg. The planner already reads it, so the 7-then-5 guess
+  behind it never runs; decoded at 6 the shape starts 11 m from the leg. Running `core.js` over the
+  live payload gave a 54-minute journey named "JR towards 奈良" with a 1074-point path that passes
+  `pathLooksRight`. This closes the last unverified thing in milestone 4.
+- **The timetables reach about two months.** Kyoto to Nara answered with five journeys 30 and 60 days
+  out, and with nothing at all 75, 90, 105 and 120 days out. So `TIMETABLE_REACH = 30` is a safe
+  floor rather than a measurement: past it the planner spends one extra request checking the same
+  weekday, and that retry is what actually evidences "the timetable does not reach that date".
+- **Stops confirm the fallback is needed, not hypothetical.** Transitous knows three stops by the
+  demo hotel (京都, 京都駅八条口, 京都駅) and *none* by the temple 3 km away, where OpenStreetMap has
+  15 stops and 21 lines. That is decision 13's case, in the demo trip itself.
+- **The stop endpoint is v1 only.** `v1/reverse-geocode` answers; `v6/reverse-geocode` is a 404. The
+  planner defaults to v1, which is right.
+- **The fast services are still fast.** Photon 11 results in 0.2 s; OSRM walking 44 min over 3.32 km
+  with a 232-point shape in 0.2 s, driving 9 min over 3.90 km in under 0.1 s. A car route starts at
+  the nearest drivable road, which was 124 m from a point beside the station — well inside
+  `PATH_SLACK`, but a reminder that the ends of a route move.
+
 **Still to verify during the build:**
 - answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
   relation carrying a line number. Rail relations around a station are named rather than numbered;
@@ -149,7 +183,12 @@ The price is the live link: data moves between planner and chat as a pasted text
   "no timetables here" from "no connection now";
 - answered (fourth run): a leg is named from `agencyName` and `headsign`; `routeShortName` and
   `displayName` are a numeric id and `routeLongName` is empty, at least for this operator;
+- answered (fifth run): the stop query the fallback sends, and that every stop it returns carries a
+  position;
+- answered (fifth run): MOTIS states `legGeometry.precision`, and it is 6;
 - whether the same holds in another country: all of the above is one city on one day;
+- how often Overpass is this slow. Eight samples on one afternoon is not a pattern, and if 35 seconds
+  is normal rather than a bad day, a second provider or the offline snapshot becomes the question;
 - how big a trip region's feeds are once reduced to stops, lines and frequencies, and what their
   licences allow being republished, if the offline fallback is ever needed;
 - the local-file fallback, optional now that GitHub Pages works;
@@ -186,8 +225,10 @@ knows at each end, so it can say which case it is: no data for that kind of serv
 `routeShortName` and `displayName` carry a numeric id and `routeLongName` can be empty. Where a
 short name is a real line number it is used instead.
 
-**Drawing a leg.** Every leg carries `legGeometry`, an encoded polyline, so a checked leg is drawn
-along its real path whatever the mode. Only estimates stay as dashed straight lines.
+**Drawing a leg.** Every leg carries `legGeometry`, an encoded polyline with the precision it was
+encoded at stated alongside it (6, in the fifth run). A checked leg is drawn along its real path
+whatever the mode; only estimates stay as dashed straight lines. A shape that does not land on the
+leg is dropped and the time kept, so a misread draws nothing rather than a line across the sea.
 
 Without timetables, it falls back to a stop-based estimate. This is the manual method automated:
 - it considers every station and stop within 10 minutes' walk of each end, from the map data, not just the nearest one. Where an end has none, it widens the search to 20 minutes' walk. If there are still none, it gives up on public transport for that leg and says so;
@@ -479,6 +520,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 17 | How does a leg hold what the services say? | Every way of making it side by side — walking, public transport, taxi — each with its own time, source and shape. Checking one never loses another. The planner picks which the day uses: your own time, then whichever you picked, then the quickest that makes sense. A taxi is never assumed. |
 | 18 | How does the planner know what instant to ask a timetable about? | The trip says which time zone its times are in (`tz`, a name like `Asia/Tokyo`), and the browser's own time zone database does the rest, summer time included. Left empty, it uses the device's own zone. Every time shown stays local to where you are going. |
 | 19 | Whose times calibrate the estimates? | Only times that measured something: OSRM, Transitous, and your own. A stop-based time is the planner's own arithmetic, so calibrating against it would be circular. |
+| 20 | What happens when Overpass refuses? | It is asked again, up to four times, waiting 2 s then 4 s then 8 s, and given 90 s to answer rather than the 20 s the fast services get. It refuses with a 502 whenever its workers are busy, which by a big station is most of the time, and it asks to be retried. Giving up on the first refusal reported "no stops" where the map had a hundred. A refusal is not a failure, and only a real failure falls back to an estimate. |
 
 ## Open questions
 

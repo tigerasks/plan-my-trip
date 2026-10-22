@@ -61,6 +61,10 @@ with sync_playwright() as pw:
     # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
     # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
     TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none', 'map': False}
+    # How many times Overpass refuses outright before it answers, counted per kind of query. By a
+    # busy station the fifth service test was refused three times in a row, so this is the normal
+    # case, not a rare one.
+    BUSY = {'around': 0, 'details': 0}
 
     def services(r):
         u = r.request.url
@@ -96,6 +100,12 @@ with sync_playwright() as pw:
         if 'overpass-api.de' in u:
             asked.append(u)
             q = urllib.parse.unquote(u)
+            kind = 'around' if 'around:' in q else 'details'
+            if BUSY[kind] > 0:
+                BUSY[kind] -= 1
+                r.fulfill(status=502, body='# 502 Gateway Timeout\n\nAll query workers are busy.',
+                          headers={'Access-Control-Allow-Origin': '*'})
+                return True
             if 'around:' in q:                      # the stop-based fallback asking what is nearby
                 if not TRANSIT['map']:
                     r.fulfill(status=200, headers=H, body=json.dumps({'elements': []}))
@@ -486,9 +496,44 @@ with sync_playwright() as pw:
        'with nothing on the map either, it gives up on public transport for that leg: ' + leg['detail'])
     ctx.close()
 
+    # ---- when Overpass is too busy to answer
+    # It says so with a 502 and asks to be retried, and by a big station that is what usually
+    # happens. Giving up on the first refusal would report "no stops" where there are plenty.
+    TRANSIT['map'] = True
+    BUSY['around'] = 3
+    asked.clear()
+    ck.expect('502')            # the test refuses on purpose; the browser logs the failed request
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=60000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] and leg['minutes'] < 60,
+       'three refusals in a row and the stops still come through: %s min' % leg['minutes'])
+    ck('205' in (leg['name'] or ''), 'with the line named, so the retry got the whole answer')
+    maps = [u for u in asked if 'around:' in urllib.parse.unquote(u)]
+    ck(len(maps) >= 5, 'which took asking again: %d queries for the two ends' % len(maps))
+    ck(BUSY['around'] == 0, 'and every refusal was used up rather than being retried for ever')
+    ctx.close()
+
+    # a place preview survives it too, since a user is sitting there waiting for this one
+    BUSY['details'] = 2
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][4]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.75938, lat: 34.97887}})")
+    pg.wait_for_timeout(200)
+    ck('Pizza Little Party' in pg.inner_text('.sh-title'),
+       'the preview opens on what the map knew while Overpass is refusing')
+    ck('Looking…' in pg.inner_text('#sheet'), 'and says it is still asking rather than that it failed')
+    pg.wait_for_function("() => !/Looking…/.test(document.getElementById('sheet').innerText)", timeout=60000)
+    ck('could not be reached' not in pg.inner_text('#sheet'),
+       'then the retry lands and the details arrive, instead of an apology')
+    ctx.close()
+
     TRANSIT['ride'] = True
     TRANSIT['stops'] = True
     TRANSIT['map'] = False
+    BUSY['around'] = 0
+    BUSY['details'] = 0
 
     # ---- a trip further out than the timetables reach
     # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and

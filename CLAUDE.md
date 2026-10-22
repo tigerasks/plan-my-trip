@@ -15,10 +15,12 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   (search, tapping the map, dropped pins, the preview with OpenStreetMap details, the hours editor,
   durations, moves, dragging and Delete with undo), and plans (the timeline with times, waits and
   conflicts, copying between versions, Optimise order).
-- Milestone 4 is built but **not yet pushed, nor run against the live services**: real routes from
-  OSRM, journeys from Transitous, the stop-based fallback over OpenStreetMap, the leg card, and the
-  planner checking a day's legs by itself. The chat round trip (milestone 5) is still to come. The
-  service test pages, `docs/probe.html` and `docs/probe-transit.html`, stay alongside the app.
+- Milestone 4 is built, published, and checked against the live services on Thu 22 Oct 2026: real
+  routes from OSRM, journeys from Transitous, the stop-based fallback over OpenStreetMap, the leg
+  card, and the planner checking a day's legs by itself. That run found two real faults, both fixed:
+  the planner gave up on Overpass's first refusal, and its 20-second timeout was shorter than
+  Overpass's normal reply. The chat round trip (milestone 5) is still to come. The service test
+  pages, `docs/probe.html` and `docs/probe-transit.html`, stay alongside the app.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -169,13 +171,18 @@ These are proposed; confirm each with the owner before starting it.
   - confirmed: tapped feature ids are OpenStreetMap ids times 10 plus the element type (1 node, 2 way, 3 relation). Nodes and ways are both verified live; relations never came up in three runs, and places are rarely relations;
   - answered: OpenStreetMap has Kyoto's bus lines with their numbers, Transitous has no stops at all for them, and a leg is named from `agencyName` plus `headsign` (design doc, fourth run);
   - whether any of that holds in another country: it is one city on one day;
-  - **the next thing to probe:** the Overpass query the stop-based fallback sends. It uses
-    `nwr(around:…)` and `out tags center`, where earlier runs only proved `node(around:…)` with
-    `out tags`. `docs/probe-transit.html` now sends the planner's own query and reports how many
-    stops came back with a position, which is the number the fallback can actually use;
-  - also unverified live: which precision MOTIS encodes `legGeometry` at. The planner tries 7 then 5
-    and keeps whichever lands on the leg, so a wrong guess draws nothing rather than a line across
-    the sea.
+  - answered (fifth run): the stop-based fallback's Overpass query works as written, and every stop
+    it returns carries a position — 115 stops and 189 lines by Kyoto Station, 15 and 21 by the demo
+    trip's temple, none without one;
+  - answered (fifth run): MOTIS states `legGeometry.precision` on each leg and it is 6. The planner
+    already reads it, so the 7-then-5 guess behind it never runs;
+  - answered (fifth run): the timetables reach about two months — five journeys 30 and 60 days out,
+    nothing from 75 days on. `TIMETABLE_REACH = 30` is a floor, and the same-weekday retry is what
+    evidences the claim;
+  - **the open question:** how often Overpass is as slow as it was on 22 Oct. Every answer took 33 to
+    40 seconds, a one-element lookup included, and it refused with a 502 three times running. The
+    planner now waits 90 s and retries with backoff, which is enough — but if that is normal rather
+    than a bad afternoon, a second provider or the offline snapshot becomes the real question.
 - **Before going live:** the Transitous heads-up, contact details on the site, and licence headers.
   The credits are on the page as of milestone 4: OpenFreeMap, OpenMapTiles, OpenStreetMap
   contributors with a "fix the map" link, Photon, Overpass, OSRM at FOSSGIS, and Transitous with its
