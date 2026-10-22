@@ -1226,6 +1226,63 @@ function parseTransit(json, from, to, departsISO) {
 // Where there are no timetables, the map still knows where the stops are. This is the method anyone
 // would use by hand, automated: look at every stop within a walk of each end, take the quickest
 // pairing, and be honest that the ride itself is a guess (design doc, "Travel times").
+// ---------- the stop snapshot ----------
+// Stops come from a snapshot we publish rather than a live query. Overpass refused five requests in
+// six, took 33 to 40 seconds when it answered, and allows about a hundred queries a day counted
+// across everybody using the planner (design doc, decisions 22 to 24).
+//
+// The snapshot is a grid of whole-degree tiles, which means the file a point needs is arithmetic on
+// its coordinates. Nothing has to be asked to find out, and no boundaries ship with the planner.
+const STOPS_HOME = 'https://tigerasks.github.io/plan-my-trip-data-stops/';
+const TILE_DEGREES = 1;
+const TILE_FORMAT = 1;         // what this planner can read; a newer snapshot says so and is refused
+const KM_PER_DEGREE = 111.195;
+const tileName = (lat, lng) => {
+  const y = toNum(lat), x = toNum(lng);
+  if (y == null || x == null) return null;
+  return Math.floor(y / TILE_DEGREES) + '_' + Math.floor(x / TILE_DEGREES);
+};
+const tileUrl = (name) => (str(name, 20) ? STOPS_HOME + 'tiles/' + str(name, 20) + '.json' : null);
+const manifestUrl = () => STOPS_HOME + 'manifest.json';
+
+// Which tiles a search around a point can reach into. Nearly always the one it sits in; a point
+// close to an edge reaches into a neighbour as well, which at this radius is about one in sixteen.
+// The box is far smaller than a tile, so testing its corners catches every tile it touches.
+function tilesNear(point, metres) {
+  if (!hasPos(point)) return [];
+  const km = Math.max(0, toNum(metres) || 0) / 1000;
+  const dLat = km / KM_PER_DEGREE;
+  // Degrees of longitude shrink towards the poles, and at the pole itself they vanish. Keeping the
+  // span under half a tile stops a point in the far north asking for the whole parallel.
+  const narrow = Math.max(0.02, Math.cos(clamp(point.lat, -89, 89) * Math.PI / 180));
+  const dLng = Math.min(TILE_DEGREES / 2, km / (KM_PER_DEGREE * narrow));
+  const names = [];
+  for (const lat of [point.lat - dLat, point.lat, point.lat + dLat]) {
+    for (const lng of [point.lng - dLng, point.lng, point.lng + dLng]) {
+      if (lat < -90 || lat > 90) continue;
+      const name = tileName(lat, lng);
+      if (name && !names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
+
+// What the snapshot says about itself: which tiles exist, so the planner never asks for one that
+// does not, and when it was built, because a line that opened since is invisible until it is run again.
+function parseManifest(json) {
+  const m = obj(json);
+  if (toNum(m.v) !== TILE_FORMAT) return null;
+  const tiles = arr(m.tiles).map((t) => str(t, 20)).filter(Boolean);
+  if (!tiles.length) return null;
+  return {
+    built: str(m.built, 10) || null,
+    stops: toNum(m.stops),
+    degrees: toNum(m.degrees) || TILE_DEGREES,
+    regions: arr(m.regions).map((r) => str(r, 40)).filter(Boolean),
+    tiles,
+  };
+}
+
 const STOP_REACH = 800;        // metres, about ten minutes on foot
 const STOP_REACH_WIDE = 1600;  // and twenty, where an end has nothing closer
 const STOPS_EACH_END = 12;     // the nearest few: a busy corner has dozens, and the rest never win
@@ -2126,6 +2183,7 @@ const Core = {
   TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
   TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon,
   STOP_REACH, STOP_REACH_WIDE, stopsNearUrl, parseNear, commonLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,

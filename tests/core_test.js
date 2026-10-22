@@ -627,6 +627,36 @@ ok(C.sameWeekdaySoon('2026-10-28', '2026-10-21') === '2026-10-28', 'a week out s
 ok(C.sameWeekdaySoon('2026-10-21', '2026-10-21') === null, 'today is no stand-in: its services may have run');
 ok(C.daysApart('2026-10-21', '2026-11-21') === 31 && C.daysApart('x', 'y') === null, 'and days count plainly');
 
+console.log('\n== Finding the right tile of the stop snapshot ==');
+ok(C.tileName(34.9858, 135.7588) === '34_135', 'a point names the tile it falls in by arithmetic alone');
+ok(C.tileName(-0.5, -0.5) === '-1_-1', 'and south or west of nothing still floors downwards');
+ok(C.tileName(null, 1) === null, 'a point with no position names no tile');
+ok(C.tileUrl('34_135').endsWith('/tiles/34_135.json'), 'which gives the file to fetch: ' + C.tileUrl('34_135'));
+ok(C.tilesNear({ lat: 34.5, lng: 135.5 }, 1600).join() === '34_135',
+   'a point in the middle of a tile needs only that one');
+{
+  // The demo trip's own stay sits 1.58 km short of the 35th parallel, so it genuinely reaches over.
+  const two = C.tilesNear({ lat: 34.9858, lng: 135.7588 }, 1600);
+  ok(two.length === 2 && two.includes('34_135') && two.includes('35_135'),
+     'a point within the reach of an edge needs the neighbour too: ' + two.join(' '));
+  const corner = C.tilesNear({ lat: 34.9999, lng: 135.0001 }, 1600);
+  ok(corner.length === 4, 'and one near a corner needs all four: ' + corner.join(' '));
+  ok(C.tilesNear({ lat: 89.99, lng: 10 }, 1600).length <= 2,
+     'while a point by the pole does not ask for the whole parallel, where the degrees crowd together');
+  ok(C.tilesNear({ lat: 34.5, lng: 135.5 }, 0).join() === '34_135', 'no reach at all is still the tile it is in');
+  ok(C.tilesNear({}, 1600).length === 0, 'and a point with no position needs nothing');
+}
+ok(C.parseManifest({ v: 2, tiles: ['1_1'] }) === null,
+   'a snapshot written to a newer format is refused rather than half read');
+ok(C.parseManifest({ v: 1, tiles: [] }) === null, 'and one with no tiles in it is nothing to go on');
+{
+  const man = C.parseManifest({ v: 1, built: '2026-10-22', stops: 106245, degrees: 1,
+                                regions: ['kansai', 'kanto'], tiles: ['34_135', '35_139'] });
+  ok(man.tiles.length === 2 && man.built === '2026-10-22',
+     'a good one says which tiles there are, and when it was built: ' + man.built);
+  ok(man.stops === 106245, 'and how many stops it holds, which is worth showing');
+}
+
 console.log('\n== Working a leg out from the stops ==');
 const sFrom = { lat: 34.9858, lng: 135.7588 }, sTo = { lat: 34.9948, lng: 135.7858 };
 const sNear = C.parseNear({ elements: [
