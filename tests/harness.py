@@ -61,8 +61,8 @@ def offline(base, extra=None):
             # day with a leg. Serve the small real one in tests/stops, so every page has an answer.
             return serve_snapshot(r, u)
         if 'overpass-api.de' in u:
-            # Place details only, now that the stops come from the snapshot. One lookup per place
-            # previewed, and an empty answer means the map has nothing filed under it.
+            # Place details, and nothing else: the stops come from the snapshot above. One lookup
+            # per place previewed, and an empty answer means the map has nothing filed under it.
             return r.fulfill(status=200, body=NO_ELEMENTS, headers=JSON_H)
         if 'api.transitous.org' in u:
             # As with OSRM: the planner asks about the legs of a day by itself, so an unanswered

@@ -702,24 +702,6 @@ const STOP_MAN = C.parseManifest(require('./stops/manifest.json'));
 
 console.log('\n== Working a leg out from the stops ==');
 const sFrom = { lat: 34.9858, lng: 135.7588 }, sTo = { lat: 34.9948, lng: 135.7858 };
-const sNear = C.parseNear({ elements: [
-  { type: 'node', id: 1, lat: 34.9862, lon: 135.7596, tags: { highway: 'bus_stop', name: 'Hotel-mae' } },
-  { type: 'node', id: 2, lat: 34.9840, lon: 135.7570, tags: { railway: 'station', 'name:en': 'Pretend Station', name: '架空駅' } },
-  { type: 'way', id: 3, center: { lat: 34.9850, lon: 135.7580 }, tags: { public_transport: 'station', name: 'A platform' } },
-  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
-  { type: 'node', id: 4, tags: { highway: 'bus_stop', name: 'Nowhere' } },
-] });
-ok(sNear.stops.length === 3, 'stops come back from the map, whether nodes or ways: ' + sNear.stops.length);
-ok(sNear.stops[1].name === 'Pretend Station', 'named in English where the map has it');
-ok(sNear.stops.map((x) => x.kind).join() === 'bus,rail,stop', 'and sorted into what kind of stop they are');
-ok(sNear.stops[2].lat === 34.9850, 'a stop mapped as a way is taken at its centre');
-ok(sNear.lines.length === 1 && sNear.lines[0].ref === '205', 'the lines that run by are kept apart from the stops');
-ok(!sNear.capped, 'and an answer well under the limit is not a truncated one');
-
-const sFar = C.parseNear({ elements: [
-  { type: 'node', id: 5, lat: 34.9944, lon: 135.7850, tags: { highway: 'bus_stop', name: 'Temple-mae' } },
-  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
-] });
 // What the snapshot hands over: a stop knows which lines call at it, which is the whole point.
 const stop = (id, name, lat, lng, kind, lines) => ({ id, name, lat, lng, kind, lines });
 // Two stops by the hotel. One is nearer; only the other is on a line that also serves the temple.

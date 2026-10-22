@@ -1225,7 +1225,8 @@ function parseTransit(json, from, to, departsISO) {
 // ---------- the stop-based fallback ----------
 // Where there are no timetables, the map still knows where the stops are. This is the method anyone
 // would use by hand, automated: look at every stop within a walk of each end, take the quickest
-// pairing, and be honest that the ride itself is a guess (design doc, "Travel times").
+// pairing on a line that serves both, and be honest that the ride itself is a guess. The stops come
+// from the snapshot above, so none of this waits on anybody's service (design doc, decisions 22-25).
 // ---------- the stop snapshot ----------
 // Stops come from a snapshot we publish rather than a live query. Overpass refused five requests in
 // six, took 33 to 40 seconds when it answered, and allows about a hundred queries a day counted
@@ -1352,45 +1353,6 @@ function stopsWithin(tile, point, metres) {
 const STOP_REACH = 800;        // metres, about ten minutes on foot
 const STOP_REACH_WIDE = 1600;  // and twenty, where an end has nothing closer
 const STOPS_EACH_END = 12;     // the nearest few: a busy corner has dozens, and the rest never win
-function stopsNearUrl(point, metres) {
-  if (!hasPos(point)) return null;
-  const at = ',' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')';
-  const r = clamp(Math.round(toNum(metres) || STOP_REACH), 100, 5000);
-  const q = '[out:json][timeout:50];('
-    + 'nwr(around:' + r + at + '[highway=bus_stop];'
-    + 'nwr(around:' + r + at + '[railway~"^(station|halt|tram_stop)$"];'
-    + 'nwr(around:' + r + at + '[public_transport=station];'
-    + 'relation(around:' + r + at + '[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
-    + ');out tags center 400;';
-  return OVERPASS + '?data=' + encodeURIComponent(q);
-}
-const STOP_KIND = (tags) => {
-  const t = obj(tags);
-  if (str(t.railway) === 'tram_stop' || str(t.railway) === 'light_rail') return 'tram';
-  if (str(t.railway) === 'station' || str(t.railway) === 'halt') return 'rail';
-  if (str(t.highway) === 'bus_stop') return 'bus';
-  return 'stop';
-};
-// Stops and the lines that run near them, from one answer. A line relation is kept for its name
-// only: whether it really serves these stops is more than the map can promise.
-function parseNear(json) {
-  const all = arr(obj(json).elements);
-  const stops = [], lines = [];
-  for (const el of all) {
-    const e = obj(el), tags = obj(e.tags);
-    const name = str(tags['name:en'] || tags.name, 60) || null;
-    if (str(e.type) === 'relation' && str(tags.type) === 'route') {
-      lines.push({ id: 'r' + e.id, ref: str(tags.ref, 20) || null, name, kind: str(tags.route, 20) || null });
-      continue;
-    }
-    const c = obj(e.center);
-    const lat = toNum(e.lat != null ? e.lat : c.lat), lng = toNum(e.lon != null ? e.lon : c.lon);
-    if (lat == null || lng == null) continue;
-    stops.push({ id: str(e.type).slice(0, 1) + e.id, name, lat, lng, kind: STOP_KIND(tags) });
-  }
-  // Over the limit means the answer was cut short, so "no stops" would not be the truth.
-  return { stops, lines, capped: all.length >= 400 };
-}
 // A line the map says calls at both of these two stops. That is a good deal more than the old live
 // query could say, which only knew a route passed somewhere near each end; it still cannot promise
 // the two stops are consecutive, or that anything runs at the time, so the wording stays hedged.
@@ -2282,7 +2244,7 @@ const Core = {
   legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
   TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
   TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon,
-  STOP_REACH, STOP_REACH_WIDE, stopsNearUrl, parseNear, sharedLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  STOP_REACH, STOP_REACH_WIDE, sharedLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
   STOP_KINDS, parseTile, stopsWithin,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
