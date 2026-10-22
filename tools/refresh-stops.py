@@ -296,6 +296,35 @@ def write_manifest(out, names, total, degrees, regions):
     (out / '.nojekyll').write_text('', encoding='utf-8')
 
 
+def resume(spill, settings, restart):
+    """Which regions an earlier run already spilled, so this one can carry on from where it stopped.
+
+    A refresh of the world is hours of work, and what stops it is rarely the first region. So each
+    region's stops stay on disk once they are written. Anything that would make those files no
+    longer belong together — a different set of regions, a different tile size, a different layout —
+    starts the spill again rather than mixing two runs.
+
+    A region killed half way through is not marked done, so its stops are written a second time. The
+    ids ride along with them for exactly that reason: compacting keeps the first of each.
+    """
+    state = spill / 'state.json'
+    was = {}
+    if state.exists() and not restart:
+        try:
+            was = json.loads(state.read_text(encoding='utf-8'))
+        except ValueError:
+            was = {}
+    if {key: was.get(key) for key in settings} != settings:
+        for stale in spill.glob('*.ndjson'):
+            stale.unlink()
+        was = {}
+    return state, list(was.get('done', []))
+
+
+def mark(state, settings, done):
+    state.write_text(json.dumps(dict(settings, done=done)), encoding='utf-8')
+
+
 def who_commits():
     """The name and address this project's own commits carry.
 
@@ -347,6 +376,7 @@ def main():
     ap.add_argument('--push', action='store_true', help='commit the result and force-push it')
     ap.add_argument('--keep-history', action='store_true', help='do not reset the data repository history')
     ap.add_argument('--keep-downloads', action='store_true', help='do not delete the extracts afterwards')
+    ap.add_argument('--restart', action='store_true', help='build every region again rather than carrying on')
     args = ap.parse_args()
 
     names = CONTINENTS if args.regions == 'global' else [r.strip() for r in args.regions.split(',') if r.strip()]
@@ -365,8 +395,8 @@ def main():
     spill = work / 'spill'
     out.mkdir(parents=True, exist_ok=True)
     spill.mkdir(parents=True, exist_ok=True)
-    for stale in spill.glob('*.ndjson'):
-        stale.unlink()
+    settings = {'format': FORMAT, 'degrees': args.degrees, 'paths': paths}
+    state, done = resume(spill, settings, args.restart)
 
     for tool in ('osmium', 'curl', 'git'):
         if not shutil.which(tool):
@@ -376,11 +406,16 @@ def main():
     except ImportError:
         sys.exit('I need pyosmium. Install it with: pip install osmium')
 
-    started, total = time.time(), 0
+    started = time.time()
     for i, path in enumerate(paths, 1):
         say('[%d/%d] %s' % (i, len(paths), path))
+        if path in done:
+            say('   an earlier run harvested this already')
+            continue
         small = extract(path, work, args.keep_downloads)
-        total += harvest(str(small), args.degrees, Spill(spill))
+        harvest(str(small), args.degrees, Spill(spill))
+        done.append(path)
+        mark(state, settings, done)
         say('   %.0f min so far' % ((time.time() - started) / 60))
 
     say('compacting')

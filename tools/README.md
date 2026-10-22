@@ -46,8 +46,14 @@ For the whole world:
 | Work after that | about a minute | an hour or so |
 | Result | 106,245 stops in 22 tiles, 3.8 MB | roughly 8.8 million stops, around 288 MB |
 
-Downloads resume, and an extract already present is not fetched again, so a run that falls over can
-be started again without beginning from nothing.
+A run that falls over is started again with the same command, and carries on rather than beginning
+from nothing: the regions it finished keep their stops, a part-finished download is resumed, and a
+region whose filtered extract is already on disk is never fetched again. That last one matters most,
+because the raw extract is deleted as soon as it is filtered — Europe is 33 GB to download and 2.4 GB
+once filtered, so going back for it would be the longest part of the run repeated for nothing.
+
+`--restart` builds every region again instead. Changing the regions, the tile size or the layout
+does that by itself, since stops gathered under one set of those do not belong with another's.
 
 ### What it does
 
