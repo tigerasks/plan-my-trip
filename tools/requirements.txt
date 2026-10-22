@@ -1,0 +1,12 @@
+# What tools/refresh-stops.py needs, on top of requirements.txt:
+#
+#     .venv/bin/pip install -r tools/requirements.txt
+#
+# It also needs the osmium command-line tool, which is a compiled binary rather than a Python
+# package and so cannot live in the virtual environment:
+#
+#     brew install osmium-tool
+#
+# Kept apart from requirements.txt because this one is built from source on platforms without a
+# wheel, and nobody running the tests should have to wait for that.
+osmium==4.3.2

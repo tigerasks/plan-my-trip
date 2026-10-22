@@ -1,0 +1,8 @@
+# What the tests need. Install into a virtual environment, never system-wide:
+#
+#     python3 -m venv .venv
+#     .venv/bin/pip install -r requirements.txt
+#     .venv/bin/playwright install chromium
+#
+# The stop snapshot tool needs more; see tools/requirements.txt.
+playwright==1.63.0
