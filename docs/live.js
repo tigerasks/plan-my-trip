@@ -64,7 +64,11 @@ const Live = {
     const tries = Math.max(1, Math.round((opts && opts.tries) || 1));
     const again = (left, wait) => this.fetchJson(url, opts).catch((err) => {
       if (left <= 1 || !this.busy(err)) throw err;
-      return sleep(wait).then(() => again(left - 1, Math.min(wait * 2, BACKOFF_MAX)));
+      // A 502 means the server is busy, and coming back soon is the right thing. A 429 means we
+      // are the ones asking too much, so it waits the longest we ever wait rather than the
+      // shortest: the point is to stop crowding, not to insist.
+      const next = err.status === 429 ? BACKOFF_MAX : wait;
+      return sleep(next).then(() => again(left - 1, Math.min(next * 2, BACKOFF_MAX)));
     });
     return again(tries, (opts && opts.backoff) || BACKOFF);
   },
