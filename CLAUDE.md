@@ -179,10 +179,17 @@ These are proposed; confirm each with the owner before starting it.
   - answered (fifth run): the timetables reach about two months — five journeys 30 and 60 days out,
     nothing from 75 days on. `TIMETABLE_REACH = 30` is a floor, and the same-weekday retry is what
     evidences the claim;
-  - **the open question:** how often Overpass is as slow as it was on 22 Oct. Every answer took 33 to
-    40 seconds, a one-element lookup included, and it refused with a 502 three times running. The
-    planner now waits 90 s and retries with backoff, which is enough — but if that is normal rather
-    than a bad afternoon, a second provider or the offline snapshot becomes the real question.
+  - answered (sixth run): the published app does the whole chain against the live services — OSRM
+    walks with real paths, a Transitous journey drawn and named, and the stop fallback working a
+    third leg out. Transitous turns out to have Kyoto's subway, so the fourth run's gap is city
+    buses only;
+  - **the open question:** whether Overpass is dependable enough to build on. On 22 Oct every answer
+    took 33 to 40 seconds, a one-element lookup included, and across three drives of the real app it
+    refused far more often than it answered (5 of 6, then 7× 502 and 3× 429 in one session). The
+    planner now waits 90 s, retries six times with backoff, and says plainly when it never got
+    through — which is enough to stay honest, but not enough to make the feature reliable. If this is
+    normal rather than a bad afternoon, the real options are a second Overpass instance, or the
+    offline snapshot of decision 15. That is the owner's call, not a change to make quietly.
 - **Before going live:** the Transitous heads-up, contact details on the site, and licence headers.
   The credits are on the page as of milestone 4: OpenFreeMap, OpenMapTiles, OpenStreetMap
   contributors with a "fix the map" link, Photon, Overpass, OSRM at FOSSGIS, and Transitous with its
