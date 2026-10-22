@@ -60,31 +60,49 @@ def run(cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
 
+def part_of(path):
+    """Where a file is built before it is finished. Only the rename makes it real, so a run that is
+    killed half way leaves nothing the next one will mistake for a whole file."""
+    return path.with_name(path.name.replace('.osm.pbf', '.part.osm.pbf'))
+
+
 def download(path, into):
-    """Fetch one Geofabrik extract, keeping what is already there: these are large files and a
-    refresh that falls over should not start from nothing."""
+    """Fetch one Geofabrik extract. What is already there is kept, and a part-finished download is
+    resumed rather than started again: these are gigabytes."""
     dest = into / (path.replace('/', '-') + '.osm.pbf')
-    if dest.exists() and dest.stat().st_size > 0:
+    if dest.exists():
         say('   have %s already (%.0f MB)' % (dest.name, dest.stat().st_size / 1e6))
         return dest
-    url = GEOFABRIK % path
-    say('   fetching', url)
+    part = part_of(dest)
+    say('   fetching', GEOFABRIK % path)
     # curl rather than urllib: it resumes, and these are gigabytes.
     run(['curl', '-fL', '--retry', '3', '--retry-delay', '5', '-C', '-',
-         '-A', AGENT, '-o', str(dest), url])
+         '-A', AGENT, '-o', str(part), GEOFABRIK % path])
+    part.rename(dest)
     return dest
 
 
-def filtered(pbf, into):
-    """Throw away everything that is not a stop or a route before parsing. This is the difference
-    between twenty seconds and twenty minutes: osmium does it in C++ at about 100 MB a second."""
-    out = into / (pbf.name.replace('.osm.pbf', '') + '-transit.osm.pbf')
+def extract(path, into, keep):
+    """The filtered extract for one region: everything that is not a stop or a route thrown away
+    before anything parses it. That is the difference between twenty seconds and twenty minutes,
+    because osmium does it in C++ at about 100 MB a second.
+
+    The raw extract is deleted once filtered, since a continent is tens of gigabytes and what is
+    left of it is a fiftieth of that. So the filtered copy is what decides whether to download at
+    all: a run that falls over must not go back for a download it no longer has any use for.
+    """
+    out = into / (path.replace('/', '-') + '-transit.osm.pbf')
     if out.exists():
-        say('   have %s already' % out.name)
+        say('   have %s already (%.0f MB)' % (out.name, out.stat().st_size / 1e6))
         return out
-    run(['osmium', 'tags-filter', '-o', str(out), '--overwrite', str(pbf),
+    pbf = download(path, into)
+    part = part_of(out)
+    run(['osmium', 'tags-filter', '-o', str(part), '--overwrite', str(pbf),
          'nw/highway=bus_stop', 'nw/railway=station,halt,tram_stop',
          'nw/public_transport=station', 'r/type=route'])
+    part.rename(out)
+    if not keep:
+        pbf.unlink(missing_ok=True)
     return out
 
 
@@ -361,11 +379,8 @@ def main():
     started, total = time.time(), 0
     for i, path in enumerate(paths, 1):
         say('[%d/%d] %s' % (i, len(paths), path))
-        pbf = download(path, work)
-        small = filtered(pbf, work)
+        small = extract(path, work, args.keep_downloads)
         total += harvest(str(small), args.degrees, Spill(spill))
-        if not args.keep_downloads:
-            pbf.unlink(missing_ok=True)       # a continent is tens of gigabytes; the filtered copy is not
         say('   %.0f min so far' % ((time.time() - started) / 60))
 
     say('compacting')
