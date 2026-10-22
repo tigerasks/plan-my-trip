@@ -395,20 +395,22 @@ with sync_playwright() as pw:
     ctx, pg = open_page(extra=fake_service)
     spacing = pg.evaluate('''async () => {
       const L = window.DayPlannerLive, at = [];
+      // The page reads the stop snapshot's manifest by itself, so count from wherever that left off.
+      const before = L.calls;
       const mark = (u) => L.fetchJson(u).then(() => at.push(Date.now()));
       await Promise.all([mark('https://example.test/slow?a'), mark('https://example.test/slow?b'),
                          mark('https://example.test/slow?c')]);
-      return { calls: L.calls, gaps: at.slice(1).map((t, i) => t - at[i]) };
+      return { calls: L.calls - before, total: L.calls, gaps: at.slice(1).map((t, i) => t - at[i]) };
     }''')
     ck(spacing['calls'] == 3, 'three different questions make three requests')
     ck(all(g >= 1000 for g in spacing['gaps']), 'spaced at least a second apart, as their terms ask: ' + str(spacing['gaps']))
     again = pg.evaluate('''async () => {
-      const L = window.DayPlannerLive;
+      const L = window.DayPlannerLive, before = L.calls;
       await L.fetchJson('https://example.test/slow?a');
       await L.fetchJson('https://example.test/slow?a');
-      return L.calls;
+      return L.calls - before;
     }''')
-    ck(again == 3, 'asking the same thing again is answered from the page, not the service')
+    ck(again == 0, 'asking the same thing again is answered from the page, not the service')
     ck.expect('status of 500')   # the browser logs the failed request; that is the point of the test
     broke = pg.evaluate('''async () => {
       const L = window.DayPlannerLive;
@@ -441,25 +443,36 @@ with sync_playwright() as pw:
     ck(leg['detail'] in pg.inner_text('#sheet'), 'with the reason under it')
     ctx.close()
 
-    TRANSIT['stops'] = False
+    # Where it does know stops and simply found nothing leaving, that is a real answer about real
+    # services, and better than anything a snapshot with no times in it could offer.
+    TRANSIT['stops'] = True
+    asked.clear()
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).detail != null", timeout=40000)
+    pg.wait_for_timeout(2500)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck('no stops at either end' in leg['detail'],
-       'where it knows no stops at all, it says so instead: ' + leg['detail'])
-    ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
+    ck(leg['source'] == 'transitous' and leg['minutes'] is None,
+       'the timetable\'s own answer stands: ' + str(leg['detail']))
+    ck('found nothing leaving' in leg['detail'], 'saying nothing runs then, not that there are no buses')
+    ck(not any('data-stops/tiles' in u for u in asked),
+       'and no tile is read at all, because a guess would be worse than what it already knows')
     ctx.close()
 
     # ---- working it out from the stops in the snapshot
-    # No timetables does not mean no buses. The snapshot says where the stops are and which lines
-    # call at them, which is the method anyone would use by hand (design doc, decisions 22 to 25).
-    # What the tests serve is a real piece of Kyoto, so these are real answers.
+    # No timetables does not mean no buses. Where Transitous knows no stops at all it has none for
+    # this kind of service here, and the snapshot is then exactly the thing that should answer: it
+    # says where the stops are and which lines call at them, which is the method anyone would use by
+    # hand (design doc, decisions 22 to 25). What the tests serve is a real piece of Kyoto, so these
+    # are real answers.
+    TRANSIT['stops'] = False
     asked.clear()
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).source) === 'stops'", timeout=60000)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(any('reverse-geocode' in u for u in asked),
+       'the timetables are asked whether they cover the place at all, before the snapshot is touched')
     ck(leg['minutes'] and leg['minutes'] < 60, 'the stops give a time after all: %s min' % leg['minutes'])
     ck('walk' in leg['detail'] and '\u00b7' in leg['detail'],
        'spelled out as walk, ride, walk: ' + leg['detail'])
@@ -606,6 +619,17 @@ with sync_playwright() as pw:
     ck(all(pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.rel === "noopener noreferrer")')),
        'every outgoing link opens safely')
     ck('https://github.com/tigerasks' in links, 'and the planner says who to talk to')
+    # The stops are OpenStreetMap data we republish, so they are credited as a database of their own,
+    # with the date: a line that opened since the last refresh is not in there.
+    pg.wait_for_function("() => /as of/.test(document.querySelector('.credits').innerText)", timeout=30000)
+    credits = pg.inner_text('.credits')
+    ck('our own snapshot' in credits, 'the stops are credited as ours rather than somebody\'s service')
+    ck('as of Thu 22 Oct' in credits,
+       'with the date it was built, so a stale one is visible: '
+       + [l for l in credits.split('\n') if 'as of' in l][0])
+    ck('ODbL' in credits, 'and under the licence the data comes with')
+    ck('https://opendatacommons.org/licenses/odbl/' in
+       pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.href)'), 'which is linked')
     ctx.close()
 
     # ---- the map

@@ -575,6 +575,12 @@ function creditsHtml() {
     + ' · Walking and taxi: ' + CREDIT('https://routing.openstreetmap.de/about.html', 'OSRM at FOSSGIS')
     + ' · Timetables: ' + CREDIT('https://transitous.org/', 'Transitous')
     + ' (' + CREDIT('https://transitous.org/sources/', 'data sources') + ')<br>'
+    // The stops are OpenStreetMap data we republish ourselves, so they are credited as a database of
+    // their own. The date matters: a line that opened since the last refresh is not in there.
+    + 'Stops: ' + CREDIT(C.STOPS_HOME, 'our own snapshot')
+    + (Snap.man && Snap.man.built ? ' as of ' + esc(C.fmtDateUK(Snap.man.built)) : '')
+    + ', from © OpenStreetMap contributors ('
+    + CREDIT('https://opendatacommons.org/licenses/odbl/', 'ODbL') + ')<br>'
     + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
     + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
     + '</p>';
@@ -1268,8 +1274,12 @@ const overpass = (url) => Live.fetchPatiently(url, { timeout: OVERPASS_WAIT, tri
 const Snap = { man: null, asking: null, tiles: {} };
 function snapshot() {
   if (!Snap.asking) {
-    Snap.asking = Live.fetchJson(C.manifestUrl(), { ours: true })
-      .then((json) => (Snap.man = C.parseManifest(json)), () => null);
+    Snap.asking = Live.fetchJson(C.manifestUrl(), { ours: true }).then((json) => {
+      Snap.man = C.parseManifest(json);
+      // The credits say when the snapshot was built, and only now is that known.
+      if (Snap.man) render();
+      return Snap.man;
+    }, () => null);
   }
   return Snap.asking;
 }
@@ -2247,6 +2257,10 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   restore();
   render();
+  // Read the snapshot's manifest straight away. It is 161 bytes of our own, and having it means the
+  // credits can say which snapshot this is before anything has used it, rather than crediting a
+  // database only once it happens to have been read.
+  snapshot();
   window.DayPlannerApp = App;   // the tests look in here
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
