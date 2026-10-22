@@ -33,6 +33,7 @@ GitHub Pages publishes the `docs/` folder of `main`; the only choices GitHub off
 | `documentation/` | The design doc, the v1 spec, and later the chat guide | No |
 | `reference/v1/` | v1 code for reuse | No |
 | `tests/` | Playwright tests, mocks, screenshots; `harness.py` serves `docs/` locally, `app_test.py` covers the planner, `probe_test.py` the service test page, `core_test.js` the model in Node. See `tests/README.md` | No |
+| `tools/` | Scripts the owner runs by hand, not part of the app: `refresh-stops.py` builds the stop snapshot from OpenStreetMap and publishes it | No |
 
 If an older `probe.html` is still at the repository root, delete it: the copy in `docs/` is the one that gets published. Make sure `docs/.nojekyll` exists.
 
@@ -66,7 +67,10 @@ If an older `probe.html` is still at the repository root, delete it: the copy in
 - **Outside services** (all free with conditions; sources in the design doc):
   - **Map:** MapLibre GL JS with OpenFreeMap vector tiles, **Liberty style only**. Positron shows no points of interest.
   - **Search:** Photon (`https://photon.komoot.io/api/?q=…&lat=…&lon=…&lang=en`). Never Nominatim: it forbids search-as-you-type.
-  - **Place details:** Overpass, OpenStreetMap's read-only query service (`https://overpass-api.de/api/interpreter?data=…`). One lookup per previewed place. The fair-use guideline is under 10,000 queries a day. It can be slow when busy, so previews must work without it. It also supplies bus and rail lines for the stop-based public transport fallback.
+  - **Place details:** Overpass, OpenStreetMap's read-only query service (`https://overpass-api.de/api/interpreter?data=…`). One lookup per previewed place, and nothing else — the stop lookup moved to a published snapshot (design doc, decision 22). The fair-use guideline is 10,000 queries a day for light use, but **about 100 a day counted across all users** for anything used regularly, which is what this is. It is slow and often refuses outright, so previews must work without it.
+  - **Stops for the public transport fallback:** a snapshot we publish at
+    `https://tigerasks.github.io/plan-my-trip-data-stops/`, built from OpenStreetMap by
+    `tools/refresh-stops.py`. Same origin as the app, so no CORS. ODbL, credited on the page.
   - **Walking and taxi routes:** OSRM on the FOSSGIS servers.
     - Endpoints: `https://routing.openstreetmap.de/routed-foot/route/v1/foot/LON,LAT;LON,LAT` and `/routed-car/route/v1/driving/…`.
     - Terms: reasonable non-commercial use, at most one request per second.
