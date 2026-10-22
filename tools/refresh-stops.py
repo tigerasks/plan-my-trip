@@ -255,6 +255,26 @@ def write_manifest(out, names, total, degrees, regions):
     (out / '.nojekyll').write_text('', encoding='utf-8')
 
 
+def who_commits():
+    """The name and address this project's own commits carry.
+
+    A fresh repository has no identity of its own, so git falls back to whatever is configured
+    globally — which on a work machine is a work address, and it would be published. So take the
+    identity from the repository this script lives in, and refuse to commit without one rather than
+    let the fallback decide.
+    """
+    here = pathlib.Path(__file__).resolve().parent.parent
+    got = {}
+    for key in ('user.name', 'user.email'):
+        done = subprocess.run(['git', '-C', str(here), 'config', '--get', key],
+                              capture_output=True, text=True)
+        got[key] = done.stdout.strip()
+    if not got['user.name'] or not got['user.email']:
+        sys.exit('%s has no user.name or user.email configured, and I will not fall back to the\n'
+                 'global one in case it is a work address. Set them there first.' % here)
+    return got
+
+
 def publish(out, message, reset):
     """Commit the snapshot and send it up.
 
@@ -264,6 +284,8 @@ def publish(out, message, reset):
     git = ['git', '-C', str(out)]
     if not (out / '.git').exists():
         run(git + ['init', '-q', '-b', 'main'])
+    for key, value in who_commits().items():
+        run(git + ['config', key, value])
     if reset:
         run(git + ['checkout', '-q', '--orphan', 'fresh'])
     run(git + ['add', '-A'])
