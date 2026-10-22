@@ -515,6 +515,21 @@ with sync_playwright() as pw:
     ck(BUSY['around'] == 0, 'and every refusal was used up rather than being retried for ever')
     ctx.close()
 
+    # where it never gets through, the leg says that, rather than passing it off as the timetable's answer
+    BUSY['around'] = 99
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=90000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] is None and 'too busy' in leg['detail'],
+       'a map that never answers is reported as that, not as "there are no stops": ' + leg['detail'])
+    ck('again' in leg['detail'], 'with the one thing worth doing about it')
+    pg.click('.timeline .leg >> nth=0')
+    pg.wait_for_timeout(300)
+    ck('too busy' in pg.inner_text('#sheet'), 'and the card says the same, where the retry button is')
+    ctx.close()
+    BUSY['around'] = 0
+
     # a place preview survives it too, since a user is sitting there waiting for this one
     BUSY['details'] = 2
     ctx, pg = open_page(held=DEMO, extra=services)

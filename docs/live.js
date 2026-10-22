@@ -10,6 +10,7 @@ const GAP = 1100;              // a little over the one request a second they as
 const TIMEOUT = 20000;         // enough for Photon, OSRM and Transitous, which all answer in under a second
 const BUSY = [429, 502, 503, 504];   // the service is up but will not take this request now
 const BACKOFF = 2000;          // doubling from here, which is what Overpass asks for
+const BACKOFF_MAX = 15000;     // but not doubling for ever: a refusal is worth outlasting, not chasing
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const Live = {
@@ -63,7 +64,7 @@ const Live = {
     const tries = Math.max(1, Math.round((opts && opts.tries) || 1));
     const again = (left, wait) => this.fetchJson(url, opts).catch((err) => {
       if (left <= 1 || !this.busy(err)) throw err;
-      return sleep(wait).then(() => again(left - 1, wait * 2));
+      return sleep(wait).then(() => again(left - 1, Math.min(wait * 2, BACKOFF_MAX)));
     });
     return again(tries, (opts && opts.backoff) || BACKOFF);
   },

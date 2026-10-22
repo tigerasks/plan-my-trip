@@ -1245,7 +1245,7 @@ function whyNoJourney(from, to, departs) {
 // for every answer and was refused outright three times in a row, so the planner waits and asks
 // again rather than quietly deciding there are no stops.
 const OVERPASS_WAIT = 90000;
-const OVERPASS_TRIES = 4;
+const OVERPASS_TRIES = 6;
 const overpass = (url) => Live.fetchPatiently(url, { timeout: OVERPASS_WAIT, tries: OVERPASS_TRIES });
 function stopsNear(point) {
   const ask = (metres) => {
@@ -1283,9 +1283,17 @@ function askStops(dayId, fromId, toId) {
   const from = C.pointOf(App.trip, dayId, fromId), to = C.pointOf(App.trip, dayId, toId);
   if (!day || !C.hasPos(from) || !C.hasPos(to)) return Promise.resolve(null);
   return Promise.all([stopsNear(from), stopsNear(to)]).then(([a, b]) => {
-    if (!a || !b) return null;
     const now = new Date().toISOString();
     const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
+    // A map that could not be asked is not a map with nothing on it. Saying so is the difference
+    // between "there is no bus" and "nobody answered the phone", and only one of them is worth
+    // asking again — which the leg card is how you do.
+    if (!a || !b) {
+      keep({ asked: now, source: 'stops',
+        detail: 'OpenStreetMap was too busy to say which stops are nearby, so there is no journey '
+          + 'worked out for this leg yet. Checking it again often gets through.' });
+      return null;
+    }
     const plan = C.stopPlan(from, to, a.stops, b.stops, App.trip, C.calibration(App.trip, day.city));
     if (!plan) {
       keep({ asked: now, source: 'stops',
