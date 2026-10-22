@@ -176,6 +176,33 @@ live services from the repository, one at a time 1.2 s apart):
   the nearest drivable road, which was 124 m from a point beside the station — well inside
   `PATH_SLACK`, but a reminder that the ends of a route move.
 
+**Sixth run, Thu 22 Oct 2026** (the published app itself, driven in Chromium against every live
+service, the demo trip's first day):
+- **The whole chain works end to end.** OSRM checked all three walks with real paths (44 min/3.32 km,
+  37 min/2.76 km, 36 min/2.67 km). Transitous planned the leg home: 17 min, drawn, named
+  "京都市交通局 towards 竹田(京都府)", spelled out as "walk 11 min to 四条 · 3 min to 京都 · walk 3 min".
+  The stop fallback did the leg out to the temple: 37 min, "probably the EX100 bus", "walk 1 min to
+  Kyoto Station · ≈ 19 min by bus · walk 17 min from 池田町". Three different sources on one day,
+  each labelled as what it is.
+- **Transitous has Kyoto's subway, not just its rail.** 四条 to 京都 in 3 minutes under 京都市交通局 is
+  the Karasuma line. The fourth run's finding holds for city *buses*; the subway is there.
+- **The hedge on a line name earns its keep.** "probably the EX100 bus" is a limited-express airport
+  coach, which will not be stopping at 池田町. The map says both ends have an EX100 relation near
+  them and that is all it says, which is exactly why the wording hedges.
+- **Picking a stop by estimate and then measuring it can move the answer a lot.** 池田町 was chosen as
+  within ten minutes' walk on the estimate; OSRM then measured that walk at 17 minutes. The leg still
+  came out ahead of walking the whole way (37 against 44), but the margin is thinner than the pairing
+  thought it was. Something to watch: a stop that loses its advantage once measured is not re-picked.
+- **Overpass refused far more than it answered, and started rate-limiting.** Across three drives:
+  one clean run of two queries, and runs of 6 requests with 5 refusals and 14 requests with 7× 502,
+  3× 429 and one 90-second timeout. The 429s are Overpass objecting to the planner's own volume, so a
+  refusal now waits the longest wait rather than the shortest, which is decision 20.
+- **The honest-failure message fired in the wild.** One leg's stop lookup never got through, and the
+  leg said "OpenStreetMap was too busy to say which stops are nearby" rather than passing Transitous's
+  "no stops near there" off as the whole story. That fault was found by this run and fixed in it.
+- **Nothing else broke.** No page errors, no console errors beyond the browser's own notes about the
+  refused requests, and every published file serves (index, style, core, live, map, app, both probes).
+
 **Still to verify during the build:**
 - answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
   relation carrying a line number. Rail relations around a station are named rather than numbered;
@@ -520,7 +547,8 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 17 | How does a leg hold what the services say? | Every way of making it side by side — walking, public transport, taxi — each with its own time, source and shape. Checking one never loses another. The planner picks which the day uses: your own time, then whichever you picked, then the quickest that makes sense. A taxi is never assumed. |
 | 18 | How does the planner know what instant to ask a timetable about? | The trip says which time zone its times are in (`tz`, a name like `Asia/Tokyo`), and the browser's own time zone database does the rest, summer time included. Left empty, it uses the device's own zone. Every time shown stays local to where you are going. |
 | 19 | Whose times calibrate the estimates? | Only times that measured something: OSRM, Transitous, and your own. A stop-based time is the planner's own arithmetic, so calibrating against it would be circular. |
-| 20 | What happens when Overpass refuses? | It is asked again, up to four times, waiting 2 s then 4 s then 8 s, and given 90 s to answer rather than the 20 s the fast services get. It refuses with a 502 whenever its workers are busy, which by a big station is most of the time, and it asks to be retried. Giving up on the first refusal reported "no stops" where the map had a hundred. A refusal is not a failure, and only a real failure falls back to an estimate. |
+| 20 | What happens when Overpass refuses? | It is asked again, up to six times, and given 90 s to answer rather than the 20 s the fast services get. A 502 means its workers are busy, which by a big station is most of the time, so the wait starts at 2 s and doubles to a 15 s ceiling. A 429 means the planner itself is asking too much, so that waits the full 15 s straight away: the point is to stop crowding, not to insist. Giving up on the first refusal reported "no stops" where the map had a hundred. |
+| 21 | And when it never gets through? | The leg says so — "OpenStreetMap was too busy to say which stops are nearby" — rather than letting the timetable's "no stops near there" stand as the whole story. A map nobody could reach is not a map with nothing on it, and only one of those is worth asking again, which the leg card is how you do. |
 
 ## Open questions
 
