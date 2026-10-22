@@ -67,6 +67,18 @@ imported time that is not on a quarter hour is kept as an extra stop on the whee
 
 **Updated Fri 25 Sep 2026, milestone 1:** the exchange format is settled and written down below: fixed marker lines, one envelope, and the same envelope again as a `.json` file. Opening hours are kept as a weekly table with the original OpenStreetMap text beside them, so a place can carry its hours before it has a day. A place belongs to exactly one day through its own `dayId`; the three versions hold order only.
 
+**Updated Thu 22 Oct 2026, the stops move off Overpass:** the fifth and sixth service runs settled
+the question milestone 4 left open. Overpass refused five requests in six, took 33 to 40 seconds
+when it answered a one-element lookup, and its documented allowance for something used regularly is
+about a hundred queries a day counted across every user — a tenth of what one day's legs spent. So
+the stop lookup becomes a snapshot we build from OpenStreetMap and publish ourselves (decisions 22
+to 24), which is also better data: route relation membership says which lines really call at a stop,
+where a live query could only say a relation was somewhere nearby. For the demo trip's first leg
+that is nine genuine candidates instead of one arbitrary airport coach. Overpass keeps the
+place-details job. `tools/refresh-stops.py` and a Kansai-and-Kanto snapshot are built; the planner
+reads it in milestone 6, and until then still asks Overpass. The "Travel times" section below still
+describes the live query, and is rewritten when that lands.
+
 ## Why a v2
 
 The first planner lives inside Claude and syncs with the chat through a shared database. Claude's published pages can't load outside data. So its map is a schematic without streets, and it can't search for places.
