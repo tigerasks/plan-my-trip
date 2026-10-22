@@ -1283,6 +1283,72 @@ function parseManifest(json) {
   };
 }
 
+// A tile, decoded only as far as its positions. The names and the lines stay as they arrived and a
+// stop becomes an object only once it turns out to be near enough to matter: Tokyo's tile holds
+// 48,000 stops, and building one object each to throw nearly all of them away would cost tens of
+// megabytes to answer a question about a few dozen.
+//
+// The layout is what `tools/refresh-stops.py` writes: `o` the tile's own corner at five decimal
+// places, `y` and `x` positions delta-encoded from it, `n` the names newline-joined, `k` what kind
+// of stop each is, `L` the line labels written once, and `l` each stop's lines as indices into `L`.
+const STOP_KINDS = ['bus', 'rail', 'tram', 'stop'];
+function parseTile(json, name) {
+  const t = obj(json);
+  if (toNum(t.v) !== TILE_FORMAT) return null;
+  const corner = arr(t.o);
+  const oy = toNum(corner[0]), ox = toNum(corner[1]);
+  const ys = arr(t.y), xs = arr(t.x), ks = arr(t.k), ls = arr(t.l);
+  if (oy == null || ox == null || ys.length !== ks.length || xs.length !== ks.length) return null;
+  // Not through `str`: it trims, and an unnamed stop at either end of the tile leaves a newline
+  // there that trimming would eat — which would not lose a name so much as shift every later one
+  // onto the wrong stop. A blob that does not line up with the stops is a tile worth refusing.
+  const names = typeof t.n === 'string' ? t.n.split('\n') : [];
+  if (names.length !== ks.length) return null;
+  const lat = [], lng = [];
+  let y = oy, x = ox;
+  for (let i = 0; i < ks.length; i++) {
+    y += toNum(ys[i]) || 0;
+    x += toNum(xs[i]) || 0;
+    lat.push(y / 1e5);
+    lng.push(x / 1e5);
+  }
+  return {
+    tile: str(name, 20) || null,
+    count: ks.length,
+    lat: lat,
+    lng: lng,
+    kind: ks,
+    names: names,
+    lines: ls,
+    labels: arr(t.L).map((l) => str(l, 60)),
+  };
+}
+
+// The stops of a tile that fall within a given reach of a point, as objects the rest of the planner
+// can work with. This is where the columns turn into stops, and only for the few that qualify.
+function stopsWithin(tile, point, metres) {
+  const t = obj(tile);
+  if (!hasPos(point) || !t.count) return [];
+  const reach = Math.max(0, toNum(metres) || 0) / 1000;
+  const out = [];
+  for (let i = 0; i < t.count; i++) {
+    const at = { lat: t.lat[i], lng: t.lng[i] };
+    const km = kmBetween(point, at);
+    if (km > reach) continue;
+    const mine = arr(t.lines[i]).map((j) => t.labels[toNum(j)]).filter(Boolean);
+    out.push({
+      id: (t.tile || '?') + ':' + i,
+      name: str(t.names[i], 60) || null,
+      lat: at.lat,
+      lng: at.lng,
+      kind: STOP_KINDS[toNum(t.kind[i])] || 'stop',
+      lines: mine,
+      km: km,
+    });
+  }
+  return out.sort((a, b) => a.km - b.km);
+}
+
 const STOP_REACH = 800;        // metres, about ten minutes on foot
 const STOP_REACH_WIDE = 1600;  // and twenty, where an end has nothing closer
 const STOPS_EACH_END = 12;     // the nearest few: a busy corner has dozens, and the rest never win
@@ -2184,6 +2250,7 @@ const Core = {
   TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon,
   STOP_REACH, STOP_REACH_WIDE, stopsNearUrl, parseNear, commonLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
+  STOP_KINDS, parseTile, stopsWithin,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,

@@ -657,6 +657,49 @@ ok(C.parseManifest({ v: 1, tiles: [] }) === null, 'and one with no tiles in it i
   ok(man.stops === 106245, 'and how many stops it holds, which is worth showing');
 }
 
+console.log('\n== Reading the stops out of a tile ==');
+// Real tiles, cut out of the published snapshot, so this meets the format the planner will meet.
+const TILES = {
+  '34_135': require('./stops/tiles/34_135.json'),
+  '35_135': require('./stops/tiles/35_135.json'),
+};
+const STOP_MAN = C.parseManifest(require('./stops/manifest.json'));
+{
+  const t = C.parseTile(TILES['34_135'], '34_135');
+  ok(t && t.count === TILES['34_135'].k.length, 'a tile decodes to as many stops as it holds: ' + t.count);
+  ok(t.names.length === t.count, 'with a name for every one, even the ones that have none');
+  let inside = true;
+  for (let i = 0; i < t.count; i++) {
+    if (!(t.lat[i] >= 34 && t.lat[i] < 35 && t.lng[i] >= 135 && t.lng[i] < 136)) inside = false;
+  }
+  ok(inside, 'and every position lands inside the tile, once the deltas are added up');
+  ok(C.parseTile(TILES['34_135']) !== null, 'a tile needs no name to decode');
+  ok(C.parseTile({ v: 2, o: [0, 0], y: [], x: [], k: [], l: [], n: '' }) === null,
+     'a tile written to a newer format is refused rather than half read');
+  ok(C.parseTile({ v: 1, o: [0, 0], y: [1], x: [1], k: [0], l: [[]], n: '' + String.fromCharCode(10) }) === null,
+     'and one whose names do not line up with its stops is refused, since the rest would be misnamed');
+  ok(C.parseTile({}) === null, 'as is nothing at all');
+}
+{
+  // The planner's own stay, which sits where two tiles meet.
+  const HOTEL = { lat: 34.9858, lng: 135.7588 };
+  let near = [];
+  for (const name of C.tilesNear(HOTEL, C.STOP_REACH)) {
+    if (STOP_MAN.tiles.includes(name)) near = near.concat(C.stopsWithin(C.parseTile(TILES[name], name), HOTEL, C.STOP_REACH));
+  }
+  ok(near.length > 20, 'a busy station has plenty of stops within ten minutes\' walk: ' + near.length);
+  ok(near.every((s) => s.km * 1000 <= C.STOP_REACH), 'none of them further than that');
+  ok(near[0].km <= near[near.length - 1].km, 'nearest first');
+  ok(near.some((s) => s.name === 'Kyoto'), 'Kyoto Station among them, named in English');
+  ok(near.some((s) => s.lines.length), 'and at least one saying which lines call there');
+  ok(near.every((s) => C.STOP_KINDS.includes(s.kind)), 'every stop sorted into a kind we know');
+  ok(new Set(near.map((s) => s.id)).size === near.length, 'and each with an id of its own, so a pairing cannot use one twice');
+  const tight = C.stopsWithin(C.parseTile(TILES['34_135'], '34_135'), HOTEL, 60);
+  ok(tight.length < near.length, 'a shorter reach returns fewer: ' + tight.length + ' within 60 m');
+  ok(C.stopsWithin(C.parseTile(TILES['34_135'], '34_135'), {}, 800).length === 0,
+     'and a point with no position reaches nothing');
+}
+
 console.log('\n== Working a leg out from the stops ==');
 const sFrom = { lat: 34.9858, lng: 135.7588 }, sTo = { lat: 34.9948, lng: 135.7858 };
 const sNear = C.parseNear({ elements: [
