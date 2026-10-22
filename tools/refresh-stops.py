@@ -60,31 +60,49 @@ def run(cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
 
+def part_of(path):
+    """Where a file is built before it is finished. Only the rename makes it real, so a run that is
+    killed half way leaves nothing the next one will mistake for a whole file."""
+    return path.with_name(path.name.replace('.osm.pbf', '.part.osm.pbf'))
+
+
 def download(path, into):
-    """Fetch one Geofabrik extract, keeping what is already there: these are large files and a
-    refresh that falls over should not start from nothing."""
+    """Fetch one Geofabrik extract. What is already there is kept, and a part-finished download is
+    resumed rather than started again: these are gigabytes."""
     dest = into / (path.replace('/', '-') + '.osm.pbf')
-    if dest.exists() and dest.stat().st_size > 0:
+    if dest.exists():
         say('   have %s already (%.0f MB)' % (dest.name, dest.stat().st_size / 1e6))
         return dest
-    url = GEOFABRIK % path
-    say('   fetching', url)
+    part = part_of(dest)
+    say('   fetching', GEOFABRIK % path)
     # curl rather than urllib: it resumes, and these are gigabytes.
     run(['curl', '-fL', '--retry', '3', '--retry-delay', '5', '-C', '-',
-         '-A', AGENT, '-o', str(dest), url])
+         '-A', AGENT, '-o', str(part), GEOFABRIK % path])
+    part.rename(dest)
     return dest
 
 
-def filtered(pbf, into):
-    """Throw away everything that is not a stop or a route before parsing. This is the difference
-    between twenty seconds and twenty minutes: osmium does it in C++ at about 100 MB a second."""
-    out = into / (pbf.name.replace('.osm.pbf', '') + '-transit.osm.pbf')
+def extract(path, into, keep):
+    """The filtered extract for one region: everything that is not a stop or a route thrown away
+    before anything parses it. That is the difference between twenty seconds and twenty minutes,
+    because osmium does it in C++ at about 100 MB a second.
+
+    The raw extract is deleted once filtered, since a continent is tens of gigabytes and what is
+    left of it is a fiftieth of that. So the filtered copy is what decides whether to download at
+    all: a run that falls over must not go back for a download it no longer has any use for.
+    """
+    out = into / (path.replace('/', '-') + '-transit.osm.pbf')
     if out.exists():
-        say('   have %s already' % out.name)
+        say('   have %s already (%.0f MB)' % (out.name, out.stat().st_size / 1e6))
         return out
-    run(['osmium', 'tags-filter', '-o', str(out), '--overwrite', str(pbf),
+    pbf = download(path, into)
+    part = part_of(out)
+    run(['osmium', 'tags-filter', '-o', str(part), '--overwrite', str(pbf),
          'nw/highway=bus_stop', 'nw/railway=station,halt,tram_stop',
          'nw/public_transport=station', 'r/type=route'])
+    part.rename(out)
+    if not keep:
+        pbf.unlink(missing_ok=True)
     return out
 
 
@@ -105,13 +123,39 @@ def is_stop(tags):
             or tags.get('public_transport') == 'station')
 
 
+class Spill:
+    """Collects stops by tile and writes them out in batches.
+
+    Holding one open file per tile is the obvious way to do this and it falls over: the world is a
+    few thousand tiles, and a process may have only a few hundred files open. Holding every stop in
+    memory instead would want gigabytes. So rows pile up in memory and go out together, which bounds
+    both, and touches each file a few dozen times over a whole run rather than once per stop.
+    """
+    def __init__(self, folder, rows=200000):
+        self.folder, self.limit = folder, rows
+        self.rows, self.held = collections.defaultdict(list), 0
+
+    def write(self, tile, row):
+        self.rows[tile].append(row)
+        self.held += 1
+        if self.held >= self.limit:
+            self.flush()
+
+    def flush(self):
+        for tile, rows in self.rows.items():
+            with open(self.folder / (tile + '.ndjson'), 'a', encoding='utf-8') as fh:
+                fh.write(''.join(rows))
+        self.rows.clear()
+        self.held = 0
+
+
 def harvest(pbf, degrees, spill):
     """Read one extract and write each stop to the file for the tile it falls in.
 
-    Going out to disk a stop at a time looks wasteful, but it is what keeps this bounded: the whole
-    world is nearly nine million stops, and holding them all in memory to sort at the end would want
-    several gigabytes. A tile can also straddle two continents, so spilling and compacting later is
-    how the two halves meet.
+    Going out to disk rather than keeping everything is what makes this bounded: the whole world is
+    nearly nine million stops, and holding them all to sort at the end would want several gigabytes.
+    A tile can also straddle two continents, so spilling and compacting later is how the two halves
+    meet.
     """
     import osmium
 
@@ -131,7 +175,7 @@ def harvest(pbf, degrees, spill):
                 member_lines[(m.type, m.ref)].add(rel.id)
     say('   %d lines, %d objects on one' % (len(lines), len(member_lines)))
 
-    handles, counted = {}, 0
+    tiles, counted = set(), 0
     for obj in osmium.FileProcessor(pbf, osmium.osm.NODE | osmium.osm.WAY).with_locations():
         tags = dict(obj.tags)
         if not tags or not is_stop(tags):
@@ -155,16 +199,13 @@ def harvest(pbf, degrees, spill):
         # would look for in the wrong file.
         lat, lng = round(lat, 5), round(lng, 5)
         tile = '%d_%d' % (math.floor(lat / degrees), math.floor(lng / degrees))
-        fh = handles.get(tile)
-        if fh is None:
-            fh = handles[tile] = open(spill / (tile + '.ndjson'), 'a', encoding='utf-8')
+        tiles.add(tile)
         # The id goes along so the same stop met twice in overlapping extracts is only kept once.
-        fh.write(json.dumps([key[0] + str(key[1]), name, lat, lng,
-                             kind_of(tags), on], ensure_ascii=False) + '\n')
+        spill.write(tile, json.dumps([key[0] + str(key[1]), name, lat, lng,
+                                      kind_of(tags), on], ensure_ascii=False) + '\n')
         counted += 1
-    for fh in handles.values():
-        fh.close()
-    say('   %d stops in %d tiles' % (counted, len(handles)))
+    spill.flush()
+    say('   %d stops in %d tiles' % (counted, len(tiles)))
     return counted
 
 
@@ -255,6 +296,35 @@ def write_manifest(out, names, total, degrees, regions):
     (out / '.nojekyll').write_text('', encoding='utf-8')
 
 
+def resume(spill, settings, restart):
+    """Which regions an earlier run already spilled, so this one can carry on from where it stopped.
+
+    A refresh of the world is hours of work, and what stops it is rarely the first region. So each
+    region's stops stay on disk once they are written. Anything that would make those files no
+    longer belong together — a different set of regions, a different tile size, a different layout —
+    starts the spill again rather than mixing two runs.
+
+    A region killed half way through is not marked done, so its stops are written a second time. The
+    ids ride along with them for exactly that reason: compacting keeps the first of each.
+    """
+    state = spill / 'state.json'
+    was = {}
+    if state.exists() and not restart:
+        try:
+            was = json.loads(state.read_text(encoding='utf-8'))
+        except ValueError:
+            was = {}
+    if {key: was.get(key) for key in settings} != settings:
+        for stale in spill.glob('*.ndjson'):
+            stale.unlink()
+        was = {}
+    return state, list(was.get('done', []))
+
+
+def mark(state, settings, done):
+    state.write_text(json.dumps(dict(settings, done=done)), encoding='utf-8')
+
+
 def who_commits():
     """The name and address this project's own commits carry.
 
@@ -306,6 +376,7 @@ def main():
     ap.add_argument('--push', action='store_true', help='commit the result and force-push it')
     ap.add_argument('--keep-history', action='store_true', help='do not reset the data repository history')
     ap.add_argument('--keep-downloads', action='store_true', help='do not delete the extracts afterwards')
+    ap.add_argument('--restart', action='store_true', help='build every region again rather than carrying on')
     args = ap.parse_args()
 
     names = CONTINENTS if args.regions == 'global' else [r.strip() for r in args.regions.split(',') if r.strip()]
@@ -324,8 +395,8 @@ def main():
     spill = work / 'spill'
     out.mkdir(parents=True, exist_ok=True)
     spill.mkdir(parents=True, exist_ok=True)
-    for stale in spill.glob('*.ndjson'):
-        stale.unlink()
+    settings = {'format': FORMAT, 'degrees': args.degrees, 'paths': paths}
+    state, done = resume(spill, settings, args.restart)
 
     for tool in ('osmium', 'curl', 'git'):
         if not shutil.which(tool):
@@ -335,14 +406,16 @@ def main():
     except ImportError:
         sys.exit('I need pyosmium. Install it with: pip install osmium')
 
-    started, total = time.time(), 0
+    started = time.time()
     for i, path in enumerate(paths, 1):
         say('[%d/%d] %s' % (i, len(paths), path))
-        pbf = download(path, work)
-        small = filtered(pbf, work)
-        total += harvest(str(small), args.degrees, spill)
-        if not args.keep_downloads:
-            pbf.unlink(missing_ok=True)       # a continent is tens of gigabytes; the filtered copy is not
+        if path in done:
+            say('   an earlier run harvested this already')
+            continue
+        small = extract(path, work, args.keep_downloads)
+        harvest(str(small), args.degrees, Spill(spill))
+        done.append(path)
+        mark(state, settings, done)
         say('   %.0f min so far' % ((time.time() - started) / 60))
 
     say('compacting')
