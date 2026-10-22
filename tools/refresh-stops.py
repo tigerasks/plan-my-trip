@@ -94,6 +94,12 @@ def extract(path, into, keep):
     out = into / (path.replace('/', '-') + '-transit.osm.pbf')
     if out.exists():
         say('   have %s already (%.0f MB)' % (out.name, out.stat().st_size / 1e6))
+        raw = into / (path.replace('/', '-') + '.osm.pbf')
+        if raw.exists() and not keep:
+            # A run that stopped before it could tidy up leaves one of these behind, and a continent
+            # is tens of gigabytes of disk that the rest of the refresh wants.
+            say('   dropping %s, which has already been filtered (%.0f MB)' % (raw.name, raw.stat().st_size / 1e6))
+            raw.unlink()
         return out
     pbf = download(path, into)
     part = part_of(out)
@@ -345,6 +351,23 @@ def who_commits():
     return got
 
 
+def can_publish(out):
+    """Everything publishing will need, settled before the work rather than after it.
+
+    A refresh of the world is an hour of work on top of most of a day's downloads. Finding out at
+    the end of it that there is nowhere to push to, or no name to commit under, is the one failure
+    that wastes all of it.
+    """
+    who_commits()
+    where = subprocess.run(['git', '-C', str(out), 'remote', 'get-url', 'origin'],
+                           capture_output=True, text=True)
+    if where.returncode:
+        sys.exit('%s is not a git repository with anywhere to push to, so --push would fail at the\n'
+                 'end of a long run. Clone the data repository into it first:\n'
+                 '    git clone git@github.com:tigerasks/plan-my-trip-data-stops.git %s' % (out, out))
+    say('publishing to', where.stdout.strip())
+
+
 def publish(out, message, reset):
     """Commit the snapshot and send it up.
 
@@ -352,8 +375,6 @@ def publish(out, message, reset):
     add a few hundred megabytes to the repository every time for no good reason.
     """
     git = ['git', '-C', str(out)]
-    if not (out / '.git').exists():
-        run(git + ['init', '-q', '-b', 'main'])
     for key, value in who_commits().items():
         run(git + ['config', key, value])
     if reset:
@@ -405,6 +426,8 @@ def main():
         import osmium           # noqa: F401
     except ImportError:
         sys.exit('I need pyosmium. Install it with: pip install osmium')
+    if args.push:
+        can_publish(out)
 
     started = time.time()
     for i, path in enumerate(paths, 1):

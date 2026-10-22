@@ -23,7 +23,16 @@ brew install osmium-tool                          # a compiled binary; no virtua
 .venv/bin/pip install -r tools/requirements.txt   # pyosmium, which is a different thing
 ```
 
-You also need the data repository checked out beside this one, with a remote it can push to.
+You also need the data repository checked out beside this one, which is where the snapshot is
+written and what `--push` pushes:
+
+```sh
+git clone git@github.com:tigerasks/plan-my-trip-data-stops.git ../plan-my-trip-data-stops
+```
+
+With `--push`, that clone and this repository's own `user.name` and `user.email` are checked before
+anything is downloaded. A refresh of the world is most of a day, and having nowhere to push it to
+is the one failure that would waste all of it.
 
 ### Running it
 
