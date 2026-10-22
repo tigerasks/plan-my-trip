@@ -21,10 +21,11 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   the planner gave up on Overpass's first refusal, and its 20-second timeout was shorter than
   Overpass's normal reply. The service test pages, `docs/probe.html` and `docs/probe-transit.html`,
   stay alongside the app.
-- Milestone 6 is part built. Those same live runs showed Overpass refusing five requests in six and
+- Milestone 6 is built. Those same live runs showed Overpass refusing five requests in six and
   taking 33 to 40 seconds when it answered, against a documented budget of about a hundred queries a
-  day across all users — so the stop lookup moves to a snapshot we publish. The build tool and a
-  Kansai-and-Kanto snapshot are done; the planner still asks Overpass until the app side lands.
+  day across all users — so the stop lookup moved to a snapshot we publish at
+  `https://tigerasks.github.io/plan-my-trip-data-stops/`. Overpass now answers only about a place.
+  What is published covers Kansai and Kanto; the global build has not been run yet.
 - The chat round trip (milestone 5) is still to come, and is the next thing after milestone 6.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
@@ -173,19 +174,24 @@ These are proposed; confirm each with the owner before starting it.
    - hand-back export: note, chosen version plus alternatives, changes, travel times;
    - credits and contact details, dark-mode polish;
    - finally, write `documentation/chat-guide.md`: how the chat prepares packages and reads hand-backs in the v2 format. The v1 spec stays as it is.
-6. **Stops from a snapshot — part built.** Overpass turned out not to be dependable enough to ask
-   about stops (design doc, decisions 22 to 24 and the fifth and sixth service runs), so the planner
-   reads them from a snapshot we publish instead:
+6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
+   stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
+   them from a snapshot we publish instead:
    - `tools/refresh-stops.py`, which builds the snapshot from OpenStreetMap extracts and publishes
-     it: built;
-   - a snapshot of Kansai and Kanto to develop against, 106,245 stops in 22 tiles: published at
-     `https://tigerasks.github.io/plan-my-trip-data-stops/`;
-   - the global snapshot: not yet run. About 86 GB of extracts to fetch, 35 GB of disk at peak, and
-     an hour or so of work after that. The owner runs it;
-   - the planner reading tiles rather than asking Overpass: still to do. Naming the tile a point
-     falls in, decoding the columnar format, pairing two stops on a line that genuinely serves them
-     both, the "stops as of" line in the credits, then deleting the Overpass stop path. Six commits,
-     planned but not started.
+     it;
+   - the planner reads a tile rather than asking anybody: the file a point needs is arithmetic on its
+     coordinates, the manifest says which tiles exist so nothing is ever asked for in vain, and a
+     tile is decoded only as far as its positions until a stop turns out to be near enough to matter;
+   - a line is named only where the map says it calls at **both** stops, and a pairing on such a line
+     beats a quicker one that is on nothing. For the demo trip that turned "probably the EX100 bus",
+     an airport coach picked out of nine candidates, into bus 206 from Kyoto Station to Gojozaka;
+   - the snapshot is consulted only where Transitous has no timetables for the area. Where it has
+     them and found nothing leaving, that answer stands: it knows about times, and the snapshot does
+     not;
+   - the credits name the snapshot, its date and its licence;
+   - **still to run: the global snapshot.** What is published covers Kansai and Kanto only — 106,245
+     stops in 22 tiles. The rest of the world is about 86 GB of extracts to fetch, 35 GB of disk at
+     peak, and an hour or so of work after that. The owner runs it.
 
 ## Open items
 
@@ -213,8 +219,8 @@ These are proposed; confirm each with the owner before starting it.
   - **still open, on the snapshot:** only Kansai and Kanto are measured, so how well OpenStreetMap
     maps stops and route relations elsewhere is unknown — the snapshot inherits whatever is there,
     exactly as the live query did;
-  - 48% of stops in Kansai carry no line, because the map has the stop but has not put it in a route
-    relation. Those can still be paired, just not named;
+  - 48% of stops in Kansai carry no line, and 28% of Tokyo's, because the map has the stop but has
+    not put it in a route relation. Those can still be paired, just not named;
   - staleness is a new failure mode: a line that opens after a refresh is invisible until the next
     one, and with Overpass gone from this path nothing catches it. The "stops as of" date is the
     mitigation, not a fix.

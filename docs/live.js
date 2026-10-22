@@ -24,12 +24,17 @@ const Live = {
   fetchJson(url, opts) {
     const key = String(url);
     if (this.cache.has(key)) return Promise.resolve(this.cache.get(key));
+    // Our own published files are not somebody's free service: they need not wait their turn in the
+    // queue, and nothing else should wait behind them.
+    const mine = !!(opts && opts.ours);
     this.pending++;
-    const run = this.queue.then(async () => {
+    const once = async () => {
       if (this.cache.has(key)) return this.cache.get(key);
-      const wait = this.last + GAP - Date.now();
-      if (wait > 0) await sleep(wait);
-      this.last = Date.now();
+      if (!mine) {
+        const wait = this.last + GAP - Date.now();
+        if (wait > 0) await sleep(wait);
+        this.last = Date.now();
+      }
       this.calls++;
       const stop = new AbortController();
       const timer = setTimeout(() => stop.abort(), (opts && opts.timeout) || TIMEOUT);
@@ -47,10 +52,11 @@ const Live = {
       } finally {
         clearTimeout(timer);
       }
-    });
+    };
+    const run = mine ? once() : this.queue.then(once);
     run.then(() => { this.pending--; }, () => { this.pending--; });
     // A failed call must not poison the queue for the next one.
-    this.queue = run.then(() => undefined, () => undefined);
+    if (!mine) this.queue = run.then(() => undefined, () => undefined);
     return run;
   },
 

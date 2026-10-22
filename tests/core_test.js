@@ -627,39 +627,135 @@ ok(C.sameWeekdaySoon('2026-10-28', '2026-10-21') === '2026-10-28', 'a week out s
 ok(C.sameWeekdaySoon('2026-10-21', '2026-10-21') === null, 'today is no stand-in: its services may have run');
 ok(C.daysApart('2026-10-21', '2026-11-21') === 31 && C.daysApart('x', 'y') === null, 'and days count plainly');
 
+console.log('\n== Finding the right tile of the stop snapshot ==');
+ok(C.tileName(34.9858, 135.7588) === '34_135', 'a point names the tile it falls in by arithmetic alone');
+ok(C.tileName(-0.5, -0.5) === '-1_-1', 'and south or west of nothing still floors downwards');
+ok(C.tileName(null, 1) === null, 'a point with no position names no tile');
+ok(C.tileUrl('34_135').endsWith('/tiles/34_135.json'), 'which gives the file to fetch: ' + C.tileUrl('34_135'));
+ok(C.tilesNear({ lat: 34.5, lng: 135.5 }, 1600).join() === '34_135',
+   'a point in the middle of a tile needs only that one');
+{
+  // The demo trip's own stay sits 1.58 km short of the 35th parallel, so it genuinely reaches over.
+  const two = C.tilesNear({ lat: 34.9858, lng: 135.7588 }, 1600);
+  ok(two.length === 2 && two.includes('34_135') && two.includes('35_135'),
+     'a point within the reach of an edge needs the neighbour too: ' + two.join(' '));
+  const corner = C.tilesNear({ lat: 34.9999, lng: 135.0001 }, 1600);
+  ok(corner.length === 4, 'and one near a corner needs all four: ' + corner.join(' '));
+  ok(C.tilesNear({ lat: 89.99, lng: 10 }, 1600).length <= 2,
+     'while a point by the pole does not ask for the whole parallel, where the degrees crowd together');
+  ok(C.tilesNear({ lat: 34.5, lng: 135.5 }, 0).join() === '34_135', 'no reach at all is still the tile it is in');
+  ok(C.tilesNear({}, 1600).length === 0, 'and a point with no position needs nothing');
+}
+ok(C.parseManifest({ v: 2, tiles: ['1_1'] }) === null,
+   'a snapshot written to a newer format is refused rather than half read');
+ok(C.parseManifest({ v: 1, tiles: [] }) === null, 'and one with no tiles in it is nothing to go on');
+{
+  const man = C.parseManifest({ v: 1, built: '2026-10-22', stops: 106245, degrees: 1,
+                                regions: ['kansai', 'kanto'], tiles: ['34_135', '35_139'] });
+  ok(man.tiles.length === 2 && man.built === '2026-10-22',
+     'a good one says which tiles there are, and when it was built: ' + man.built);
+  ok(man.stops === 106245, 'and how many stops it holds, which is worth showing');
+}
+
+console.log('\n== Reading the stops out of a tile ==');
+// Real tiles, cut out of the published snapshot, so this meets the format the planner will meet.
+const TILES = {
+  '34_135': require('./stops/tiles/34_135.json'),
+  '35_135': require('./stops/tiles/35_135.json'),
+};
+const STOP_MAN = C.parseManifest(require('./stops/manifest.json'));
+{
+  const t = C.parseTile(TILES['34_135'], '34_135');
+  ok(t && t.count === TILES['34_135'].k.length, 'a tile decodes to as many stops as it holds: ' + t.count);
+  ok(t.names.length === t.count, 'with a name for every one, even the ones that have none');
+  let inside = true;
+  for (let i = 0; i < t.count; i++) {
+    if (!(t.lat[i] >= 34 && t.lat[i] < 35 && t.lng[i] >= 135 && t.lng[i] < 136)) inside = false;
+  }
+  ok(inside, 'and every position lands inside the tile, once the deltas are added up');
+  ok(C.parseTile(TILES['34_135']) !== null, 'a tile needs no name to decode');
+  ok(C.parseTile({ v: 2, o: [0, 0], y: [], x: [], k: [], l: [], n: '' }) === null,
+     'a tile written to a newer format is refused rather than half read');
+  ok(C.parseTile({ v: 1, o: [0, 0], y: [1], x: [1], k: [0], l: [[]], n: '' + String.fromCharCode(10) }) === null,
+     'and one whose names do not line up with its stops is refused, since the rest would be misnamed');
+  ok(C.parseTile({}) === null, 'as is nothing at all');
+}
+{
+  // The planner's own stay, which sits where two tiles meet.
+  const HOTEL = { lat: 34.9858, lng: 135.7588 };
+  let near = [];
+  for (const name of C.tilesNear(HOTEL, C.STOP_REACH)) {
+    if (STOP_MAN.tiles.includes(name)) near = near.concat(C.stopsWithin(C.parseTile(TILES[name], name), HOTEL, C.STOP_REACH));
+  }
+  ok(near.length > 20, 'a busy station has plenty of stops within ten minutes\' walk: ' + near.length);
+  ok(near.every((s) => s.km * 1000 <= C.STOP_REACH), 'none of them further than that');
+  ok(near[0].km <= near[near.length - 1].km, 'nearest first');
+  ok(near.some((s) => s.name === 'Kyoto'), 'Kyoto Station among them, named in English');
+  ok(near.some((s) => s.lines.length), 'and at least one saying which lines call there');
+  ok(near.every((s) => C.STOP_KINDS.includes(s.kind)), 'every stop sorted into a kind we know');
+  ok(new Set(near.map((s) => s.id)).size === near.length, 'and each with an id of its own, so a pairing cannot use one twice');
+  const tight = C.stopsWithin(C.parseTile(TILES['34_135'], '34_135'), HOTEL, 60);
+  ok(tight.length < near.length, 'a shorter reach returns fewer: ' + tight.length + ' within 60 m');
+  ok(C.stopsWithin(C.parseTile(TILES['34_135'], '34_135'), {}, 800).length === 0,
+     'and a point with no position reaches nothing');
+}
+
 console.log('\n== Working a leg out from the stops ==');
 const sFrom = { lat: 34.9858, lng: 135.7588 }, sTo = { lat: 34.9948, lng: 135.7858 };
-const sNear = C.parseNear({ elements: [
-  { type: 'node', id: 1, lat: 34.9862, lon: 135.7596, tags: { highway: 'bus_stop', name: 'Hotel-mae' } },
-  { type: 'node', id: 2, lat: 34.9840, lon: 135.7570, tags: { railway: 'station', 'name:en': 'Pretend Station', name: '架空駅' } },
-  { type: 'way', id: 3, center: { lat: 34.9850, lon: 135.7580 }, tags: { public_transport: 'station', name: 'A platform' } },
-  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
-  { type: 'node', id: 4, tags: { highway: 'bus_stop', name: 'Nowhere' } },
-] });
-ok(sNear.stops.length === 3, 'stops come back from the map, whether nodes or ways: ' + sNear.stops.length);
-ok(sNear.stops[1].name === 'Pretend Station', 'named in English where the map has it');
-ok(sNear.stops.map((x) => x.kind).join() === 'bus,rail,stop', 'and sorted into what kind of stop they are');
-ok(sNear.stops[2].lat === 34.9850, 'a stop mapped as a way is taken at its centre');
-ok(sNear.lines.length === 1 && sNear.lines[0].ref === '205', 'the lines that run by are kept apart from the stops');
-ok(!sNear.capped, 'and an answer well under the limit is not a truncated one');
+// What the snapshot hands over: a stop knows which lines call at it, which is the whole point.
+const stop = (id, name, lat, lng, kind, lines) => ({ id, name, lat, lng, kind, lines });
+// Two stops by the hotel. One is nearer; only the other is on a line that also serves the temple.
+const sStart = [
+  stop('a', 'Quick Corner', 34.9859, 135.7589, 'bus', ['99']),
+  stop('b', 'Hotel-mae', 34.9862, 135.7596, 'bus', ['205', '17']),
+];
+const sEnd = [stop('c', 'Temple-mae', 34.9944, 135.7850, 'bus', ['205'])];
+ok(C.sharedLine(sStart[1], sEnd[0]).ref === '205', 'a line calling at both stops is the one to name');
+ok(C.sharedLine(sStart[0], sEnd[0]) === null, 'two stops with nothing in common share no line');
+ok(C.sharedLine({ lines: ['9', '206'] }, { lines: ['206', '9'] }).ref === '9',
+  'where several are shared, the shortest label wins, which is usually the line number');
+ok(C.sharedLine({ lines: ['9', '206'] }, { lines: ['206', '9'] }).all.length === 2,
+  'and the rest are kept, so the leg can say how many others there are');
+ok(C.sharedLine({ kind: 'rail', lines: ['A'] }, { kind: 'bus', lines: ['A'] }).kind === 'train',
+  'a rail stop at either end makes it a train rather than a bus');
 
-const sFar = C.parseNear({ elements: [
-  { type: 'node', id: 5, lat: 34.9944, lon: 135.7850, tags: { highway: 'bus_stop', name: 'Temple-mae' } },
-  { type: 'relation', id: 9, tags: { type: 'route', route: 'bus', ref: '205', name: 'Bus 205' } },
-] });
-const sPlan = C.stopPlan(sFrom, sTo, sNear.stops, sFar.stops, { transit: 'city' });
-ok(sPlan.from.name === 'Hotel-mae' && sPlan.to.name === 'Temple-mae', 'the quickest pairing is the nearest here');
+const sPlan = C.stopPlan(sFrom, sTo, sStart, sEnd, { transit: 'city' });
+ok(sPlan.from.name === 'Hotel-mae',
+  'the pairing on a line that serves both beats a nearer stop that is on nothing: ' + sPlan.from.name);
 ok(sPlan.minutes === sPlan.walkOn + sPlan.ride + sPlan.walkOff, 'and its time is walk plus ride plus walk');
-ok(C.commonLine(sNear.lines, sFar.lines).ref === '205', 'a line by both ends is the one to name');
-ok(C.commonLine(sNear.lines, []) === null, 'one by only one end is not');
-const sSlot = C.stopSlot(sPlan, C.commonLine(sNear.lines, sFar.lines), '2026-10-21T10:00:00Z');
-ok(sSlot.source === 'stops' && sSlot.minutes === sPlan.minutes, 'the leg keeps it as what it is: from the map');
-ok(sSlot.name === 'probably the 205 bus', 'hedged, since the map cannot promise the line stops there: ' + sSlot.name);
+ok(sPlan.line.ref === '205', 'with the line carried along on the plan');
+{
+  // With no line in common anywhere, the quickest pairing is still offered, just unnamed.
+  const bare = C.stopPlan(sFrom, sTo, [stop('a', 'Quick Corner', 34.9859, 135.7589, 'bus', [])],
+                          [stop('c', 'Temple-mae', 34.9944, 135.7850, 'bus', [])], { transit: 'city' });
+  ok(bare && bare.line === null, 'where nothing is shared the quickest pairing stands, with no line named');
+  ok(C.stopSlot(bare, 'now').name === null, 'and the leg claims no line it cannot point to');
+}
+const sSlot = C.stopSlot(sPlan, '2026-10-21T10:00:00Z');
+ok(sSlot.source === 'stops' && sSlot.minutes === sPlan.minutes, 'the leg keeps it as what it is: from the stops');
+ok(sSlot.name === 'probably the 205 bus', 'hedged, since the snapshot knows no times at all: ' + sSlot.name);
 ok(/^walk .* · ≈ .* · walk /.test(sSlot.detail), 'and spelled out walk, ride, walk: ' + sSlot.detail);
-ok(C.stopPlan(sFrom, sTo, [], sFar.stops, {}) === null, 'no stops at one end is no journey');
-ok(C.stopSlot(null, null, 'now') === null, 'and no plan is no leg');
-ok(C.stopsNearUrl(sFrom).includes('around%3A800'), 'the map is asked within ten minutes\' walk');
-ok(C.stopsNearUrl(sFrom, C.STOP_REACH_WIDE).includes('around%3A1600'), 'and twenty where that found nothing');
+{
+  const many = C.stopSlot(C.stopPlan(sFrom, sTo,
+    [stop('b', 'Hotel-mae', 34.9862, 135.7596, 'bus', ['205', '17'])],
+    [stop('c', 'Temple-mae', 34.9944, 135.7850, 'bus', ['205', '17'])], { transit: 'city' }), 'now');
+  ok(many.name === 'probably the 17 bus, or one other',
+    'and says how many others call at both, which is how much of a guess this is: ' + many.name);
+}
+ok(C.stopPlan(sFrom, sTo, [], sEnd, {}) === null, 'no stops at one end is no journey');
+ok(C.stopSlot(null, 'now') === null, 'and no plan is no leg');
+{
+  // The snapshot hands over a whole tile's worth, so the reach is the model's job to enforce.
+  const far = [stop('z', 'Miles Away', 35.3, 136.2, 'bus', ['205'])];
+  ok(C.stopPlan(sFrom, sTo, far, sEnd, {}) === null,
+    'a stop beyond twenty minutes\' walk is no use, however good its line');
+  const middling = [stop('m', 'A Fair Walk', 34.9950, 135.7640, 'bus', ['205'])];
+  ok(C.stopPlan(sFrom, sTo, middling, sEnd, {}) !== null,
+    'while one between ten and twenty minutes is used when there is nothing closer');
+  const both = middling.concat([stop('n', 'Round the Corner', 34.9860, 135.7590, 'bus', ['205'])]);
+  ok(C.stopPlan(sFrom, sTo, both, sEnd, {}).from.name === 'Round the Corner',
+    'and ignored once there is');
+}
 
 console.log('\n== Local time, where the trip is ==');
 ok(C.goodZone('Asia/Tokyo') && !C.goodZone('Mars/Olympus') && !C.goodZone(''),

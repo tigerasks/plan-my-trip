@@ -60,11 +60,13 @@ with sync_playwright() as pw:
     # nearby or none. The two together are what tell "no timetables here" from "nothing at that time".
     # 'soon' stands for a timetable that has not been published as far out as the trip: it answers
     # for dates in the coming week and has nothing for the trip's own, which is TRANSIT['far'].
-    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none', 'map': False}
-    # How many times Overpass refuses outright before it answers, counted per kind of query. By a
-    # busy station the fifth service test was refused three times in a row, so this is the normal
-    # case, not a rare one.
-    BUSY = {'around': 0, 'details': 0, 'status': 502}
+    TRANSIT = {'ride': True, 'stops': True, 'far': 'time=none'}
+    # The stop snapshot is served from tests/stops; this makes it unreadable, which is the only way
+    # it can fail now that it is a static file of our own.
+    SNAP = {'fail': False}
+    # How many times Overpass refuses outright before it answers. It only gets place lookups now,
+    # and it refused three times running in the fifth service test, so this is the normal case.
+    BUSY = {'details': 0, 'status': 502}
 
     def services(r):
         u = r.request.url
@@ -97,21 +99,20 @@ with sync_playwright() as pw:
         if 'google.com/maps' in u:
             r.fulfill(status=200, body='<html><title>Maps</title></html>', headers={'Content-Type': 'text/html'})
             return True
+        if 'plan-my-trip-data-stops' in u:
+            asked.append(u)
+            if SNAP['fail']:
+                r.fulfill(status=503, body='no', headers={'Access-Control-Allow-Origin': '*'})
+                return True
+            harness.serve_snapshot(r, u)            # the small real snapshot in tests/stops
+            return True
         if 'overpass-api.de' in u:
             asked.append(u)
             q = urllib.parse.unquote(u)
-            kind = 'around' if 'around:' in q else 'details'
-            if BUSY[kind] > 0:
-                BUSY[kind] -= 1
+            if BUSY['details'] > 0:
+                BUSY['details'] -= 1
                 r.fulfill(status=BUSY['status'], body='# too much',
                           headers={'Access-Control-Allow-Origin': '*'})
-                return True
-            if 'around:' in q:                      # the stop-based fallback asking what is nearby
-                if not TRANSIT['map']:
-                    r.fulfill(status=200, headers=H, body=json.dumps({'elements': []}))
-                else:
-                    near = FIX['stopsNearTemple'] if '34.994800' in q else FIX['stopsNearHotel']
-                    r.fulfill(status=200, headers=H, body=json.dumps(near))
                 return True
             want = re.search(r'(node|way|relation)\((\d+)\)', q)
             r.fulfill(status=200, headers={'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
@@ -394,20 +395,22 @@ with sync_playwright() as pw:
     ctx, pg = open_page(extra=fake_service)
     spacing = pg.evaluate('''async () => {
       const L = window.DayPlannerLive, at = [];
+      // The page reads the stop snapshot's manifest by itself, so count from wherever that left off.
+      const before = L.calls;
       const mark = (u) => L.fetchJson(u).then(() => at.push(Date.now()));
       await Promise.all([mark('https://example.test/slow?a'), mark('https://example.test/slow?b'),
                          mark('https://example.test/slow?c')]);
-      return { calls: L.calls, gaps: at.slice(1).map((t, i) => t - at[i]) };
+      return { calls: L.calls - before, total: L.calls, gaps: at.slice(1).map((t, i) => t - at[i]) };
     }''')
     ck(spacing['calls'] == 3, 'three different questions make three requests')
     ck(all(g >= 1000 for g in spacing['gaps']), 'spaced at least a second apart, as their terms ask: ' + str(spacing['gaps']))
     again = pg.evaluate('''async () => {
-      const L = window.DayPlannerLive;
+      const L = window.DayPlannerLive, before = L.calls;
       await L.fetchJson('https://example.test/slow?a');
       await L.fetchJson('https://example.test/slow?a');
-      return L.calls;
+      return L.calls - before;
     }''')
-    ck(again == 3, 'asking the same thing again is answered from the page, not the service')
+    ck(again == 0, 'asking the same thing again is answered from the page, not the service')
     ck.expect('status of 500')   # the browser logs the failed request; that is the point of the test
     broke = pg.evaluate('''async () => {
       const L = window.DayPlannerLive;
@@ -440,45 +443,58 @@ with sync_playwright() as pw:
     ck(leg['detail'] in pg.inner_text('#sheet'), 'with the reason under it')
     ctx.close()
 
-    TRANSIT['stops'] = False
+    # Where it does know stops and simply found nothing leaving, that is a real answer about real
+    # services, and better than anything a snapshot with no times in it could offer.
+    TRANSIT['stops'] = True
+    asked.clear()
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.wait_for_function("() => ((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).detail != null", timeout=40000)
+    pg.wait_for_timeout(2500)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck('no stops at either end' in leg['detail'],
-       'where it knows no stops at all, it says so instead: ' + leg['detail'])
-    ck('estimate stands' in leg['detail'], 'and what the planner will do about it')
+    ck(leg['source'] == 'transitous' and leg['minutes'] is None,
+       'the timetable\'s own answer stands: ' + str(leg['detail']))
+    ck('found nothing leaving' in leg['detail'], 'saying nothing runs then, not that there are no buses')
+    ck(not any('data-stops/tiles' in u for u in asked),
+       'and no tile is read at all, because a guess would be worse than what it already knows')
     ctx.close()
 
-    # ---- working it out from the stops on the map
-    # No timetables does not mean no buses. The map knows where the stops are and which lines run by
-    # them, which is the method anyone would use by hand (design doc, "Travel times").
-    TRANSIT['map'] = True
+    # ---- working it out from the stops in the snapshot
+    # No timetables does not mean no buses. Where Transitous knows no stops at all it has none for
+    # this kind of service here, and the snapshot is then exactly the thing that should answer: it
+    # says where the stops are and which lines call at them, which is the method anyone would use by
+    # hand (design doc, decisions 22 to 25). What the tests serve is a real piece of Kyoto, so these
+    # are real answers.
+    TRANSIT['stops'] = False
     asked.clear()
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).source) === 'stops'", timeout=60000)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(any('reverse-geocode' in u for u in asked),
+       'the timetables are asked whether they cover the place at all, before the snapshot is touched')
     ck(leg['minutes'] and leg['minutes'] < 60, 'the stops give a time after all: %s min' % leg['minutes'])
-    ck('walk' in leg['detail'] and '·' in leg['detail'],
+    ck('walk' in leg['detail'] and '\u00b7' in leg['detail'],
        'spelled out as walk, ride, walk: ' + leg['detail'])
-    ck('Pretend Station' in leg['detail'] and 'Temple-mae' in leg['detail'],
-       'naming the stop it would use at each end, which need not be a bus stop')
-    ck('205' in (leg['name'] or ''), 'and the line that runs by both ends: ' + str(leg['name']))
-    ck('probably' in (leg['name'] or ''), 'hedged, since the map cannot promise it stops at both')
-    maps = [u for u in asked if 'around:' in urllib.parse.unquote(u)]
-    ck(len(maps) == 2, 'the map is asked once per end, not once per leg: %d queries' % len(maps))
-    ck('around:800' in urllib.parse.unquote(maps[0]), 'within ten minutes\' walk')
+    ck('Kyoto Station' in leg['detail'] and 'Gojozaka' in leg['detail'],
+       'naming the stop it would use at each end')
+    ck('206' in (leg['name'] or ''), 'and a line that really calls at both: ' + str(leg['name']))
+    ck('probably' in (leg['name'] or ''),
+       'still hedged, since the snapshot cannot promise the two stops are consecutive')
+    tiles = [u for u in asked if 'plan-my-trip-data-stops' in u]
+    ck(any('manifest.json' in u for u in tiles), 'the manifest is read before any tile is asked for')
+    ck(all('34_135' in u or '35_135' in u or 'manifest' in u for u in tiles),
+       'and only the tiles the two ends reach into are fetched: '
+       + ', '.join(sorted({u.rsplit('/', 1)[1] for u in tiles})))
     # The walks at each end are the part that can be known for certain, so they are checked.
-    pg.wait_for_function("() => /walk 8 min/.test((((window.DayPlannerApp.trip.days['2026-11-21']"
-                         ".legs['start>example-temple'] || {}).transit || {}).detail) || '')", timeout=30000)
+    pg.wait_for_function("() => /walk \\d+ min to Kyoto Station/.test((((window.DayPlannerApp.trip"
+                         ".days['2026-11-21'].legs['start>example-temple'] || {}).transit || {}).detail) || '')",
+                         timeout=30000)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck('walk 8 min to Pretend Station' in leg['detail'],
-       'and the walks to and from the stops are then checked for real, streets and all: ' + leg['detail'])
-    ck(any('135.757000,34.984000' in u for u in asked if 'routed-foot' in u),
-       'which means asking OSRM about the walk to that one stop, not to every stop there is')
-    ck(len([u for u in asked if 'routed-foot' in u and '34.984000' in u]) == 1, 'and asking once')
-    ck('≈' in pg.inner_text('.timeline'), 'and the day still says it is an estimate, because it is')
+    walks = [u for u in asked if 'routed-foot' in u]
+    ck(len(walks) >= 2, 'the two walks it settles on are then checked for real: ' + leg['detail'])
+    ck(len(walks) == len(set(walks)), 'each asked once, not once per stop there is')
+    ck('\u2248' in pg.inner_text('.timeline'), 'and the day still says it is an estimate, because it is')
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
     ck('from the stops nearby' in pg.inner_text('#sheet'), 'the card says where the time came from')
@@ -486,83 +502,77 @@ with sync_playwright() as pw:
     pg.screenshot(path=str(SHOTS / 'app_stops_desktop_light.png'))
     ctx.close()
 
-    # where the map has nothing either, the planner says so and stops asking
-    TRANSIT['map'] = False
-    ctx, pg = open_page(held=DEMO, extra=services)
+    # a leg in a corner of the world the snapshot has no tile for gets no public transport, said plainly
+    NOWHERE = json.loads(json.dumps(DEMO))
+    NOWHERE['trip']['days']['2026-11-21']['start'] = {'name': 'Nowhere in particular',
+                                                      'lat': 0.5, 'lng': 0.5}
+    NOWHERE['trip']['places']['example-temple']['lat'] = 0.52
+    NOWHERE['trip']['places']['example-temple']['lng'] = 0.52
+    ctx, pg = open_page(held=NOWHERE, extra=services)
     pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).source) === 'stops'", timeout=60000)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
     ck(leg['minutes'] is None and 'no stops within twenty' in leg['detail'].lower(),
-       'with nothing on the map either, it gives up on public transport for that leg: ' + leg['detail'])
+       'with no stops at either end it gives up on public transport for that leg: ' + leg['detail'])
+    asked_tiles = [u for u in asked if 'data-stops/tiles' in u]
+    ck(not any('/0_0.json' in u for u in asked_tiles),
+       'and never asks for a tile the manifest does not list')
     ctx.close()
 
-    # ---- when Overpass is too busy to answer
-    # It says so with a 502 and asks to be retried, and by a big station that is what usually
-    # happens. Giving up on the first refusal would report "no stops" where there are plenty.
-    TRANSIT['map'] = True
-    BUSY['around'] = 3
-    asked.clear()
-    ck.expect('502')            # the test refuses on purpose; the browser logs the failed request
+    # ---- when the snapshot cannot be read
+    # It is a static file on our own origin, so this means the browser is offline rather than a
+    # service being busy. Either way the leg says which, and does not pass it off as "no buses".
+    SNAP['fail'] = True
+    ck.expect('503')            # the test refuses on purpose; the browser logs the failed request
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
                          " || {}).transit || {}).source) === 'stops'", timeout=60000)
     leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck(leg['minutes'] and leg['minutes'] < 60,
-       'three refusals in a row and the stops still come through: %s min' % leg['minutes'])
-    ck('205' in (leg['name'] or ''), 'with the line named, so the retry got the whole answer')
-    maps = [u for u in asked if 'around:' in urllib.parse.unquote(u)]
-    ck(len(maps) >= 5, 'which took asking again: %d queries for the two ends' % len(maps))
-    ck(BUSY['around'] == 0, 'and every refusal was used up rather than being retried for ever')
-    ctx.close()
-
-    # where it never gets through, the leg says that, rather than passing it off as the timetable's answer
-    BUSY['around'] = 99
-    ctx, pg = open_page(held=DEMO, extra=services)
-    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
-                         " || {}).transit || {}).source) === 'stops'", timeout=90000)
-    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck(leg['minutes'] is None and 'too busy' in leg['detail'],
-       'a map that never answers is reported as that, not as "there are no stops": ' + leg['detail'])
+    ck(leg['minutes'] is None and 'could not be read' in leg['detail'],
+       'a snapshot that cannot be read is reported as that, not as "there are no stops": '
+       + leg['detail'])
     ck('again' in leg['detail'], 'with the one thing worth doing about it')
     pg.click('.timeline .leg >> nth=0')
     pg.wait_for_timeout(300)
-    ck('too busy' in pg.inner_text('#sheet'), 'and the card says the same, where the retry button is')
+    ck('could not be read' in pg.inner_text('#sheet'),
+       'and the card says the same, where the button to try again is')
+    ck('\u2248' in pg.inner_text('.timeline'), 'while the day carries on with its estimates')
     ctx.close()
-    BUSY['around'] = 0
+    SNAP['fail'] = False
 
-    # being told off for asking too much is waited out too, not argued with
-    BUSY['around'], BUSY['status'] = 1, 429
-    ck.expect('429')
-    asked.clear()
-    started = time.time()
-    ctx, pg = open_page(held=DEMO, extra=services)
-    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
-                         " || {}).transit || {}).source) === 'stops'", timeout=90000)
-    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
-    ck(leg['minutes'] and leg['minutes'] < 60, 'a rate limit is outlasted as well: %s min' % leg['minutes'])
-    ck(time.time() - started > 15, 'after the long wait a 429 earns, rather than the short one a 502 gets')
-    ctx.close()
-    BUSY['around'], BUSY['status'] = 0, 502
-
-    # a place preview survives it too, since a user is sitting there waiting for this one
+    # ---- Overpass, still asked about a place
+    # The stops moved to the snapshot; place details did not. It refuses with a 502 whenever its
+    # workers are busy, which by a big station is most of the time, so it is asked again.
     BUSY['details'] = 2
+    ck.expect('502')
     ctx, pg = open_page(held=DEMO, extra=services)
     pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][4]]))
     pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.75938, lat: 34.97887}})")
     pg.wait_for_timeout(200)
     ck('Pizza Little Party' in pg.inner_text('.sh-title'),
        'the preview opens on what the map knew while Overpass is refusing')
-    ck('Looking…' in pg.inner_text('#sheet'), 'and says it is still asking rather than that it failed')
-    pg.wait_for_function("() => !/Looking…/.test(document.getElementById('sheet').innerText)", timeout=60000)
+    ck('Looking\u2026' in pg.inner_text('#sheet'), 'and says it is still asking rather than that it failed')
+    pg.wait_for_function("() => !/Looking\u2026/.test(document.getElementById('sheet').innerText)", timeout=60000)
     ck('could not be reached' not in pg.inner_text('#sheet'),
        'then the retry lands and the details arrive, instead of an apology')
+    ck(BUSY['details'] == 0, 'having used up every refusal rather than retrying for ever')
     ctx.close()
+
+    # being told off for asking too much is waited out, not argued with
+    BUSY['details'], BUSY['status'] = 1, 429
+    ck.expect('429')
+    started = time.time()
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.evaluate('window.__features = %s' % json.dumps([FIX['mapFeatures'][4]]))
+    pg.evaluate("window.__lastMap.__fire('click', {point: {x: 40, y: 40}, lngLat: {lng: 135.75938, lat: 34.97887}})")
+    pg.wait_for_function("() => !/Looking\u2026/.test(document.getElementById('sheet').innerText)", timeout=60000)
+    ck(time.time() - started > 15,
+       'a 429 waits the long wait it earns, rather than the short one a 502 gets')
+    ctx.close()
+    BUSY['details'], BUSY['status'] = 0, 502
 
     TRANSIT['ride'] = True
     TRANSIT['stops'] = True
-    TRANSIT['map'] = False
-    BUSY['around'] = 0
-    BUSY['details'] = 0
 
     # ---- a trip further out than the timetables reach
     # Timetables are usually published a few months ahead. A trip beyond that gets nothing back, and
@@ -609,6 +619,17 @@ with sync_playwright() as pw:
     ck(all(pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.rel === "noopener noreferrer")')),
        'every outgoing link opens safely')
     ck('https://github.com/tigerasks' in links, 'and the planner says who to talk to')
+    # The stops are OpenStreetMap data we republish, so they are credited as a database of their own,
+    # with the date: a line that opened since the last refresh is not in there.
+    pg.wait_for_function("() => /as of/.test(document.querySelector('.credits').innerText)", timeout=30000)
+    credits = pg.inner_text('.credits')
+    ck('our own snapshot' in credits, 'the stops are credited as ours rather than somebody\'s service')
+    ck('as of Thu 22 Oct' in credits,
+       'with the date it was built, so a stale one is visible: '
+       + [l for l in credits.split('\n') if 'as of' in l][0])
+    ck('ODbL' in credits, 'and under the licence the data comes with')
+    ck('https://opendatacommons.org/licenses/odbl/' in
+       pg.eval_on_selector_all('.credits a', 'els => els.map(e => e.href)'), 'which is linked')
     ctx.close()
 
     # ---- the map

@@ -269,17 +269,37 @@ encoded at stated alongside it (6, in the fifth run). A checked leg is drawn alo
 whatever the mode; only estimates stay as dashed straight lines. A shape that does not land on the
 leg is dropped and the time kept, so a misread draws nothing rather than a line across the sea.
 
-Without timetables, it falls back to a stop-based estimate. This is the manual method automated:
-- it considers every station and stop within 10 minutes' walk of each end, from the map data, not just the nearest one. Where an end has none, it widens the search to 20 minutes' walk. If there are still none, it gives up on public transport for that leg and says so;
-- **the map queries run in the background.** Overpass took tens of seconds for an 800 m query in the
-  fourth run, so a leg shows its estimate at once and the stops and the line name arrive afterwards,
-  cached in the trip, or never. Nothing waits on them. One query per end, not per leg, so a day's
-  stops are asked about once however many legs touch them;
-- where OpenStreetMap has the bus and rail lines mapped (fetched through Overpass), it looks for a line relation near both ends and names it — "probably the 205 bus". Near both ends is not proof that it stops at both, which the wording admits;
-- it pairs the nearest dozen stops at each end, estimating both walks and the ride from distance, and takes the quickest pairing. Then it checks that pairing's two walks for real against OSRM — only those two, since asking about every candidate would be hundreds of requests for one leg. The ride stays an estimate, which is why the whole result is marked ≈;
-- it suggests public transport only when that clearly beats walking; otherwise the leg stays a walk.
+Where there are no timetables, it falls back to a stop-based estimate. This is the manual method
+automated, and it reads the stops out of a snapshot we publish ourselves rather than asking anybody
+(decisions 22 to 25):
+- the snapshot is asked **only where Transitous has no timetables for the area.** Where it does have
+  them and simply found nothing leaving then, that is a real answer about real services, and better
+  than anything a map that knows no times could offer. The stop check that tells those two apart is
+  what decides it;
+- it considers every station and stop within 10 minutes' walk of each end, not just the nearest one.
+  Where an end has none, it widens to 20 minutes. If there are still none, it gives up on public
+  transport for that leg and says so;
+- **a tile is fetched, not a query asked.** The file a point needs is arithmetic on its coordinates,
+  it is on our own origin, and it is kept for as long as the page is open. Kyoto's tile is 177 KB and
+  Tokyo's 469 KB over the wire, both in under half a second — against the 33 to 40 seconds Overpass
+  took, when it answered at all;
+- **a line is named only where it calls at both stops.** The snapshot carries route relation
+  membership, so this is a good deal more than the old live query could say, which only knew a route
+  passed somewhere near each end. Where several lines serve both, the leg says so — "probably the 206
+  bus, or one of 8 others". It still cannot promise the two stops are consecutive, or that anything
+  runs at the time, which is what "probably" is doing;
+- it pairs the nearest dozen stops at each end, estimating both walks and the ride from distance, and
+  prefers the quickest pairing **on a line that serves both** over a quicker one that is on nothing:
+  one is a journey somebody could make, the other is two stops that happen to be near each other.
+  Then it checks that pairing's two walks for real against OSRM — only those two, since asking about
+  every candidate would be hundreds of requests for one leg. The ride stays an estimate, which is why
+  the whole result is marked ≈;
+- it suggests public transport only when that clearly beats walking; otherwise the leg stays a walk,
+  which is also what stops a poor pairing doing any harm.
 
-The result is marked ≈ and spells out the stops, and the line where known. For example: "walk 3 min to Imamiya-jinja-mae · ≈ 14 min by bus · walk 5 min". You can correct it with your own time.
+The result is marked ≈ and spells out the stops, and the line where known. From the snapshot, for the
+demo trip's own first leg: "probably the 206 bus · walk 1 min to Kyoto Station · ≈ 18 min by bus ·
+walk 13 min from Gojozaka". You can correct it with your own time.
 
 Your own entries still win. Google's routing service itself isn't an option: as I understand its terms, its results can't be shown on a non-Google map (to double-check if it ever matters).
 
@@ -559,11 +579,12 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 17 | How does a leg hold what the services say? | Every way of making it side by side — walking, public transport, taxi — each with its own time, source and shape. Checking one never loses another. The planner picks which the day uses: your own time, then whichever you picked, then the quickest that makes sense. A taxi is never assumed. |
 | 18 | How does the planner know what instant to ask a timetable about? | The trip says which time zone its times are in (`tz`, a name like `Asia/Tokyo`), and the browser's own time zone database does the rest, summer time included. Left empty, it uses the device's own zone. Every time shown stays local to where you are going. |
 | 19 | Whose times calibrate the estimates? | Only times that measured something: OSRM, Transitous, and your own. A stop-based time is the planner's own arithmetic, so calibrating against it would be circular. |
-| 20 | What happens when Overpass refuses? | It is asked again, up to six times, and given 90 s to answer rather than the 20 s the fast services get. A 502 means its workers are busy, which by a big station is most of the time, so the wait starts at 2 s and doubles to a 15 s ceiling. A 429 means the planner itself is asking too much, so that waits the full 15 s straight away: the point is to stop crowding, not to insist. Giving up on the first refusal reported "no stops" where the map had a hundred. |
-| 21 | And when it never gets through? | The leg says so — "OpenStreetMap was too busy to say which stops are nearby" — rather than letting the timetable's "no stops near there" stand as the whole story. A map nobody could reach is not a map with nothing on it, and only one of those is worth asking again, which the leg card is how you do. |
+| 20 | What happens when Overpass refuses? | Overpass is only asked about a place now, never about stops. It is asked again, up to six times, and given 90 s to answer rather than the 20 s the fast services get. A 502 means its workers are busy, which by a big station is most of the time, so the wait starts at 2 s and doubles to a 15 s ceiling. A 429 means the planner itself is asking too much, so that waits the full 15 s straight away: the point is to stop crowding, not to insist. Giving up on the first refusal reported "no stops" where the map had a hundred. |
+| 21 | And when it never gets through? | A preview says so and everything else on it still holds. A leg no longer has this problem: a snapshot either has the stops or does not, and the only way it fails is the browser being offline, which the leg says plainly rather than reporting "no buses". |
 | 22 | Where do the stops come from? | A snapshot we build from OpenStreetMap and publish ourselves, not a live query. Overpass refused five requests in six, took 33 to 40 seconds when it answered, and its documented budget for something used regularly is about a hundred queries a day counted across everybody — a tenth of what one day's legs spent. The snapshot is also better data: route relation membership says which lines really call at a stop, where a live query could only say a relation was somewhere nearby. |
 | 23 | How is the snapshot laid out? | One file per whole degree of latitude and longitude, named `<lat>_<lng>.json`, so the planner finds the file it wants by arithmetic on the coordinates rather than shipping boundaries and testing which region a point is in. A `manifest.json` lists the tiles that exist, so the planner never asks for one that is not there. Each tile is columnar — positions delta-encoded as fixed point, names newline-joined, line labels written once and referenced by index — because GitHub Pages gzips in transit, so the repository pays the uncompressed size. Measured live: Tokyo is 48,248 stops, 1.8 MB on disk, 469 KB on the wire in 0.3 s; Kyoto 177 KB. |
 | 24 | How is it refreshed? | `tools/refresh-stops.py`, run by hand, roughly yearly. It lives in its own repository, `plan-my-trip-data-stops`, whose history is reset on each refresh so successive snapshots do not pile up a few hundred megabytes at a time in git. The planner shows the date it was built, because a line that opens afterwards is invisible until the next run. |
+| 25 | Which two stops does it pair? | The quickest pairing whose two stops share a line, in preference to a quicker pairing that shares none — route relation membership is the thing the old live query could not give, and it is the difference between a journey somebody could make and two stops that merely happen to be near. Where nothing is shared anywhere, the quickest pairing still stands, with no line named. Nothing silly gets through either way, because a ride is only used at all where it beats walking. For the demo trip this turned "probably the EX100 bus", an airport coach picked arbitrarily out of nine candidates, into bus 206 from Kyoto Station to Gojozaka, which is the real route to Kiyomizu-dera. |
 
 ## Open questions
 

@@ -575,6 +575,12 @@ function creditsHtml() {
     + ' · Walking and taxi: ' + CREDIT('https://routing.openstreetmap.de/about.html', 'OSRM at FOSSGIS')
     + ' · Timetables: ' + CREDIT('https://transitous.org/', 'Transitous')
     + ' (' + CREDIT('https://transitous.org/sources/', 'data sources') + ')<br>'
+    // The stops are OpenStreetMap data we republish ourselves, so they are credited as a database of
+    // their own. The date matters: a line that opened since the last refresh is not in there.
+    + 'Stops: ' + CREDIT(C.STOPS_HOME, 'our own snapshot')
+    + (Snap.man && Snap.man.built ? ' as of ' + esc(C.fmtDateUK(Snap.man.built)) : '')
+    + ', from © OpenStreetMap contributors ('
+    + CREDIT('https://opendatacommons.org/licenses/odbl/', 'ODbL') + ')<br>'
     + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
     + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
     + '</p>';
@@ -1223,18 +1229,33 @@ function whyNoJourney(from, to, departs) {
     return url ? Live.fetchJson(url).then((json) => C.parseStops(json), () => null) : Promise.resolve(null);
   };
   const place = (p, fallback) => (p && p.name ? p.name : fallback);
+  // `covered` says whether Transitous has timetables for both ends. Where it does, "nothing runs
+  // then" is a real answer about real services, and better than anything the planner could work out
+  // from a map that knows no times at all — so the stop snapshot is not consulted.
   return Promise.all([stopsAt(from), stopsAt(to)]).then(([a, b]) => {
     const when = departs ? ' at ' + C.fmtTime(C.minutesOfDay(departs, App.trip.tz)) : ' then';
-    if (!a || !b) return 'Transitous found no journey' + when + ', and could not say which stops it knows.';
-    if (!a.length && !b.length) {
-      return 'Transitous knows no stops at either end, so it has no timetables for this kind of '
-        + 'service here. The planner\'s own estimate stands.';
+    if (!a || !b) {
+      return { covered: false,
+        why: 'Transitous found no journey' + when + ', and could not say which stops it knows.' };
     }
-    if (!a.length) return 'Transitous knows no stops near ' + place(from, 'where you set off') + ', so it cannot plan from there.';
-    if (!b.length) return 'Transitous knows no stops near ' + place(to, 'where you are going') + ', so it cannot plan to there.';
+    if (!a.length && !b.length) {
+      return { covered: false,
+        why: 'Transitous knows no stops at either end, so it has no timetables for this kind of '
+          + 'service here. The planner\'s own estimate stands.' };
+    }
+    if (!a.length) {
+      return { covered: false, why: 'Transitous knows no stops near ' + place(from, 'where you set off')
+        + ', so it cannot plan from there.' };
+    }
+    if (!b.length) {
+      return { covered: false, why: 'Transitous knows no stops near ' + place(to, 'where you are going')
+        + ', so it cannot plan to there.' };
+    }
     // A short leg can have the same stop at both ends, so name each one once.
     const named = a.concat(b).filter((name, i, all) => all.indexOf(name) === i).slice(0, 3);
-    return 'Transitous knows stops at both ends (' + named.join(', ') + ') but found nothing leaving' + when + '.';
+    return { covered: true,
+      why: 'Transitous knows stops at both ends (' + named.join(', ') + ') but found nothing leaving'
+        + when + '.' };
   });
 }
 
@@ -1247,16 +1268,35 @@ function whyNoJourney(from, to, departs) {
 const OVERPASS_WAIT = 90000;
 const OVERPASS_TRIES = 6;
 const overpass = (url) => Live.fetchPatiently(url, { timeout: OVERPASS_WAIT, tries: OVERPASS_TRIES });
+// The stop snapshot: our own published files, so a tile is fetched once and then kept for as long
+// as the page is open. The manifest comes first and says which tiles exist, so the planner never
+// asks for one that is not there.
+const Snap = { man: null, asking: null, tiles: {} };
+function snapshot() {
+  if (!Snap.asking) {
+    Snap.asking = Live.fetchJson(C.manifestUrl(), { ours: true }).then((json) => {
+      Snap.man = C.parseManifest(json);
+      // The credits say when the snapshot was built, and only now is that known.
+      if (Snap.man) render();
+      return Snap.man;
+    }, () => null);
+  }
+  return Snap.asking;
+}
 function stopsNear(point) {
-  const ask = (metres) => {
-    const url = C.stopsNearUrl(point, metres);
-    return url ? overpass(url).then((j) => C.parseNear(j), () => null)
-      : Promise.resolve(null);
-  };
-  return ask(C.STOP_REACH).then((near) => {
-    // Nothing within ten minutes' walk is worth a wider look before giving up on the leg.
-    if (!near || near.stops.length || near.capped) return near;
-    return ask(C.STOP_REACH_WIDE).then((wider) => wider || near);
+  return snapshot().then((man) => {
+    if (!man) return null;                   // the snapshot itself could not be read
+    const want = C.tilesNear(point, C.STOP_REACH_WIDE).filter((name) => man.tiles.includes(name));
+    if (!want.length) return [];             // it covers this corner of the world and has nothing here
+    const tile = (name) => (Snap.tiles[name]
+      ? Promise.resolve(Snap.tiles[name])
+      : Live.fetchJson(C.tileUrl(name), { ours: true })
+        .then((json) => (Snap.tiles[name] = C.parseTile(json, name)), () => null));
+    return Promise.all(want.map(tile)).then((tiles) => {
+      let all = [];
+      for (const got of tiles) if (got) all = all.concat(C.stopsWithin(got, point, C.STOP_REACH_WIDE));
+      return all;
+    });
   });
 }
 // The two walks of the pairing that won, checked for real. Only those two: asking about every stop
@@ -1285,30 +1325,26 @@ function askStops(dayId, fromId, toId) {
   return Promise.all([stopsNear(from), stopsNear(to)]).then(([a, b]) => {
     const now = new Date().toISOString();
     const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
-    // A map that could not be asked is not a map with nothing on it. Saying so is the difference
-    // between "there is no bus" and "nobody answered the phone", and only one of them is worth
-    // asking again — which the leg card is how you do.
+    // A snapshot that could not be read at all is not a snapshot with nothing in it.
     if (!a || !b) {
       keep({ asked: now, source: 'stops',
-        detail: 'OpenStreetMap was too busy to say which stops are nearby, so there is no journey '
-          + 'worked out for this leg yet. Checking it again often gets through.' });
+        detail: 'The stop snapshot could not be read, so there is no journey worked out for this '
+          + 'leg. Checking it again may well get through.' });
       return null;
     }
-    const plan = C.stopPlan(from, to, a.stops, b.stops, App.trip, C.calibration(App.trip, day.city));
+    const plan = C.stopPlan(from, to, a, b, App.trip, C.calibration(App.trip, day.city));
     if (!plan) {
       keep({ asked: now, source: 'stops',
-        detail: 'The map has no stops within twenty minutes\' walk of both ends, so the planner has '
+        detail: 'There are no stops within twenty minutes\' walk of both ends, so the planner has '
           + 'no public transport to offer for this leg.' });
       return null;
     }
-    const line = C.commonLine(a.lines, b.lines);
-    keep(C.stopSlot(plan, line, now));
+    keep(C.stopSlot(plan, now));
     // The walks at each end can be real even where the ride cannot, so they are checked after the
     // leg already has something to show.
     return realWalks(plan, from, to).then((walked) => {
-      const slot = C.stopSlot(walked, line, now);
-      keep(slot);
-      return slot;
+      keep(C.stopSlot(walked, now));
+      return walked;
     }, () => null);
   }, () => null);
 }
@@ -1324,10 +1360,11 @@ function askTransit(dayId, fromId, toId) {
   if (!url || !day) return Promise.reject(new Error('this leg has no position, or no time to ask about'));
   const now = new Date().toISOString();
   const keep = (slot) => { C.setLeg(App.trip, dayId, fromId, toId, { transit: slot }); changed(); };
-  const nothing = () => whyNoJourney(from, to, departs).then((why) => {
-    keep({ asked: now, departs, source: 'transitous', detail: why });
-    // The map is asked next, but nothing waits for it: Overpass can take most of a minute.
-    askStops(dayId, fromId, toId);
+  const nothing = () => whyNoJourney(from, to, departs).then((said) => {
+    keep({ asked: now, departs, source: 'transitous', detail: said.why });
+    // Only where it has no timetables for this place is the snapshot worth asking: it knows where
+    // the stops are, but nothing at all about when anything runs. Nothing waits for it either way.
+    if (!said.covered) askStops(dayId, fromId, toId);
     return null;
   });
   return Live.fetchJson(url).then((json) => {
@@ -2220,6 +2257,10 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   restore();
   render();
+  // Read the snapshot's manifest straight away. It is 161 bytes of our own, and having it means the
+  // credits can say which snapshot this is before anything has used it, rather than crediting a
+  // database only once it happens to have been read.
+  snapshot();
   window.DayPlannerApp = App;   // the tests look in here
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

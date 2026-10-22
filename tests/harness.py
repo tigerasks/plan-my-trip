@@ -32,6 +32,21 @@ def serve(directory=DOCS):
     return 'http://127.0.0.1:%d' % srv.server_address[1], srv.shutdown
 
 
+STOPS = HERE / 'stops'
+
+
+def serve_snapshot(route, url):
+    """Answer a request for the published stop snapshot from `tests/stops`."""
+    want = url.split('plan-my-trip-data-stops/', 1)[1].split('?')[0].split('#')[0]
+    path = (STOPS / want).resolve()
+    # A tile name comes from arithmetic, not from anything a user typed, but serving whatever a path
+    # asks for is still not a habit worth having.
+    inside = path.is_file() and STOPS.resolve() in path.parents
+    if not inside:
+        return route.fulfill(status=404, body='{}', headers=JSON_H)
+    return route.fulfill(status=200, body=path.read_text(encoding='utf-8'), headers=JSON_H)
+
+
 def offline(base, extra=None):
     """A route handler: the app is served from `base`, `extra` gets first refusal (returning True
     when it has answered), MapLibre comes from the stub, and everything else is blocked."""
@@ -41,9 +56,13 @@ def offline(base, extra=None):
             return r.continue_()
         if extra and extra(r):
             return None
+        if 'plan-my-trip-data-stops' in u:
+            # The planner reads stops from a snapshot we publish, and asks for it unprompted on any
+            # day with a leg. Serve the small real one in tests/stops, so every page has an answer.
+            return serve_snapshot(r, u)
         if 'overpass-api.de' in u:
-            # The stop-based fallback asks the map about every leg with no timetable, so this is
-            # another request every page makes on its own. An empty answer means "no stops here".
+            # Place details, and nothing else: the stops come from the snapshot above. One lookup
+            # per place previewed, and an empty answer means the map has nothing filed under it.
             return r.fulfill(status=200, body=NO_ELEMENTS, headers=JSON_H)
         if 'api.transitous.org' in u:
             # As with OSRM: the planner asks about the legs of a day by itself, so an unanswered

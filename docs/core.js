@@ -1225,59 +1225,161 @@ function parseTransit(json, from, to, departsISO) {
 // ---------- the stop-based fallback ----------
 // Where there are no timetables, the map still knows where the stops are. This is the method anyone
 // would use by hand, automated: look at every stop within a walk of each end, take the quickest
-// pairing, and be honest that the ride itself is a guess (design doc, "Travel times").
+// pairing on a line that serves both, and be honest that the ride itself is a guess. The stops come
+// from the snapshot above, so none of this waits on anybody's service (design doc, decisions 22-25).
+// ---------- the stop snapshot ----------
+// Stops come from a snapshot we publish rather than a live query. Overpass refused five requests in
+// six, took 33 to 40 seconds when it answered, and allows about a hundred queries a day counted
+// across everybody using the planner (design doc, decisions 22 to 24).
+//
+// The snapshot is a grid of whole-degree tiles, which means the file a point needs is arithmetic on
+// its coordinates. Nothing has to be asked to find out, and no boundaries ship with the planner.
+const STOPS_HOME = 'https://tigerasks.github.io/plan-my-trip-data-stops/';
+const TILE_DEGREES = 1;
+const TILE_FORMAT = 1;         // what this planner can read; a newer snapshot says so and is refused
+const KM_PER_DEGREE = 111.195;
+const tileName = (lat, lng) => {
+  const y = toNum(lat), x = toNum(lng);
+  if (y == null || x == null) return null;
+  return Math.floor(y / TILE_DEGREES) + '_' + Math.floor(x / TILE_DEGREES);
+};
+const tileUrl = (name) => (str(name, 20) ? STOPS_HOME + 'tiles/' + str(name, 20) + '.json' : null);
+const manifestUrl = () => STOPS_HOME + 'manifest.json';
+
+// Which tiles a search around a point can reach into. Nearly always the one it sits in; a point
+// close to an edge reaches into a neighbour as well, which at this radius is about one in sixteen.
+// The box is far smaller than a tile, so testing its corners catches every tile it touches.
+function tilesNear(point, metres) {
+  if (!hasPos(point)) return [];
+  const km = Math.max(0, toNum(metres) || 0) / 1000;
+  const dLat = km / KM_PER_DEGREE;
+  // Degrees of longitude shrink towards the poles, and at the pole itself they vanish. Keeping the
+  // span under half a tile stops a point in the far north asking for the whole parallel.
+  const narrow = Math.max(0.02, Math.cos(clamp(point.lat, -89, 89) * Math.PI / 180));
+  const dLng = Math.min(TILE_DEGREES / 2, km / (KM_PER_DEGREE * narrow));
+  const names = [];
+  for (const lat of [point.lat - dLat, point.lat, point.lat + dLat]) {
+    for (const lng of [point.lng - dLng, point.lng, point.lng + dLng]) {
+      if (lat < -90 || lat > 90) continue;
+      const name = tileName(lat, lng);
+      if (name && !names.includes(name)) names.push(name);
+    }
+  }
+  return names;
+}
+
+// What the snapshot says about itself: which tiles exist, so the planner never asks for one that
+// does not, and when it was built, because a line that opened since is invisible until it is run again.
+function parseManifest(json) {
+  const m = obj(json);
+  if (toNum(m.v) !== TILE_FORMAT) return null;
+  const tiles = arr(m.tiles).map((t) => str(t, 20)).filter(Boolean);
+  if (!tiles.length) return null;
+  return {
+    built: str(m.built, 10) || null,
+    stops: toNum(m.stops),
+    degrees: toNum(m.degrees) || TILE_DEGREES,
+    regions: arr(m.regions).map((r) => str(r, 40)).filter(Boolean),
+    tiles,
+  };
+}
+
+// A tile, decoded only as far as its positions. The names and the lines stay as they arrived and a
+// stop becomes an object only once it turns out to be near enough to matter: Tokyo's tile holds
+// 48,000 stops, and building one object each to throw nearly all of them away would cost tens of
+// megabytes to answer a question about a few dozen.
+//
+// The layout is what `tools/refresh-stops.py` writes: `o` the tile's own corner at five decimal
+// places, `y` and `x` positions delta-encoded from it, `n` the names newline-joined, `k` what kind
+// of stop each is, `L` the line labels written once, and `l` each stop's lines as indices into `L`.
+const STOP_KINDS = ['bus', 'rail', 'tram', 'stop'];
+function parseTile(json, name) {
+  const t = obj(json);
+  if (toNum(t.v) !== TILE_FORMAT) return null;
+  const corner = arr(t.o);
+  const oy = toNum(corner[0]), ox = toNum(corner[1]);
+  const ys = arr(t.y), xs = arr(t.x), ks = arr(t.k), ls = arr(t.l);
+  if (oy == null || ox == null || ys.length !== ks.length || xs.length !== ks.length) return null;
+  // Not through `str`: it trims, and an unnamed stop at either end of the tile leaves a newline
+  // there that trimming would eat — which would not lose a name so much as shift every later one
+  // onto the wrong stop. A blob that does not line up with the stops is a tile worth refusing.
+  const names = typeof t.n === 'string' ? t.n.split('\n') : [];
+  if (names.length !== ks.length) return null;
+  const lat = [], lng = [];
+  let y = oy, x = ox;
+  for (let i = 0; i < ks.length; i++) {
+    y += toNum(ys[i]) || 0;
+    x += toNum(xs[i]) || 0;
+    lat.push(y / 1e5);
+    lng.push(x / 1e5);
+  }
+  return {
+    tile: str(name, 20) || null,
+    count: ks.length,
+    lat: lat,
+    lng: lng,
+    kind: ks,
+    names: names,
+    lines: ls,
+    labels: arr(t.L).map((l) => str(l, 60)),
+  };
+}
+
+// The stops of a tile that fall within a given reach of a point, as objects the rest of the planner
+// can work with. This is where the columns turn into stops, and only for the few that qualify.
+function stopsWithin(tile, point, metres) {
+  const t = obj(tile);
+  if (!hasPos(point) || !t.count) return [];
+  const reach = Math.max(0, toNum(metres) || 0) / 1000;
+  const out = [];
+  for (let i = 0; i < t.count; i++) {
+    const at = { lat: t.lat[i], lng: t.lng[i] };
+    const km = kmBetween(point, at);
+    if (km > reach) continue;
+    const mine = arr(t.lines[i]).map((j) => t.labels[toNum(j)]).filter(Boolean);
+    out.push({
+      id: (t.tile || '?') + ':' + i,
+      name: str(t.names[i], 60) || null,
+      lat: at.lat,
+      lng: at.lng,
+      kind: STOP_KINDS[toNum(t.kind[i])] || 'stop',
+      lines: mine,
+      km: km,
+    });
+  }
+  return out.sort((a, b) => a.km - b.km);
+}
+
 const STOP_REACH = 800;        // metres, about ten minutes on foot
 const STOP_REACH_WIDE = 1600;  // and twenty, where an end has nothing closer
 const STOPS_EACH_END = 12;     // the nearest few: a busy corner has dozens, and the rest never win
-function stopsNearUrl(point, metres) {
-  if (!hasPos(point)) return null;
-  const at = ',' + point.lat.toFixed(6) + ',' + point.lng.toFixed(6) + ')';
-  const r = clamp(Math.round(toNum(metres) || STOP_REACH), 100, 5000);
-  const q = '[out:json][timeout:50];('
-    + 'nwr(around:' + r + at + '[highway=bus_stop];'
-    + 'nwr(around:' + r + at + '[railway~"^(station|halt|tram_stop)$"];'
-    + 'nwr(around:' + r + at + '[public_transport=station];'
-    + 'relation(around:' + r + at + '[type=route][route~"^(bus|tram|light_rail|train|subway)$"];'
-    + ');out tags center 400;';
-  return OVERPASS + '?data=' + encodeURIComponent(q);
-}
-const STOP_KIND = (tags) => {
-  const t = obj(tags);
-  if (str(t.railway) === 'tram_stop' || str(t.railway) === 'light_rail') return 'tram';
-  if (str(t.railway) === 'station' || str(t.railway) === 'halt') return 'rail';
-  if (str(t.highway) === 'bus_stop') return 'bus';
-  return 'stop';
+// A line the map says calls at both of these two stops. That is a good deal more than the old live
+// query could say, which only knew a route passed somewhere near each end; it still cannot promise
+// the two stops are consecutive, or that anything runs at the time, so the wording stays hedged.
+const RIDE_KIND = (a, b) => {
+  const kinds = [str(obj(a).kind), str(obj(b).kind)];
+  if (kinds.includes('rail')) return 'train';
+  if (kinds.includes('tram')) return 'tram';
+  if (kinds.includes('bus')) return 'bus';
+  return null;
 };
-// Stops and the lines that run near them, from one answer. A line relation is kept for its name
-// only: whether it really serves these stops is more than the map can promise.
-function parseNear(json) {
-  const all = arr(obj(json).elements);
-  const stops = [], lines = [];
-  for (const el of all) {
-    const e = obj(el), tags = obj(e.tags);
-    const name = str(tags['name:en'] || tags.name, 60) || null;
-    if (str(e.type) === 'relation' && str(tags.type) === 'route') {
-      lines.push({ id: 'r' + e.id, ref: str(tags.ref, 20) || null, name, kind: str(tags.route, 20) || null });
-      continue;
-    }
-    const c = obj(e.center);
-    const lat = toNum(e.lat != null ? e.lat : c.lat), lng = toNum(e.lon != null ? e.lon : c.lon);
-    if (lat == null || lng == null) continue;
-    stops.push({ id: str(e.type).slice(0, 1) + e.id, name, lat, lng, kind: STOP_KIND(tags) });
-  }
-  // Over the limit means the answer was cut short, so "no stops" would not be the truth.
-  return { stops, lines, capped: all.length >= 400 };
-}
-// A line seen near both ends. Not proof it serves them, which is why the whole result stays a guess.
-function commonLine(fromLines, toLines) {
-  const there = new Set(arr(toLines).map((l) => obj(l).id));
-  const both = arr(fromLines).filter((l) => there.has(obj(l).id));
-  return both.find((l) => obj(l).ref) || both[0] || null;
+function sharedLine(a, b) {
+  const there = new Set(arr(obj(b).lines).map((l) => str(l, 60)).filter(Boolean));
+  const both = arr(obj(a).lines).map((l) => str(l, 60)).filter((l) => l && there.has(l));
+  if (!both.length) return null;
+  // A line number reads better than a long descriptive name, and sorting makes the choice the same
+  // every time rather than however the map happened to be ordered.
+  both.sort((x, y) => (x.length - y.length) || (x < y ? -1 : x > y ? 1 : 0));
+  return { ref: both[0], kind: RIDE_KIND(a, b), all: both };
 }
 const lineWords = (line) => {
-  const l = obj(line);
-  if (l.ref) return l.ref + (l.kind === 'bus' ? ' bus' : l.kind === 'subway' ? ' line' : '');
-  return str(l.name, 60) || null;
+  const l = obj(line), ref = str(l.ref, 60);
+  if (!ref) return null;
+  // "206 bus" helps; "JR Tokaido Main Line train" does not, so the kind is only added to what reads
+  // like a line number.
+  const numbered = ref.length <= 8 && /\d/.test(ref);
+  const word = l.kind === 'bus' ? ' bus' : l.kind === 'tram' ? ' tram' : l.kind === 'train' ? ' train' : '';
+  return numbered ? ref + word : ref;
 };
 // The quickest pairing of a stop at each end, with both walks estimated the way the planner
 // estimates every walk, and the ride from the distance between the two stops.
@@ -1285,34 +1387,51 @@ function stopPlan(from, to, nearFrom, nearTo, trip, cal) {
   if (!hasPos(from) || !hasPos(to)) return null;
   const f = obj(cal), model = TRANSIT_MODEL[obj(trip).transit] || TRANSIT_MODEL.city;
   const onFoot = (a, b) => Math.max(1, Math.round(walkMinutes(kmBetween(a, b)) * (toNum(f.walk) || 1)));
-  const nearest = (list, point) => arr(list).filter(hasPos)
-    .map((stop) => ({ stop, km: kmBetween(point, stop) }))
-    .sort((a, b) => a.km - b.km).slice(0, STOPS_EACH_END);
+  // Ten minutes' walk, widening to twenty only where an end has nothing closer. The snapshot hands
+  // over whatever a tile holds, so the reach is enforced here rather than by what was asked for.
+  const nearest = (list, point) => {
+    const within = (metres) => arr(list).filter(hasPos)
+      .filter((stop) => kmBetween(point, stop) * 1000 <= metres);
+    const close = within(STOP_REACH);
+    return (close.length ? close : within(STOP_REACH_WIDE))
+      .map((stop) => ({ stop, km: kmBetween(point, stop) }))
+      .sort((a, b) => a.km - b.km).slice(0, STOPS_EACH_END);
+  };
   const starts = nearest(nearFrom, from), ends = nearest(nearTo, to);
   if (!starts.length || !ends.length) return null;
-  let best = null;
+  let best = null, onALine = null;
   for (const a of starts) {
     for (const b of ends) {
       if (a.stop.id === b.stop.id) continue;
       const ride = Math.max(1, Math.round(rideMinutes(kmBetween(a.stop, b.stop), model) * (toNum(f.transit) || 1)));
       const walkOn = onFoot(from, a.stop), walkOff = onFoot(b.stop, to);
       const minutes = walkOn + ride + walkOff;
-      if (!best || minutes < best.minutes) best = { minutes, ride, walkOn, walkOff, from: a.stop, to: b.stop };
+      const line = sharedLine(a.stop, b.stop);
+      const got = { minutes, ride, walkOn, walkOff, from: a.stop, to: b.stop, line };
+      if (!best || minutes < best.minutes) best = got;
+      if (line && (!onALine || minutes < onALine.minutes)) onALine = got;
     }
   }
-  return best;
+  // A pairing whose two stops share a line wins over a quicker one that does not: one is a journey
+  // somebody could make, the other is two stops that happen to be near. Nothing silly gets through
+  // either way, because a ride is only used at all where it beats walking.
+  return onALine || best;
 }
 // What that pairing looks like on a leg: a time, and the walk-ride-walk spelled out.
-function stopSlot(plan, line, now) {
+function stopSlot(plan, now) {
   if (!plan) return null;
+  const line = obj(plan.line);
   const words = lineWords(line);
-  const kind = str(obj(line).kind);
-  const ride = kind === 'bus' ? ' by bus' : kind === 'train' || kind === 'subway' || kind === 'light_rail' ? ' by train' : '';
+  const kind = str(line.kind);
+  const others = arr(line.all).length - 1;
+  const ride = kind === 'bus' ? ' by bus' : kind === 'train' ? ' by train' : kind === 'tram' ? ' by tram' : '';
   return {
     minutes: clamp(plan.minutes, 0, 1440),
     source: 'stops',
     at: str(now, 32) || null,
-    name: words ? 'probably the ' + words : null,
+    // Saying how many others also call at both stops is honest about how much of a guess this is.
+    name: words ? 'probably the ' + words
+      + (others > 1 ? ', or one of ' + others + ' others' : others === 1 ? ', or one other' : '') : null,
     // The line is named once, in `name`; here it is only what kind of ride it is.
     detail: 'walk ' + fmtDur(plan.walkOn) + (plan.from.name ? ' to ' + plan.from.name : ' to the stop')
       + ' · ≈ ' + fmtDur(plan.ride) + ride
@@ -2125,7 +2244,9 @@ const Core = {
   legPath, encodePath, goodZone, instantOf, minutesOfDay, openOn, startWindows, estimateLeg,
   TRANSITOUS, isRide, transitUrl, transitStopsUrl, parseStops, lineName, parseTransit,
   TIMETABLE_REACH, daysApart, farAhead, sameWeekdaySoon,
-  STOP_REACH, STOP_REACH_WIDE, stopsNearUrl, parseNear, commonLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  STOP_REACH, STOP_REACH_WIDE, sharedLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
+  STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
+  STOP_KINDS, parseTile, stopsWithin,
   TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,
