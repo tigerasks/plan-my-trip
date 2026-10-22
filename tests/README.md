@@ -26,8 +26,8 @@ python3 -m venv .venv
 node tests/core_test.js                       # the model, in Node
 ```
 
-Both print a `PASS`/`FAIL` line per check. `app_test.py` exits non-zero when anything fails or the
-page logs a console error; run it before every commit. Screenshots land in `tests/shots/` at
+Each prints a `PASS`/`FAIL` line per check and exits non-zero when anything fails or the page logs a
+console error; run them all before every commit. Screenshots land in `tests/shots/` at
 1280×800 and 390×844, light and dark. They are not committed: they carry timestamps and timings, so
 every run would rewrite a few of them. Look at them on disk after a run.
 
