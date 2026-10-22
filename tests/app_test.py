@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Playwright walk-through of the planner, docs/index.html. Nothing reaches the network: MapLibre
 comes from the stub and every other request is blocked. Run: python3 tests/app_test.py"""
-import datetime, json, math, pathlib, re, urllib.parse
+import datetime, json, math, pathlib, re, time, urllib.parse
 from playwright.sync_api import sync_playwright
 import harness
 from harness import SHOTS, Checks
@@ -64,7 +64,7 @@ with sync_playwright() as pw:
     # How many times Overpass refuses outright before it answers, counted per kind of query. By a
     # busy station the fifth service test was refused three times in a row, so this is the normal
     # case, not a rare one.
-    BUSY = {'around': 0, 'details': 0}
+    BUSY = {'around': 0, 'details': 0, 'status': 502}
 
     def services(r):
         u = r.request.url
@@ -103,7 +103,7 @@ with sync_playwright() as pw:
             kind = 'around' if 'around:' in q else 'details'
             if BUSY[kind] > 0:
                 BUSY[kind] -= 1
-                r.fulfill(status=502, body='# 502 Gateway Timeout\n\nAll query workers are busy.',
+                r.fulfill(status=BUSY['status'], body='# too much',
                           headers={'Access-Control-Allow-Origin': '*'})
                 return True
             if 'around:' in q:                      # the stop-based fallback asking what is nearby
@@ -529,6 +529,20 @@ with sync_playwright() as pw:
     ck('too busy' in pg.inner_text('#sheet'), 'and the card says the same, where the retry button is')
     ctx.close()
     BUSY['around'] = 0
+
+    # being told off for asking too much is waited out too, not argued with
+    BUSY['around'], BUSY['status'] = 1, 429
+    ck.expect('429')
+    asked.clear()
+    started = time.time()
+    ctx, pg = open_page(held=DEMO, extra=services)
+    pg.wait_for_function("() => (((window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple']"
+                         " || {}).transit || {}).source) === 'stops'", timeout=90000)
+    leg = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].legs['start>example-temple'].transit")
+    ck(leg['minutes'] and leg['minutes'] < 60, 'a rate limit is outlasted as well: %s min' % leg['minutes'])
+    ck(time.time() - started > 15, 'after the long wait a 429 earns, rather than the short one a 502 gets')
+    ctx.close()
+    BUSY['around'], BUSY['status'] = 0, 502
 
     # a place preview survives it too, since a user is sitting there waiting for this one
     BUSY['details'] = 2
