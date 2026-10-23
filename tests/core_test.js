@@ -972,5 +972,102 @@ ok(C.normLeg({ walk: { minutes: 9, path: good, precision: 7 } }).walk.precision 
   'and one that said seven keeps seven');
 ok(C.normLeg({ minutes: 9, path: good }) === null, 'a time that does not say what it is a time for is no use');
 
+console.log('\n== Merging a package ==');
+// The baseline is the package the chat last sent. Three ways a field can move, and only one of
+// them is a question.
+const base0 = C.normalise(demoEnv.trip).trip;
+const mineT = clone(base0);
+const theirsT = clone(base0);
+mineT.places['example-temple'].duration = 120;          // you made the visit longer
+theirsT.places['example-temple'].note = 'Go early';     // they wrote a note you never had
+theirsT.places['example-temple'].hours = { source: 'chat', verified: true, raw: 'Mo-Su 06:00-18:00', week: {}, lastEntry: null };
+let merged = C.mergePackage(mineT, theirsT, base0, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0, 'two sides changing different fields is not a conflict');
+ok(merged.trip.places['example-temple'].duration === 120, 'your change survives the merge');
+ok(merged.trip.places['example-temple'].note === 'Go early', "and theirs lands beside it");
+ok(merged.report.updated.length === 1 && /Note/.test(merged.report.updated[0]), 'the report says what it took: ' + merged.report.updated[0]);
+
+// Both sides move the same field, differently.
+const theirs2 = clone(base0);
+theirs2.places['example-temple'].duration = 150;
+merged = C.mergePackage(mineT, theirs2, base0, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 1 && merged.conflicts[0].key === 'place:example-temple', 'both moving one field is one conflict');
+ok(merged.conflicts[0].fields.length === 1 && merged.conflicts[0].fields[0].label === 'How long',
+  'the conflict names the field: ' + merged.conflicts[0].fields[0].label);
+ok(merged.conflicts[0].fields[0].mine === 120 && merged.conflicts[0].fields[0].theirs === 150, 'with both values to choose between');
+ok(merged.trip.places['example-temple'].duration === 120, 'unanswered, it keeps yours');
+const answered = C.mergePackage(mineT, theirs2, base0, { 'place:example-temple': 'theirs' }, '2026-10-23T00:00:00Z');
+ok(answered.trip.places['example-temple'].duration === 150, 'answered "theirs", it takes theirs');
+ok(answered.conflicts.length === 1, 'and still reports what it asked, so the sheet can show the same list twice');
+
+// A package never deletes.
+const fewer = clone(base0);
+delete fewer.places['made-up-market'];
+merged = C.mergePackage(mineT, fewer, base0, {}, '2026-10-23T00:00:00Z');
+ok(!!merged.trip.places['made-up-market'], 'a place the package leaves out is not a place it deletes');
+
+// You deleted it; they changed it.
+const without = clone(base0);
+delete without.places['made-up-market'];
+without.days['2026-11-21'].plans.balanced = ['example-temple'];
+const theirs3 = clone(base0);
+theirs3.places['made-up-market'].note = 'Still worth it';
+merged = C.mergePackage(without, theirs3, base0, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 1 && merged.conflicts[0].gone === true, 'deleting what they then changed is asked about');
+ok(!merged.trip.places['made-up-market'], 'unanswered, it stays deleted');
+ok(C.mergePackage(without, theirs3, base0, { 'place:made-up-market': 'theirs' }, '2026-10-23T00:00:00Z')
+  .trip.places['made-up-market'], 'answered "theirs", it comes back');
+
+// Something new from the chat just lands.
+const plus = clone(base0);
+plus.places['new-from-chat'] = Object.assign(clone(base0.places['example-temple']),
+  { id: 'new-from-chat', name: 'A place the chat found', dayId: null });
+merged = C.mergePackage(mineT, plus, base0, {}, '2026-10-23T00:00:00Z');
+ok(!!merged.trip.places['new-from-chat'] && merged.report.added.length === 1, 'a place only they have is simply added');
+ok(merged.trip.backlog.includes('new-from-chat'), 'and with no day it lands in the backlog');
+
+// No baseline at all: what you have set and they disagree with has to be asked about.
+merged = C.mergePackage(mineT, theirs2, null, {}, '2026-10-23T00:00:00Z');
+ok(merged.report.baseline === false, 'the report says when it had no baseline');
+ok(merged.conflicts.length >= 1, 'without one, a disagreement it cannot explain is asked about');
+const fills = clone(base0);
+fills.places['example-temple'].fixed = '10:00';      // the demo leaves this unset
+const noBase = C.mergePackage(base0, fills, null, {}, '2026-10-23T00:00:00Z');
+ok(noBase.conflicts.length === 0 && noBase.trip.places['example-temple'].fixed === '10:00',
+  'but filling in something you never set still lands quietly, baseline or no baseline');
+
+// Empty, missing and unset are the same answer.
+ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
+ok(!C.same(0, null), 'zero is a value, not nothing');
+
+console.log('\n== Handing back to the chat ==');
+const hb = C.handback(mineT, base0, { note: 'Swapped the afternoon around', alternatives: ['packed'] }, '2026-10-23T09:00:00Z');
+ok(hb.kind === 'handback' && hb.schema === 'day-planner/2', 'a hand-back says what it is');
+ok(hb.handback.note === 'Swapped the afternoon around', 'it carries your note');
+const d1 = hb.handback.days.find((d) => d.date === '2026-11-21');
+ok(d1.chosen === 'balanced' && d1.versions.length === 2, 'the chosen version, plus the alternative you ticked');
+ok(d1.versions[0].key === 'balanced' && d1.versions[0].stops.length === 2, 'each version spells its stops out: ' + d1.versions[0].stops.map((s) => s.name).join(', '));
+ok(/^\d\d:\d\d$/.test(d1.versions[0].stops[0].at), 'with the time it happens at: ' + d1.versions[0].stops[0].at);
+ok(Array.isArray(d1.versions[0].issues) && Array.isArray(d1.versions[0].checks), 'and the issues and checks the planner found');
+ok(hb.handback.changes.baseline === true && hb.handback.changes.edited.length === 1,
+  'the changes list what you altered since the package');
+ok(hb.handback.changes.edited[0].fields.includes('How long'), 'naming the fields: ' + hb.handback.changes.edited[0].fields.join(', '));
+ok(C.handback(mineT, null, {}, '2026-10-23T09:00:00Z').handback.changes.baseline === false,
+  'with no package to compare against it says so rather than calling everything new');
+
+const withLeg = clone(mineT);
+withLeg.days['2026-11-21'].legs = { 'start>example-temple': {
+  pick: null, mine: null,
+  walk: { minutes: 44, km: 3.32, source: 'osrm', at: '2026-10-22T10:00:00Z', asked: null, departs: null, path: null, precision: 5, name: null, detail: null },
+  transit: { minutes: 17, km: null, source: 'transitous', at: '2026-10-22T10:00:00Z', asked: null, departs: null, path: null, precision: 5, name: 'Karasuma line', detail: 'walk 11 min' },
+} };
+const travel = C.travelReport(C.normalise(withLeg).trip);
+ok(travel.length === 1 && travel[0].from === 'the start of the day', 'travel names both ends in words: ' + travel[0].from + ' → ' + travel[0].to);
+ok(travel[0].ways.walk.source === 'osrm' && travel[0].ways.transit.source === 'transitous',
+  'and keeps which service said what, so a measured time is never read as a guess');
+
+const roundTrip = C.readBlock(C.writeHandbackBlock(mineT, base0, { note: 'hi' }, '2026-10-23T09:00:00Z'));
+ok(!roundTrip.ok && roundTrip.problem === 'handback', 'the planner still refuses to read its own hand-back back in');
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

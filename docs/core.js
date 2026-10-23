@@ -2233,6 +2233,270 @@ function summarise(trip) {
   return joinList([s(days, 'day', 'days'), s(places, 'place', 'places')]);
 }
 
+// ---------- merging a package ----------
+// A package is the chat's reply to the last hand-back: new places, details filled in, orders
+// proposed. It never deletes. A place it does not mention is one it had nothing to say about, not
+// one it wants gone, because a package is often only the part of the trip the chat was asked about.
+//
+// Merging is three-way. The planner keeps the package it last loaded, so it can tell "the chat
+// filled in hours I never had" from "we both changed the duration". Only the second is worth
+// asking about; the first simply lands. Without that baseline — a new device, or storage cleared —
+// anything you have set and they disagree with has to be asked about instead, and the report says
+// so rather than letting it look like a quiet merge.
+const FIELD_LABEL = {
+  name: 'Name', localName: 'Local name', pos: 'Position', kind: 'Kind', area: 'Area',
+  duration: 'How long', fixed: 'Fixed time', window: 'Time window', hours: 'Opening hours',
+  closed: 'Closed dates', booked: 'Booked', priority: 'Priority', price: 'Price',
+  check: 'Check', note: 'Note', links: 'Links', osm: 'OpenStreetMap', dayId: 'Which day',
+  city: 'City', start: 'Where the day starts', end: 'Where the day ends',
+  shown: 'Version on show', plans: 'Running order',
+  title: 'Title', tzLabel: 'Time zone label', tz: 'Time zone', transit: 'Getting around',
+  currency: 'Preferred currency', lookups: 'Look-up links', from: 'First night', nights: 'Nights',
+};
+// Nothing-in-particular: an empty string, an empty list and a missing value are the same answer to
+// "has this been set?", and treating them as different would ask about hours nobody ever typed.
+const blank = (v) => v == null || v === '' || v === false
+  || (Array.isArray(v) && !v.length)
+  || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stringify(b);
+
+const PLACE_FIELDS = ['pos', 'name', 'localName', 'kind', 'area', 'duration', 'fixed', 'window',
+  'hours', 'closed', 'booked', 'priority', 'price', 'check', 'note', 'links', 'osm', 'dayId'];
+const DAY_FIELDS = ['city', 'start', 'end', 'shown', 'note', 'plans'];
+const TRIP_FIELDS = ['title', 'tzLabel', 'tz', 'transit', 'currency', 'lookups'];
+const STAY_FIELDS = ['pos', 'name', 'localName', 'area', 'from', 'nights', 'note', 'osm'];
+// Position is one fact in two numbers. Compared as a pair it reads as "Position" in the sheet
+// rather than as a latitude you are asked about without its longitude.
+const posOf = (x) => ({ lat: x.lat, lng: x.lng });
+function placeFields(p) {
+  const f = { pos: posOf(p) };
+  for (const k of PLACE_FIELDS) if (k !== 'pos') f[k] = p[k];
+  return f;
+}
+function dayFields(d) {
+  const f = {};
+  for (const k of DAY_FIELDS) f[k] = d[k];
+  return f;
+}
+function tripFields(t) {
+  const f = {};
+  for (const k of TRIP_FIELDS) f[k] = t[k];
+  return f;
+}
+function stayFields(x) {
+  const f = { pos: posOf(x) };
+  for (const k of STAY_FIELDS) if (k !== 'pos') f[k] = x[k];
+  return f;
+}
+
+// One field, three versions of it. Whoever moved it away from the baseline wins; where both did,
+// and differently, the planner keeps yours and asks.
+function threeWay(mine, theirs, base) {
+  if (same(theirs, base)) return { value: mine, how: 'mine' };
+  if (same(mine, base) || same(mine, theirs)) return { value: theirs, how: 'theirs' };
+  return { value: mine, how: 'conflict' };
+}
+function mergeFields(mineF, theirsF, baseF, keys) {
+  const value = {}, fields = [], took = [];
+  for (const k of keys) {
+    const r = threeWay(mineF[k], theirsF[k], baseF ? baseF[k] : undefined);
+    value[k] = r.value;
+    if (r.how === 'conflict') fields.push({ key: k, label: FIELD_LABEL[k] || k, mine: mineF[k], theirs: theirsF[k] });
+    else if (r.how === 'theirs' && !same(mineF[k], theirsF[k])) took.push(FIELD_LABEL[k] || k);
+  }
+  return { value, fields, took };
+}
+function writeFields(onto, value) {
+  const out = clone(onto);
+  for (const k of Object.keys(value)) {
+    if (k === 'pos') { out.lat = value.pos ? value.pos.lat : null; out.lng = value.pos ? value.pos.lng : null; }
+    else out[k] = clone(value[k]);
+  }
+  return out;
+}
+
+// Merge a package into the trip that is open. Call it once with no choices to find out what it
+// would ask, show the sheet, then call it again with the answers: it is the same function both
+// times, so what you were shown is what you get. An unanswered conflict keeps yours.
+function mergePackage(current, incoming, base, choices, now) {
+  const pick = obj(choices);
+  const out = clone(obj(current));
+  const them = obj(incoming);
+  const conflicts = [];
+  const report = { baseline: !!base, added: [], updated: [], restored: [], asked: [], newDays: [] };
+  const ask = (scope, id, label, fields, extra) => {
+    const c = Object.assign({ key: scope + ':' + id, scope, id, label, fields,
+      choice: pick[scope + ':' + id] === 'theirs' ? 'theirs' : 'mine' }, extra || {});
+    conflicts.push(c);
+    return c;
+  };
+  const settle = (c, merged, theirsF) => {
+    if (c.choice === 'theirs') for (const f of c.fields) merged.value[f.key] = theirsF[f.key];
+    report.asked.push(c.label);
+  };
+
+  // places
+  const theirPlaces = obj(them.places), basePlaces = obj(base && base.places);
+  out.places = obj(out.places);
+  for (const id of Object.keys(theirPlaces)) {
+    const t = theirPlaces[id], b = basePlaces[id], mine = out.places[id];
+    const tf = placeFields(t);
+    if (!mine) {
+      // Not here. Either it is new, or it was in the last package and you deleted it since.
+      if (!b) { out.places[id] = clone(t); report.added.push(t.name); continue; }
+      if (same(tf, placeFields(b))) continue;        // they did not touch it either, so it stays gone
+      const c = ask('place', id, t.name,
+        [{ key: 'gone', label: 'You deleted it', mine: null, theirs: tf }], { gone: true });
+      if (c.choice === 'theirs') { out.places[id] = clone(t); report.restored.push(t.name); }
+      report.asked.push(t.name);
+      continue;
+    }
+    const m = mergeFields(placeFields(mine), tf, b ? placeFields(b) : null, PLACE_FIELDS);
+    if (m.fields.length) settle(ask('place', id, mine.name, m.fields), m, tf);
+    out.places[id] = writeFields(mine, m.value);
+    if (m.took.length) report.updated.push(mine.name + ': ' + joinList(m.took));
+  }
+
+  // days
+  const theirDays = obj(them.days), baseDays = obj(base && base.days);
+  out.days = obj(out.days);
+  for (const id of Object.keys(theirDays)) {
+    const t = theirDays[id], b = baseDays[id], mine = out.days[id];
+    if (!mine) {
+      if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
+      continue;                                       // a day you deleted stays deleted
+    }
+    const m = mergeFields(dayFields(mine), dayFields(t), b ? dayFields(b) : null, DAY_FIELDS);
+    if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, dayFields(t));
+    out.days[id] = writeFields(mine, m.value);
+    if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
+  }
+
+  // stays
+  const theirStays = arr(them.stays), baseStays = arr(base && base.stays);
+  const byId = (list) => { const m = {}; for (const x of arr(list)) if (x && x.id) m[x.id] = x; return m; };
+  const mineStays = byId(out.stays), baseStayMap = byId(baseStays);
+  out.stays = arr(out.stays).map(clone);
+  for (const t of theirStays) {
+    if (!t || !t.id) continue;
+    const mine = mineStays[t.id], b = baseStayMap[t.id];
+    if (!mine) { if (!b) { out.stays.push(clone(t)); report.added.push(t.name); } continue; }
+    const m = mergeFields(stayFields(mine), stayFields(t), b ? stayFields(b) : null, STAY_FIELDS);
+    if (m.fields.length) settle(ask('stay', t.id, mine.name, m.fields), m, stayFields(t));
+    const merged = writeFields(mine, m.value);
+    out.stays = out.stays.map((x) => (x && x.id === t.id ? merged : x));
+    if (m.took.length) report.updated.push(mine.name + ': ' + joinList(m.took));
+  }
+
+  // the trip's own settings
+  const m = mergeFields(tripFields(out), tripFields(them), base ? tripFields(base) : null, TRIP_FIELDS);
+  if (m.fields.length) settle(ask('trip', 'settings', 'Trip settings', m.fields), m, tripFields(them));
+  Object.assign(out, m.value);
+  if (m.took.length) report.updated.push('Trip settings: ' + joinList(m.took));
+
+  const done = normTrip(out, now);
+  return { trip: done.trip, issues: done.issues, conflicts, report };
+}
+
+
+// ---------- handing back to the chat ----------
+// What the chat needs to pick the trip up again: the note, the version you settled on with any
+// alternatives you want looked at, the plan as the planner computes it, what you changed since the
+// last package, and every travel time with its source — so a measured 43 minutes is never mistaken
+// for the planner's own guess.
+function versionReport(trip, dayId, key) {
+  const P = planDay(trip, dayId, key);
+  if (!P) return null;
+  return {
+    key, label: PLAN_LABEL[key],
+    order: arr(obj(obj(obj(trip).days)[dayId]).plans[key]).slice(),
+    starts: hhmm(P.startTime), finishes: hhmm(P.finish),
+    summary: P.summary,
+    stops: P.items.filter((i) => i.type === 'visit').map((i) => ({
+      id: i.id, name: i.name, arrive: hhmm(i.arrive), at: hhmm(i.at),
+      until: hhmm(i.until), waited: i.waited, minutes: i.place ? i.place.duration : null,
+    })),
+    issues: P.issues.map((i) => ({ severity: i.severity, text: i.text })),
+    checks: P.checks.map((c) => ({ name: c.name, text: c.text })),
+  };
+}
+
+// What you have done since the package the chat last sent. Without a baseline there is nothing
+// honest to say, so it says that rather than calling the whole trip new.
+function changesSince(trip, base) {
+  if (!base) {
+    return { baseline: false, why: 'No package has been loaded in this browser, so there is nothing to compare against. Everything here is simply how the trip stands.' };
+  }
+  const mine = obj(trip.places), was = obj(base.places);
+  const added = [], deleted = [], moved = [], edited = [];
+  for (const id of Object.keys(mine)) {
+    const p = mine[id], b = was[id];
+    if (!b) { added.push({ id, name: p.name, dayId: p.dayId, how: obj(p.added).how || null }); continue; }
+    if (!same(p.dayId, b.dayId)) moved.push({ id, name: p.name, from: b.dayId, to: p.dayId });
+    const changed = PLACE_FIELDS.filter((k) => k !== 'dayId' && !same(placeFields(p)[k], placeFields(b)[k]));
+    if (changed.length) edited.push({ id, name: p.name, fields: changed.map((k) => FIELD_LABEL[k] || k) });
+  }
+  for (const id of Object.keys(was)) if (!mine[id]) deleted.push({ id, name: was[id].name });
+  const orders = [];
+  for (const dayId of dayIds(trip)) {
+    const d = trip.days[dayId], b = obj(base.days)[dayId];
+    if (!b) { orders.push({ date: dayId, added: true }); continue; }
+    for (const k of PLAN_KEYS) {
+      if (!same(d.plans[k], b.plans[k])) orders.push({ date: dayId, version: k, now: d.plans[k].slice() });
+    }
+  }
+  return { baseline: true, added, deleted, moved, edited, orders };
+}
+
+// Every leg that has been measured, with what measured it. `mine` is a time you entered yourself,
+// which beats everything, and a slot with `asked` but no minutes is a service that had nothing.
+function travelReport(trip) {
+  const out = [];
+  const nameOf = (id) => (id === 'start' ? 'the start of the day'
+    : id === 'end' ? 'the end of the day'
+    : (placeById(trip, id) || {}).name || id);
+  for (const dayId of dayIds(trip)) {
+    const legs = obj(obj(trip.days[dayId]).legs);
+    for (const key of Object.keys(legs)) {
+      const leg = legs[key], ends = legEnds(key);
+      if (!ends) continue;
+      const ways = {};
+      for (const mode of LEG_MODES) {
+        const slot = leg[mode];
+        if (!slot) continue;
+        if (slot.minutes == null && !slot.asked) continue;
+        ways[mode] = { minutes: slot.minutes, km: slot.km, source: slot.source, at: slot.at,
+          departs: slot.departs, name: slot.name, detail: slot.detail };
+      }
+      if (!Object.keys(ways).length && !leg.mine) continue;
+      out.push({ date: dayId, leg: key, from: nameOf(ends[0]), to: nameOf(ends[1]),
+        pick: leg.pick || null, mine: leg.mine || null, ways });
+    }
+  }
+  return out;
+}
+
+function handback(trip, base, opts, now) {
+  const o = obj(opts);
+  const alts = arr(o.alternatives).filter((k) => PLAN_KEYS.includes(k));
+  const env = envelope(trip, 'handback', now);
+  env.handback = {
+    note: str(o.note, 4000),
+    days: dayIds(trip).map((id) => {
+      const day = trip.days[id];
+      const keys = [day.shown].concat(alts.filter((k) => k !== day.shown));
+      return { date: id, city: day.city, note: day.note, chosen: day.shown,
+        versions: keys.map((k) => versionReport(trip, id, k)).filter(Boolean) };
+    }),
+    changes: changesSince(trip, base),
+    travel: travelReport(trip),
+  };
+  return env;
+}
+const writeHandbackJson = (trip, base, opts, now) => JSON.stringify(handback(trip, base, opts, now), null, 2) + '\n';
+const writeHandbackBlock = (trip, base, opts, now) =>
+  BEGIN_LINE + '\n' + JSON.stringify(handback(trip, base, opts, now)) + '\n' + END_LINE + '\n';
+
 const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
@@ -2253,6 +2517,8 @@ const Core = {
   decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,
   planDay,
   normSpan, normHours, normPrice, normLinks, normOsm, normPoint, normPlace, normDay, normTrip, normalise,
+  mergePackage, FIELD_LABEL, PLACE_FIELDS, blank, same,
+  handback, writeHandbackJson, writeHandbackBlock, changesSince, travelReport, versionReport,
   normStay, shiftDate, stayNights, stayMornings, stayDays, stayFor, dayStart, dayEnd,
   addStay, updateStay, deleteStay, stayById,
   decodeFeatureId, namesFrom, kindFrom, fromMapFeature, bestFeature, KIND_BY_TAG,
