@@ -53,7 +53,7 @@ For the whole world:
 | Downloads | 354 MB for Kansai, 521 MB for Kanto | about 86 GB, several hours |
 | Disk at peak | under a gigabyte | about 35 GB — each extract is deleted once filtered |
 | Work after that | about a minute | an hour or so |
-| Result | 106,245 stops in 22 tiles, 3.8 MB | roughly 8.8 million stops, around 288 MB |
+| Result | 106,245 stops in 22 tiles, 3.8 MB | 4,495,039 stops in 8,985 tiles, 180 MB (measured, 23 Oct 2026) |
 
 A run that falls over is started again with the same command, and carries on rather than beginning
 from nothing: the regions it finished keep their stops, a part-finished download is resumed, and a

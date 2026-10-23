@@ -75,9 +75,17 @@ the stop lookup becomes a snapshot we build from OpenStreetMap and publish ourse
 to 24), which is also better data: route relation membership says which lines really call at a stop,
 where a live query could only say a relation was somewhere nearby. For the demo trip's first leg
 that is nine genuine candidates instead of one arbitrary airport coach. Overpass keeps the
-place-details job. `tools/refresh-stops.py` and a Kansai-and-Kanto snapshot are built; the planner
-reads it in milestone 6, and until then still asks Overpass. The "Travel times" section below still
-describes the live query, and is rewritten when that lands.
+place-details job.
+
+**Updated Fri 23 Oct 2026, the snapshot goes global:** the refresh ran for every continent —
+4,495,039 stops in 8,985 tiles, 180 MB, built in about two hours out of 86 GB of extracts. The
+seventh service run then drove the published app through it in London, Buenos Aires and Nairobi, and
+all three worked by a different route: London's journey came from Transitous, the other two from the
+snapshot, and Overpass was not asked once. Measuring the snapshot also answers a question open since
+milestone 4 — how well OpenStreetMap maps stops away from one city — and the answer is that it
+varies more than anything else here: 92% of Sydney's stops sit on a named line against 0% of
+Nairobi's thirty-nine. The planner degrades correctly through all of it, but it cannot yet say that a
+place is barely mapped, which is the honest gap this leaves.
 
 ## Why a v2
 
@@ -215,6 +223,33 @@ service, the demo trip's first day):
 - **Nothing else broke.** No page errors, no console errors beyond the browser's own notes about the
   refused requests, and every published file serves (index, style, core, live, map, app, both probes).
 
+**Seventh run, Fri 23 Oct 2026** (the published app against every live service, in three cities
+outside Japan, the day the global snapshot went up):
+- **The three sources separate cleanly, and the gate from decision 22 holds.** London's leg came from
+  Transitous — 43 min, "133 towards Holborn · walk 14 min to Monument · 17 min to Holborn Station ·
+  walk 12 min" — and the snapshot was never consulted, because Transitous had timetables there.
+  Buenos Aires and Nairobi had none, so both fell back to the snapshot: 25 min and 28 min against
+  walks of 65 and 114 minutes.
+- **A line is named only where the map says so, and the wording gives way twice over.** Buenos Aires:
+  "walk 1 min to Carlos Pellegrini · ≈ 23 min · walk 1 min from Palos y Aristóbulo Del Valle" — two
+  named stops and no line, because nothing in that tile belongs to a route relation. Nairobi: "walk 1
+  min to **the stop** · ≈ 21 min · walk 6 min from Kenyatta National Hospital Bus Stop" — the first
+  stop has no name either. Neither invents anything it was not told.
+- **Overpass was not asked once**, in any of the three. Per city: Transitous 2 to 4 requests, OSRM 2
+  to 6, our own files 8 to 10, map tiles 11 to 16, `overpass-api.de` zero. That is what moving the
+  stop lookup off it was for.
+- **The credits read the snapshot's own date.** All three said "Stops: our own snapshot as of Fri 23
+  Oct", which is the manifest talking, not a string in the source.
+- **No errors anywhere.** Three cities, no page errors, no console errors.
+- **What the snapshot is made of, measured over all 8,985 tiles:** 4,495,039 stops, of which 90%
+  carry a name and 57% a line. 4.2 M are bus stops, 138 k rail, 55 k tram. By place, the spread is
+  the finding: Sydney 92% of 15,350 stops on a named line, Paris 82% of 29,947, Tokyo 72% of 48,501,
+  London 72% of 32,010, Kyoto 55% of 3,291, New York 34% of 12,872, Buenos Aires 0% of 400, Nairobi
+  0% of 39.
+- **The gap this leaves.** Nairobi's answer looks exactly like London's and is worth far less: 39
+  stops in a whole degree of map is close to nothing, and the planner presents its pairing with the
+  same confidence either way. It should be able to say when the map is this thin.
+
 **Still to verify during the build:**
 - answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
   relation carrying a line number. Rail relations around a station are named rather than numbered;
@@ -225,7 +260,9 @@ service, the demo trip's first day):
 - answered (fifth run): the stop query the fallback sends, and that every stop it returns carries a
   position;
 - answered (fifth run): MOTIS states `legGeometry.precision`, and it is 6;
-- whether the same holds in another country: all of the above is one city on one day;
+- answered (seventh run): it holds in another country, three of them. London, Buenos Aires and
+  Nairobi each worked, by Transitous and by the snapshot, with no errors — but how much the answer is
+  worth follows OpenStreetMap's coverage, which varies from 92% of stops on a named line to none;
 - how often Overpass is this slow. Eight samples on one afternoon is not a pattern, and if 35 seconds
   is normal rather than a bad day, a second provider or the offline snapshot becomes the question;
 - how big a trip region's feeds are once reduced to stops, lines and frequencies, and what their
@@ -582,7 +619,7 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 20 | What happens when Overpass refuses? | Overpass is only asked about a place now, never about stops. It is asked again, up to six times, and given 90 s to answer rather than the 20 s the fast services get. A 502 means its workers are busy, which by a big station is most of the time, so the wait starts at 2 s and doubles to a 15 s ceiling. A 429 means the planner itself is asking too much, so that waits the full 15 s straight away: the point is to stop crowding, not to insist. Giving up on the first refusal reported "no stops" where the map had a hundred. |
 | 21 | And when it never gets through? | A preview says so and everything else on it still holds. A leg no longer has this problem: a snapshot either has the stops or does not, and the only way it fails is the browser being offline, which the leg says plainly rather than reporting "no buses". |
 | 22 | Where do the stops come from? | A snapshot we build from OpenStreetMap and publish ourselves, not a live query. Overpass refused five requests in six, took 33 to 40 seconds when it answered, and its documented budget for something used regularly is about a hundred queries a day counted across everybody — a tenth of what one day's legs spent. The snapshot is also better data: route relation membership says which lines really call at a stop, where a live query could only say a relation was somewhere nearby. |
-| 23 | How is the snapshot laid out? | One file per whole degree of latitude and longitude, named `<lat>_<lng>.json`, so the planner finds the file it wants by arithmetic on the coordinates rather than shipping boundaries and testing which region a point is in. A `manifest.json` lists the tiles that exist, so the planner never asks for one that is not there. Each tile is columnar — positions delta-encoded as fixed point, names newline-joined, line labels written once and referenced by index — because GitHub Pages gzips in transit, so the repository pays the uncompressed size. Measured live: Tokyo is 48,248 stops, 1.8 MB on disk, 469 KB on the wire in 0.3 s; Kyoto 177 KB. |
+| 23 | How is the snapshot laid out? | One file per whole degree of latitude and longitude, named `<lat>_<lng>.json`, so the planner finds the file it wants by arithmetic on the coordinates rather than shipping boundaries and testing which region a point is in. A `manifest.json` lists the tiles that exist, so the planner never asks for one that is not there. Each tile is columnar — positions delta-encoded as fixed point, names newline-joined, line labels written once and referenced by index — because GitHub Pages gzips in transit, so the repository pays the uncompressed size. Measured live: Tokyo is 48,501 stops, 1.8 MB on disk, 469 KB on the wire in 0.3 s; Kyoto 177 KB. Going global costs the manifest, which lists every tile: 161 bytes for two regions, 18.5 KB gzipped for 8,985 tiles, fetched once at startup. |
 | 24 | How is it refreshed? | `tools/refresh-stops.py`, run by hand, roughly yearly. It lives in its own repository, `plan-my-trip-data-stops`, whose history is reset on each refresh so successive snapshots do not pile up a few hundred megabytes at a time in git. The planner shows the date it was built, because a line that opens afterwards is invisible until the next run. |
 | 25 | Which two stops does it pair? | The quickest pairing whose two stops share a line, in preference to a quicker pairing that shares none — route relation membership is the thing the old live query could not give, and it is the difference between a journey somebody could make and two stops that merely happen to be near. Where nothing is shared anywhere, the quickest pairing still stands, with no line named. Nothing silly gets through either way, because a ride is only used at all where it beats walking. For the demo trip this turned "probably the EX100 bus", an airport coach picked arbitrarily out of nine candidates, into bus 206 from Kyoto Station to Gojozaka, which is the real route to Kiyomizu-dera. |
 
