@@ -25,7 +25,7 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   taking 33 to 40 seconds when it answered, against a documented budget of about a hundred queries a
   day across all users — so the stop lookup moved to a snapshot we publish at
   `https://tigerasks.github.io/plan-my-trip-data-stops/`. Overpass now answers only about a place.
-  What is published covers Kansai and Kanto; the global build has not been run yet.
+  The global snapshot was built on Fri 23 Oct 2026: 4,495,039 stops in 8,985 tiles, every continent.
 - The chat round trip (milestone 5) is still to come, and is the next thing after milestone 6.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
@@ -189,9 +189,10 @@ These are proposed; confirm each with the owner before starting it.
      them and found nothing leaving, that answer stands: it knows about times, and the snapshot does
      not;
    - the credits name the snapshot, its date and its licence;
-   - **still to run: the global snapshot.** What is published covers Kansai and Kanto only — 106,245
-     stops in 22 tiles. The rest of the world is about 86 GB of extracts to fetch, 35 GB of disk at
-     peak, and an hour or so of work after that. The owner runs it.
+   - the global snapshot is built and published, as of Fri 23 Oct 2026: **4,495,039 stops in 8,985
+     tiles**, 180 MB, every continent Geofabrik publishes. The seventh service run drove the
+     published app through it in London, Buenos Aires and Nairobi, with Overpass asked nothing at
+     all.
 
 ## Open items
 
@@ -216,11 +217,15 @@ These are proposed; confirm each with the owner before starting it.
     more often than it answered (5 of 6, then 7× 502 and 3× 429 in one session). The stop lookup
     moves to a published snapshot (decision 22); Overpass keeps the place-details job, which is one
     query per place opened and degrades gracefully;
-  - **still open, on the snapshot:** only Kansai and Kanto are measured, so how well OpenStreetMap
-    maps stops and route relations elsewhere is unknown — the snapshot inherits whatever is there,
-    exactly as the live query did;
-  - 48% of stops in Kansai carry no line, and 28% of Tokyo's, because the map has the stop but has
-    not put it in a route relation. Those can still be paired, just not named;
+  - answered (the global snapshot, Fri 23 Oct): how well OpenStreetMap maps stops and routes varies
+    enormously, and the planner inherits all of it. Worldwide 90% of stops carry a name and 57% a
+    line. By place: Sydney 92% on a named line, Paris 82%, Tokyo and London 72%, Kyoto 55%, New York
+    34%, Buenos Aires 0% of 400 stops, Nairobi 0% of 39. A stop with no line can still be paired,
+    just not named, and a stop with no name is called "the stop" — both seen working in the seventh
+    run;
+  - **still open:** a city like Nairobi, with 39 stops mapped in the whole tile, gets an answer that
+    looks like the others and is worth far less. The planner has no way to say "the map barely covers
+    this place", and it should;
   - staleness is a new failure mode: a line that opens after a refresh is invisible until the next
     one, and with Overpass gone from this path nothing catches it. The "stops as of" date is the
     mitigation, not a fix.
