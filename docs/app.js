@@ -162,7 +162,10 @@ function emptyHtml() {
     + '<p>A trip holds a backlog of ideas and the days you are planning. Start one here, then add its days.</p>'
     + '<div class="actions"><button type="button" class="btn primary" data-act="new-trip">' + ic('plus') + 'Start a trip</button>'
     + '<button type="button" class="btn" data-act="data">' + ic('up') + 'Bring one in</button></div>'
-    + '</div>';
+    + '</div>'
+    // The credits belong here too. Somebody arriving with nothing saved sees the map, which is a
+    // service being used, and has nowhere to find out what this is or who to tell when it breaks.
+    + creditsHtml();
 }
 function tripHtml() {
   const day = currentDay();
