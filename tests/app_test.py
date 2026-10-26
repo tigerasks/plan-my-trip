@@ -9,6 +9,7 @@ from harness import SHOTS, Checks
 SHOTS.mkdir(exist_ok=True)
 H = {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'}
 DEMO = json.loads((harness.HERE / 'demo-trip.json').read_text())
+C_block = lambda env: '--- BEGIN day-planner/2 ---\n' + json.dumps(env) + '\n--- END day-planner/2 ---\n'
 BASE, stop = harness.serve()
 ck = Checks('Day planner — the skeleton')
 
@@ -1425,6 +1426,95 @@ with sync_playwright() as pw:
     pg.click('[data-act="paste-in"]')
     pg.wait_for_timeout(300)
     ck('first planner' in pg.inner_text('#sheet .note.bad'), 'a block from the old planner is turned away: ' + pg.inner_text('#sheet .note.bad')[:60] + '…')
+    ctx.close()
+
+    # ---- a package from the chat is merged, not loaded over the top
+    ctx, pg = open_page(held=DEMO)
+    pack = json.loads(json.dumps(DEMO))
+    pack['kind'] = 'package'
+    pack['trip']['places']['from-the-chat'] = dict(pack['trip']['places']['example-temple'],
+                                                   id='from-the-chat', name='Somewhere The Chat Found', dayId=None)
+    pack['trip']['places']['example-temple']['fixed'] = '10:00'     # the demo leaves this unset
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(pack))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    text = pg.inner_text('#sheet')
+    ck('Settle' not in text, 'a package that only fills gaps asks nothing')
+    ck('Merged' in pg.inner_text('#sheet .note.good'), 'it says it merged rather than loaded: ' + pg.inner_text('#sheet .note.good'))
+    ck('Somewhere The Chat Found' in text, 'and names what it added')
+    places = pg.evaluate("Object.keys(window.DayPlannerApp.trip.places)")
+    ck('from-the-chat' in places and 'made-up-market' in places,
+       'the new place arrives without displacing what was already there: %d places' % len(places))
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].fixed") == '10:00',
+       'a field you never set is simply filled in')
+    ck(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/base')).kind") == 'package',
+       'and the package becomes the baseline the next merge compares against')
+    ctx.close()
+
+    # ---- when you and the chat have both changed the same thing
+    mine = json.loads(json.dumps(DEMO))
+    mine['trip']['places']['example-temple']['duration'] = 120          # you made it longer
+    theirs = json.loads(json.dumps(DEMO))
+    theirs['kind'] = 'package'
+    theirs['trip']['places']['example-temple']['duration'] = 150        # they made it longer still
+    ctx = br.new_context(viewport={'width': 1280, 'height': 900}, permissions=['clipboard-read', 'clipboard-write'])
+    ctx.route('**/*', harness.offline(BASE, None))
+    pg = ck.watch(ctx.new_page())
+    pg.add_init_script("localStorage.setItem('plan-my-trip/trip', %s)" % json.dumps(json.dumps(mine)))
+    pg.add_init_script("localStorage.setItem('plan-my-trip/base', %s)" % json.dumps(json.dumps(DEMO)))
+    pg.goto(BASE + '/index.html')
+    pg.wait_for_timeout(250)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(theirs))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    ck(pg.locator('.conflicts .cf').count() == 1, 'both changing one field stops to ask, once')
+    row = pg.inner_text('.conflicts .cf')
+    ck('How long' in row and '2h' in row and '2h 30' in row, 'with the field and both answers in words: ' + row.replace(chr(10), ' | '))
+    ck(pg.locator('[data-act="merge-pick"][data-side="mine"][aria-pressed="true"]').count() == 1,
+       'yours is what it keeps unless you say otherwise')
+    ck('Merge' not in pg.evaluate("JSON.stringify(window.DayPlannerApp.trip.places['example-temple'].duration)"),
+       'and nothing has changed yet')
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 120, 'the trip is untouched while it asks')
+    pg.screenshot(path=str(SHOTS / 'app_merge_desktop_light.png'))
+    pg.click('[data-act="merge-pick"][data-side="theirs"]')
+    pg.wait_for_timeout(200)
+    ck(pg.locator('[data-act="merge-pick"][data-side="theirs"][aria-pressed="true"]').count() == 1, 'the choice shows which side it is on')
+    pg.click('[data-act="merge-go"]')
+    pg.wait_for_timeout(500)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 150, 'applying takes the side you picked')
+    ck('Undo' in pg.inner_text('#toast'), 'and the whole merge can be undone: ' + pg.inner_text('#toast'))
+    pg.click('[data-act="undo-import"]')
+    pg.wait_for_timeout(300)
+    ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 120, 'undo puts your own version back')
+    ctx.close()
+
+    # ---- handing the trip back to the chat
+    ctx, pg = open_page(held=DEMO)
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#hbNote', 'Dropped the market, it looked like a tourist trap')
+    pg.click('[data-act="hand-alt"][data-key="packed"]')
+    pg.wait_for_timeout(150)
+    ck(pg.locator('[data-act="hand-alt"][data-key="packed"][aria-pressed="true"]').count() == 1,
+       'an alternative version can be ticked without hovering to find it')
+    pg.click('[data-act="hand-back"][data-how="text"]')
+    pg.wait_for_timeout(400)
+    hb = json.loads(pg.input_value('#outBox').strip().split(chr(10))[1])
+    ck(hb['kind'] == 'handback', 'the hand-back says what it is')
+    ck(hb['handback']['note'].startswith('Dropped the market'), 'it carries the note you typed')
+    day = [d for d in hb['handback']['days'] if d['date'] == '2026-11-21'][0]
+    ck(day['chosen'] == 'balanced' and len(day['versions']) == 2,
+       'the version on show, plus the alternative you ticked: ' + ', '.join(v['key'] for v in day['versions']))
+    ck(day['versions'][0]['stops'][0]['at'] == '08:50',
+       'with the plan computed, stop by stop: ' + day['versions'][0]['stops'][0]['name'] + ' at ' + day['versions'][0]['stops'][0]['at'])
+    ck(hb['handback']['changes']['baseline'] is False,
+       'and it owns up when there is no package to compare against')
+    ck('Copied' in pg.inner_text('#toast'), 'the clipboard gets it: ' + pg.inner_text('#toast'))
+    pg.screenshot(path=str(SHOTS / 'app_handback_desktop_light.png'))
     ctx.close()
 
     # ---- undoing an import

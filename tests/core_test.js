@@ -225,7 +225,7 @@ const other = C.newTrip('Italy · Apr 2027', '2026-09-25T10:00:00Z');
 note = C.importNote(C.readBlock(block), other);
 ok(note.mode === 'replace-other' && /different trip/.test(note.lines.join(' ')), 'another trip says what it displaces: ' + note.lines.join(' '));
 note = C.importNote(C.readBlock(C.writeBlock(demoTrip, 'package')), demoTrip);
-ok(/Merging a package/.test(note.lines.join(' ')), 'a package says merging comes later: ' + note.lines[2]);
+ok(/merged into one you already have/.test(note.lines.join(' ')), 'a package says it merges: ' + note.lines[2]);
 note = C.importNote(C.readBlock('nonsense'), demoTrip);
 ok(!note.confirm && note.lines[0] === why('nonsense').split(': ').slice(1).join(': '), 'and an unreadable block just shows its reason');
 

@@ -2210,8 +2210,8 @@ function fail(problem, found, env, err) {
   return { ok: false, problem, message, env: env || null, found: found || null };
 }
 
-// What loading a block would do to the trip that is open. Merging a package into a trip you have
-// already changed comes later; until then every import replaces, so it always asks first.
+// What loading a block would do to the trip that is open. A package is merged rather than loaded,
+// so it never comes through here; everything else replaces, and is always asked about first.
 function importNote(result, current) {
   if (!result.ok) return { confirm: false, title: 'Nothing loaded', lines: [result.message] };
   const from = result.title + ' — ' + result.summary + (result.at ? ', written ' + result.at.slice(0, 10) : '');
@@ -2221,7 +2221,7 @@ function importNote(result, current) {
   const same = current.id === result.tripId;
   const lines = [from, 'This replaces ' + (same ? 'the copy you have open' : '"' + current.title + '"') + ' — ' + summarise(current) + '.'];
   if (!same) lines.push('That is a different trip. Everything in it is about to leave this browser.');
-  if (result.kind === 'package') lines.push('Merging a package into a trip you have changed comes at a later milestone; for now it replaces.');
+  if (result.kind === 'package') lines.push('This is a package from the chat. With no trip open it is simply loaded; it is merged into one you already have.');
   lines.push('You can undo this straight afterwards.');
   return { mode: same ? 'replace-same' : 'replace-other', confirm: true, title: same ? 'Replace this trip?' : 'Swap to another trip?', lines };
 }
