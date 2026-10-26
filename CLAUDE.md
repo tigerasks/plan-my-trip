@@ -26,7 +26,11 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   day across all users — so the stop lookup moved to a snapshot we publish at
   `https://tigerasks.github.io/plan-my-trip-data-stops/`. Overpass now answers only about a place.
   The global snapshot was built on Fri 23 Oct 2026: 4,495,039 stops in 8,985 tiles, every continent.
-- The chat round trip (milestone 5) is still to come, and is the next thing after milestone 6.
+- Milestone 5 is built: a package from the chat is merged rather than loaded over the top, three
+  ways against the package it last sent, asking only where both sides moved the same thing; a
+  hand-back carries the note, the chosen version with any alternatives, the computed plan with its
+  issues and checks, what changed, and every travel time with the service that measured it. The
+  format is written down in `documentation/chat-guide.md`.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -36,7 +40,7 @@ GitHub Pages publishes the `docs/` folder of `main`; the only choices GitHub off
 | Folder | Contents | Published |
 |---|---|---|
 | `docs/` | The app (`index.html`, `style.css`, `core.js`, `map.js`, `app.js`), `probe.html`, and an empty `.nojekyll` so GitHub serves the files as they are | Yes |
-| `documentation/` | The design doc, the v1 spec, and later the chat guide | No |
+| `documentation/` | The design doc, the v1 spec, the chat guide | No |
 | `reference/v1/` | v1 code for reuse | No |
 | `tests/` | Playwright tests, mocks, screenshots; `harness.py` serves `docs/` locally, `app_test.py` covers the planner, `probe_test.py` the service test page, `core_test.js` the model in Node. See `tests/README.md` | No |
 | `tools/` | Scripts the owner runs by hand, not part of the app: `refresh-stops.py` builds the stop snapshot from OpenStreetMap and publishes it | No |
@@ -169,11 +173,20 @@ These are proposed; confirm each with the owner before starting it.
    - the stop-based fallback: every stop within 10 minutes' walk of each end, widening to 20 minutes where an end has none, and no public transport estimate if there are still none; lines from OpenStreetMap where mapped; the quickest combination; used only when it clearly beats walking;
    - caching and self-calibrating estimates;
    - a leg card showing the estimate against the real time, where you can also enter your own time.
-5. **Chat round trip:**
-   - package import, merging by id and asking on conflicts;
-   - hand-back export: note, chosen version plus alternatives, changes, travel times;
-   - credits and contact details, dark-mode polish;
-   - finally, write `documentation/chat-guide.md`: how the chat prepares packages and reads hand-backs in the v2 format. The v1 spec stays as it is.
+5. **Chat round trip — built:**
+   - a package is merged by place id, three ways against the package the chat last sent, so filling
+     in hours nobody had set lands quietly and only a field both sides moved is put as a question
+     (design doc, decisions 26 and 27). A package never deletes: a place it leaves out is one it had
+     nothing to say about;
+   - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
+     at the top. Nothing changes until Apply, and the whole merge undoes in one go;
+   - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed
+     plan with its issues and checks, what was added, moved, deleted or edited since the last
+     package, and every travel time with its source — so the chat can tell a measured 43 minutes
+     from an estimate, and a stop-based guess from a timetable;
+   - the credits say the planner is personal and non-commercial and give somewhere to complain,
+     which is what Transitous and OSRM ask for;
+   - `documentation/chat-guide.md` is written. The v1 spec stays as it is.
 6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
    stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
    them from a snapshot we publish instead:
@@ -229,8 +242,10 @@ These are proposed; confirm each with the owner before starting it.
   - staleness is a new failure mode: a line that opens after a refresh is invisible until the next
     one, and with Overpass gone from this path nothing catches it. The "stops as of" date is the
     mitigation, not a fix.
-- **Before going live:** the Transitous heads-up, contact details on the site, and licence headers.
-  The credits are on the page as of milestone 4: OpenFreeMap, OpenMapTiles, OpenStreetMap
-  contributors with a "fix the map" link, Photon, Overpass, OSRM at FOSSGIS, and Transitous with its
-  data sources.
+- **Before going live:** the Transitous heads-up, and licence headers. The credits have been on the
+  page since milestone 4 — OpenFreeMap, OpenMapTiles, OpenStreetMap contributors with a "fix the
+  map" link, Photon, Overpass, OSRM at FOSSGIS, Transitous with its data sources, and the stop
+  snapshot with its build date — and milestone 5 added what the services actually ask for beyond
+  attribution: that the planner says it is personal and non-commercial, and gives somewhere to
+  reach whoever runs it.
 - **v1:** the Claude-hosted planner stays for now; this is the owner's decision.
