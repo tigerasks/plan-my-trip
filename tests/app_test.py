@@ -1483,6 +1483,11 @@ with sync_playwright() as pw:
     pg.screenshot(path=str(SHOTS / 'app_merge_desktop_light.png'))
     ck('non-commercial' in pg.inner_text('.credits') and 'tell me here' in pg.inner_text('.credits'),
        'the page says what it is and where to complain, which is what the services ask for')
+    empty_ctx, empty_pg = open_page()
+    ck(empty_pg.locator('.credits').count() == 1,
+       'and says it on an empty page too, where the map is already somebody else\'s service')
+    ck('non-commercial' in empty_pg.inner_text('.credits'), 'with the same words as everywhere else')
+    empty_ctx.close()
     pg.click('[data-act="merge-pick"][data-side="theirs"]')
     pg.wait_for_timeout(200)
     ck(pg.locator('[data-act="merge-pick"][data-side="theirs"][aria-pressed="true"]').count() == 1, 'the choice shows which side it is on')
