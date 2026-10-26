@@ -860,7 +860,14 @@ function handbackHtml(s) {
       ? 'The day is showing ' + C.PLAN_LABEL[shown[0]] + '.'
       : 'Each day already sends whichever version it is showing.') + '</p>'
     + '<div class="actions"><button type="button" class="btn primary" data-act="hand-back" data-how="text">Copy the hand-back</button>'
-    + '<button type="button" class="btn" data-act="hand-back" data-how="file">' + ic('down') + 'Save it as a file</button></div></div>';
+    + '<button type="button" class="btn" data-act="hand-back" data-how="file">' + ic('down') + 'Save it as a file</button></div>'
+    + outBoxHtml(s, 'handback', 'The hand-back as text') + '</div>';
+}
+// The block that was just copied, shown under whatever produced it. A hand-back sitting under
+// "the same trip, as a block" would be labelled as something it is not.
+function outBoxHtml(s, kind, label) {
+  if (!s.text || s.textKind !== kind) return '';
+  return '<textarea class="in copybox" id="outBox" readonly aria-label="' + esc(label) + '">' + esc(s.text) + '</textarea>';
 }
 function reportHtml(r) {
   if (!r) return '';
@@ -1160,7 +1167,7 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">As text</span>'
       + '<p class="note">The same trip, as a block to paste into the chat. It starts and ends with a fixed line, so the chat can find it whatever you paste it into.</p>'
       + '<div class="actions"><button type="button" class="btn" data-act="copy-text"' + (t ? '' : ' disabled') + '>Copy as text</button></div>'
-      + (s.text ? '<textarea class="in copybox" id="outBox" readonly aria-label="The trip as text">' + esc(s.text) + '</textarea>' : '')
+      + outBoxHtml(s, 'save', 'The trip as text')
       + '</div>'
       + handbackHtml(s)
       + '<div class="sh-sec"><span class="label">Paste a block</span>'
@@ -2318,6 +2325,7 @@ const ACTIONS = {
     saveNow();
     const block = C.writeBlock(App.trip, 'save');
     App.ui.sheet.text = block;
+    App.ui.sheet.textKind = 'save';
     render();
     const box = $('#outBox');
     if (box) { box.focus(); box.select(); }
@@ -2361,6 +2369,7 @@ const ACTIONS = {
     }
     const block = C.writeHandbackBlock(App.trip, readBase(), opts, now.toISOString());
     App.ui.sheet.text = block;
+    App.ui.sheet.textKind = 'handback';
     render();
     const box = $('#outBox');
     if (box) { box.focus(); box.select(); }

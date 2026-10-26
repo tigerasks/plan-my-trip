@@ -1530,6 +1530,8 @@ with sync_playwright() as pw:
        'an alternative version can be ticked without hovering to find it')
     pg.click('[data-act="hand-back"][data-how="text"]')
     pg.wait_for_timeout(400)
+    ck(pg.locator('.sh-sec:has(#outBox) .label').inner_text().lower().startswith('hand back'),
+       'the block sits under the section that made it, not under the one about saving the trip')
     hb = json.loads(pg.input_value('#outBox').strip().split(chr(10))[1])
     ck(hb['kind'] == 'handback', 'the hand-back says what it is')
     ck(hb['handback']['note'].startswith('Dropped the market'), 'it carries the note you typed')
