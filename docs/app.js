@@ -812,9 +812,12 @@ function mergeHtml(m) {
     + (c.gone
       ? '<p class="note">You deleted this. The package still has it, changed.</p>'
       : '<ul class="cf-fields">' + c.fields.map((f) =>
+        // Each value says whose it is. Side by side a header row would do, but on a phone the
+        // columns stack, and two bare times with nothing to tell them apart is the one way this
+        // list could mislead.
         '<li><span class="cf-field">' + esc(f.label) + '</span>'
-        + '<span class="cf-mine">' + esc(valueText(f.key, f.mine)) + '</span>'
-        + '<span class="cf-theirs">' + esc(valueText(f.key, f.theirs)) + '</span></li>').join('') + '</ul>')
+        + '<span class="cf-mine"><span class="cf-who">yours</span>' + esc(valueText(f.key, f.mine)) + '</span>'
+        + '<span class="cf-theirs"><span class="cf-who">the chat</span>' + esc(valueText(f.key, f.theirs)) + '</span></li>').join('') + '</ul>')
     + '<div class="seg" role="group" aria-label="' + esc(c.label) + '">'
     + ['mine', 'theirs'].map((side) => '<button type="button"'
       + ' data-act="merge-pick" data-key="' + esc(c.key) + '" data-side="' + side + '" aria-pressed="'
@@ -1855,6 +1858,10 @@ function openMerge(res) {
   s.report = null;
   s.merge = { res: res, conflicts: plan.conflicts, choices: {} };
   render();
+  // You paste at the bottom of the sheet and the questions appear at the top, so on a phone you
+  // would land below them, looking at buttons without the values they are about.
+  const sheet = $('#sheet');
+  if (sheet) sheet.scrollTop = 0;
 }
 function applyMerge(res, choices) {
   const s = dataSheet();

@@ -1474,6 +1474,7 @@ with sync_playwright() as pw:
     ck(pg.locator('.conflicts .cf').count() == 1, 'both changing one field stops to ask, once')
     row = pg.inner_text('.conflicts .cf')
     ck('How long' in row and '2h' in row and '2h 30' in row, 'with the field and both answers in words: ' + row.replace(chr(10), ' | '))
+    ck('yours' in row.lower() and 'the chat' in row.lower(), 'and each value says whose it is, so two times are never just two times')
     ck(pg.locator('[data-act="merge-pick"][data-side="mine"][aria-pressed="true"]').count() == 1,
        'yours is what it keeps unless you say otherwise')
     ck('Merge' not in pg.evaluate("JSON.stringify(window.DayPlannerApp.trip.places['example-temple'].duration)"),
@@ -1491,6 +1492,30 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(300)
     ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 120, 'undo puts your own version back')
     ctx.close()
+
+    # the same questions in the dark, and on a phone, where the two columns stack
+    for name, w, h, scheme in (('desktop_dark', 1280, 900, 'dark'), ('phone_light', 390, 844, 'light'), ('phone_dark', 390, 844, 'dark')):
+        phone = w < 500
+        ctx = br.new_context(viewport={'width': w, 'height': h}, color_scheme=scheme,
+                             is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
+        ctx.route('**/*', harness.offline(BASE, None))
+        pg = ck.watch(ctx.new_page())
+        pg.add_init_script("localStorage.setItem('plan-my-trip/trip', %s)" % json.dumps(json.dumps(mine)))
+        pg.add_init_script("localStorage.setItem('plan-my-trip/base', %s)" % json.dumps(json.dumps(DEMO)))
+        pg.goto(BASE + '/index.html')
+        pg.wait_for_timeout(250)
+        pg.click('#dataBtn')
+        pg.wait_for_timeout(150)
+        pg.fill('#inBox', C_block(theirs))
+        pg.click('[data-act="paste-in"]')
+        pg.wait_for_timeout(500)
+        ck(pg.locator('.conflicts .cf').count() == 1, 'the questions stand up at ' + name)
+        ck(pg.locator('[data-act="merge-go"]').is_visible(), 'with Apply reachable at ' + name)
+        ck(pg.evaluate("document.querySelector('#sheet').scrollTop") == 0,
+           'and the sheet showing the question rather than whatever you last scrolled to, at ' + name)
+        ck(pg.locator('.conflicts .cf').first.is_visible(), 'the difference itself is on screen at ' + name)
+        pg.screenshot(path=str(SHOTS / ('app_merge_' + name + '.png')))
+        ctx.close()
 
     # ---- handing the trip back to the chat
     ctx, pg = open_page(held=DEMO)

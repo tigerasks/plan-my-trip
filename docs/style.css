@@ -366,6 +366,7 @@ code { font: 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background
 .cf-fields li:first-child { border-top: 0; }
 .cf-field { color: var(--muted); }
 .cf-mine, .cf-theirs { overflow-wrap: anywhere; }
+.cf-who { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); margin-right: 5px; }
 .cf-theirs { color: var(--muted); }
 .cf .seg { margin-top: 2px; }
 
