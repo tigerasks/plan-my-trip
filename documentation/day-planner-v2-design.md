@@ -543,14 +543,20 @@ Three rules hold at all times, and the planner repairs anything that breaks them
 hold. `duration` is minutes, 0 to 720 in steps of 15. Times are `HH:MM` in destination local time,
 dates are `YYYY-MM-DD`, and timestamps are ISO UTC.
 
-**From the chat.** A package carries places for the backlog and the days, researched and verified as before, optionally with priority labels and proposed plan versions. It also carries your own versions from your last hand-back. Loading it merges by place id; where you've changed something since, the planner asks which version to keep.
+**From the chat.** A package carries places for the backlog and the days, researched and verified as before, optionally with priority labels and proposed plan versions. It also carries your own versions from your last hand-back.
+
+Loading it merges by place id, three ways against the package the chat last sent (decisions 26 to 28). Places, days, stays and the trip's own settings all merge field by field; `legs` never do, because travel times are the planner's own measurements and a package cannot improve them. What the merge did is reported place by place — what it added, what it filled in, what it put back, and what you settled yourself — and the whole thing undoes in one go.
 
 **To the chat.** A hand-back carries:
 - your note;
 - the chosen version, with alternatives if you tick them;
 - the computed plan, with its issues and checks;
 - everything you added, moved or deleted since the last package;
-- the travel times from the routing services, so the chat can tell real times from estimates.
+- the travel times from the routing services, so the chat can tell real times from estimates — and
+  tell a timetabled journey from one worked out off the stop snapshot, which has no times behind it
+  at all.
+
+How the chat writes a package and reads a hand-back is `documentation/chat-guide.md`.
 
 The chat verifies your additions for that date (hours, closures, tickets), fills in what's missing, and folds them into the next package.
 
@@ -622,6 +628,9 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 23 | How is the snapshot laid out? | One file per whole degree of latitude and longitude, named `<lat>_<lng>.json`, so the planner finds the file it wants by arithmetic on the coordinates rather than shipping boundaries and testing which region a point is in. A `manifest.json` lists the tiles that exist, so the planner never asks for one that is not there. Each tile is columnar — positions delta-encoded as fixed point, names newline-joined, line labels written once and referenced by index — because GitHub Pages gzips in transit, so the repository pays the uncompressed size. Measured live: Tokyo is 48,501 stops, 1.8 MB on disk, 469 KB on the wire in 0.3 s; Kyoto 177 KB. Going global costs the manifest, which lists every tile: 161 bytes for two regions, 18.5 KB gzipped for 8,985 tiles, fetched once at startup. |
 | 24 | How is it refreshed? | `tools/refresh-stops.py`, run by hand, roughly yearly. It lives in its own repository, `plan-my-trip-data-stops`, whose history is reset on each refresh so successive snapshots do not pile up a few hundred megabytes at a time in git. The planner shows the date it was built, because a line that opens afterwards is invisible until the next run. |
 | 25 | Which two stops does it pair? | The quickest pairing whose two stops share a line, in preference to a quicker pairing that shares none — route relation membership is the thing the old live query could not give, and it is the difference between a journey somebody could make and two stops that merely happen to be near. Where nothing is shared anywhere, the quickest pairing still stands, with no line named. Nothing silly gets through either way, because a ride is only used at all where it beats walking. For the demo trip this turned "probably the EX100 bus", an airport coach picked arbitrarily out of nine candidates, into bus 206 from Kyoto Station to Gojozaka, which is the real route to Kiyomizu-dera. |
+| 26 | How does a package know what you changed? | The planner keeps the package it last loaded, as a baseline nobody sees, and merges three ways against it. A field only becomes a question where both the chat and you moved it away from that baseline and did not land on the same answer; the chat filling in hours you never had simply lands. The baseline lives in browser storage, not in the trip, so it never travels in a file: losing it costs questions, not data. Without one — a new device, cleared storage — anything you have set and the package disagrees with has to be asked about, and the report says that is why rather than letting it look like a quiet merge. |
+| 27 | How are the questions put? | One list, one choice per place, with "keep all mine" and "take all theirs" above it. Per place rather than per field, because a package that touches twenty places would otherwise be sixty rows nobody reads, and a place is the unit people actually think in. The fields in question are still all shown, each value labelled with whose it is — side by side on a laptop, stacked on a phone, where "2h" above "2h 30" with nothing to tell them apart would be the one way this list could mislead. Nothing changes until Apply, and the whole merge undoes in one go. |
+| 28 | Can a package delete? | No. A place a package does not mention is one it had nothing to say about, not one it wants gone — packages are often only the part of the trip the chat was asked about, and a merge that read silence as deletion would quietly empty a trip. Where you have deleted something the chat has since changed, that is put to you as a question rather than settled either way. |
 
 ## Open questions
 

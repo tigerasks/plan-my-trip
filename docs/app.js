@@ -42,7 +42,8 @@ const App = {
 // ---------- browser storage ----------
 // Keys are namespaced: every GitHub Pages project of this account shares one origin, so a bare
 // key would collide with another project's.
-const KEY = { trip: 'plan-my-trip/trip', undo: 'plan-my-trip/undo', ui: 'plan-my-trip/ui' };
+const KEY = { trip: 'plan-my-trip/trip', undo: 'plan-my-trip/undo', ui: 'plan-my-trip/ui',
+  base: 'plan-my-trip/base' };
 const Store = {
   read(key) {
     try { const v = localStorage.getItem(key); return v == null ? null : JSON.parse(v); } catch (e) { return null; }
@@ -81,6 +82,14 @@ function readUndo() {
   if (!env) return null;
   const res = C.readBlock(JSON.stringify(env));
   return res.ok ? res : null;
+}
+// The package the chat last sent, kept so a merge can tell what you changed from what they did.
+// It is not part of the trip: it never travels in a file, and losing it costs questions, not data.
+function readBase() {
+  const env = Store.read(KEY.base);
+  if (!env) return null;
+  const res = C.readBlock(JSON.stringify(env));
+  return res.ok ? res.trip : null;
 }
 function restore() {
   const ui = Store.read(KEY.ui);
@@ -581,8 +590,13 @@ function creditsHtml() {
     + (Snap.man && Snap.man.built ? ' as of ' + esc(C.fmtDateUK(Snap.man.built)) : '')
     + ', from © OpenStreetMap contributors ('
     + CREDIT('https://opendatacommons.org/licenses/odbl/', 'ODbL') + ')<br>'
-    + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
+    // Transitous and OSRM both ask for two things on the page: that it is non-commercial, and
+    // somewhere to reach whoever runs it. The GitHub profile is that somewhere, so it is labelled
+    // as contact rather than left as a byline anyone would read past.
+    + 'A personal, non-commercial planner by '
+    + CREDIT('https://github.com/tigerasks', 'tigerasks')
     + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
+    + ' · Something wrong? ' + CREDIT('https://github.com/tigerasks/plan-my-trip/issues', 'tell me here')
     + '</p>';
 }
 
@@ -773,6 +787,87 @@ function undoHtml() {
     + '<p class="note">The last thing you loaded replaced "' + esc(App.undo.title) + '" — ' + esc(App.undo.summary)
     + '. This puts it back, and drops what came in.</p>'
     + '<div class="actions"><button type="button" class="btn" data-act="undo-import">Undo the last import</button></div></div>';
+}
+// What a field says, in words, for the two columns of a conflict. The values are whatever the
+// model holds — a time, a list of links, an opening-hours table — so anything without a short
+// reading of its own is described rather than dumped as JSON nobody can compare at a glance.
+function valueText(key, v) {
+  if (v == null || v === '') return 'nothing';
+  if (key === 'pos') return v.lat == null ? 'nowhere' : v.lat.toFixed(4) + ', ' + v.lng.toFixed(4);
+  if (key === 'duration') return C.fmtDur(v);
+  if (key === 'hours') return C.hoursText(v) || 'set';
+  if (key === 'price') return C.fmtMoney(v, App.trip) || 'set';
+  if (key === 'dayId') return C.fmtDateUK(v) || 'the backlog';
+  if (key === 'plans') return C.PLAN_KEYS.map((k) => C.PLAN_LABEL[k] + ' ' + (v[k] || []).length).join(' · ');
+  if (key === 'start' || key === 'end') return [v.name, v.time].filter(Boolean).join(' at ') || 'nothing';
+  if (key === 'shown') return C.PLAN_LABEL[v] || String(v);
+  if (key === 'booked') return v ? 'yes' : 'no';
+  if (Array.isArray(v)) return v.length + (v.length === 1 ? ' entry' : ' entries');
+  if (typeof v === 'object') return 'set';
+  const text = String(v);
+  return text.length > 90 ? text.slice(0, 87) + '…' : text;
+}
+// Everything the package and you disagree about, in one list. Each place is settled as a whole:
+// taking theirs takes every field of theirs that is in question, which is how it reads in the list.
+function mergeHtml(m) {
+  if (!m) return '';
+  const row = (c) => '<li class="cf">'
+    + '<div class="cf-head"><span class="cf-name">' + esc(c.label) + '</span>'
+    + '<span class="cf-where">' + esc(c.scope === 'place' ? 'place' : c.scope === 'day' ? 'day' : c.scope) + '</span></div>'
+    + (c.gone
+      ? '<p class="note">You deleted this. The package still has it, changed.</p>'
+      : '<ul class="cf-fields">' + c.fields.map((f) =>
+        // Each value says whose it is. Side by side a header row would do, but on a phone the
+        // columns stack, and two bare times with nothing to tell them apart is the one way this
+        // list could mislead.
+        '<li><span class="cf-field">' + esc(f.label) + '</span>'
+        + '<span class="cf-mine"><span class="cf-who">yours</span>' + esc(valueText(f.key, f.mine)) + '</span>'
+        + '<span class="cf-theirs"><span class="cf-who">the chat</span>' + esc(valueText(f.key, f.theirs)) + '</span></li>').join('') + '</ul>')
+    + '<div class="seg" role="group" aria-label="' + esc(c.label) + '">'
+    + ['mine', 'theirs'].map((side) => '<button type="button"'
+      + ' data-act="merge-pick" data-key="' + esc(c.key) + '" data-side="' + side + '" aria-pressed="'
+      + ((m.choices[c.key] === 'theirs' ? 'theirs' : 'mine') === side) + '">'
+      + (side === 'mine' ? (c.gone ? 'Leave it deleted' : 'Keep mine') : (c.gone ? 'Put it back' : 'Take theirs'))
+      + '</button>').join('') + '</div></li>';
+  const n = m.conflicts.length;
+  return '<div class="sh-sec"><span class="label">Settle ' + n + (n === 1 ? ' difference' : ' differences') + '</span>'
+    + '<p class="note">The chat and you have both changed these since the last package. Everything else has already been merged. '
+    + 'Nothing is kept until you apply it, and you can undo it straight afterwards.</p>'
+    + '<div class="actions"><button type="button" class="btn" data-act="merge-all" data-side="mine">Keep all mine</button>'
+    + '<button type="button" class="btn" data-act="merge-all" data-side="theirs">Take all theirs</button></div>'
+    + '<ul class="conflicts">' + m.conflicts.map(row).join('') + '</ul>'
+    + '<div class="actions"><button type="button" class="btn primary" data-act="merge-go">Apply</button>'
+    + '<button type="button" class="btn" data-act="merge-cancel">Cancel</button></div></div>';
+}
+// A hand-back is the other direction: not the trip as data, but the trip as an answer — what you
+// settled on, what you changed, and which times were measured rather than guessed.
+function handbackHtml(s) {
+  const t = App.trip;
+  if (!t) return '';
+  const alts = s.alts || [];
+  const shown = C.dayIds(t).map((id) => t.days[id].shown);
+  const choice = (k) => '<button type="button" class="chk"'
+    + ' data-act="hand-alt" data-key="' + k + '" aria-pressed="' + alts.includes(k) + '">'
+    + esc(C.PLAN_LABEL[k]) + '</button>';
+  return '<div class="sh-sec"><span class="label">Hand back to the chat</span>'
+    + '<p class="note">The version each day is showing, with the plan the planner computes from it, '
+    + 'everything you have changed since the chat\'s last package, and every travel time with the '
+    + 'service that measured it — so the chat can tell a real 43 minutes from an estimate.</p>'
+    + '<textarea class="in" id="hbNote" maxlength="4000" placeholder="Anything you want the chat to know — what you liked, what you dropped, what to look at next">'
+    + esc(s.hbNote || '') + '</textarea>'
+    + '<p class="hint">Also send, for a second opinion: ' + C.PLAN_KEYS.map(choice).join(' ')
+    + '. ' + esc(C.dayIds(t).length === 1
+      ? 'The day is showing ' + C.PLAN_LABEL[shown[0]] + '.'
+      : 'Each day already sends whichever version it is showing.') + '</p>'
+    + '<div class="actions"><button type="button" class="btn primary" data-act="hand-back" data-how="text">Copy the hand-back</button>'
+    + '<button type="button" class="btn" data-act="hand-back" data-how="file">' + ic('down') + 'Save it as a file</button></div>'
+    + outBoxHtml(s, 'handback', 'The hand-back as text') + '</div>';
+}
+// The block that was just copied, shown under whatever produced it. A hand-back sitting under
+// "the same trip, as a block" would be labelled as something it is not.
+function outBoxHtml(s, kind, label) {
+  if (!s.text || s.textKind !== kind) return '';
+  return '<textarea class="in copybox" id="outBox" readonly aria-label="' + esc(label) + '">' + esc(s.text) + '</textarea>';
 }
 function reportHtml(r) {
   if (!r) return '';
@@ -1059,7 +1154,7 @@ const SHEETS = {
     const t = App.trip;
     const when = App.fileAt ? new Date(App.fileAt) : null;
     return sheetHead('Trip file', t ? t.title + ' — ' + C.summarise(t) : 'Nothing to save yet')
-      + pendingHtml(s.pending) + reportHtml(s.report) + undoHtml()
+      + pendingHtml(s.pending) + mergeHtml(s.merge) + reportHtml(s.report) + undoHtml()
       + '<div class="sh-sec"><span class="label">Save to a file</span>'
       + '<p class="note">A file is a backup, the way to move this trip to another device, and what you upload to the chat.'
       + (when ? ' Last saved on this device ' + esc(C.fmtDateUK(isoOf(when)) + ' ' + fmtClock(when)) + '.' : '')
@@ -1072,8 +1167,9 @@ const SHEETS = {
       + '<div class="sh-sec"><span class="label">As text</span>'
       + '<p class="note">The same trip, as a block to paste into the chat. It starts and ends with a fixed line, so the chat can find it whatever you paste it into.</p>'
       + '<div class="actions"><button type="button" class="btn" data-act="copy-text"' + (t ? '' : ' disabled') + '>Copy as text</button></div>'
-      + (s.text ? '<textarea class="in copybox" id="outBox" readonly aria-label="The trip as text">' + esc(s.text) + '</textarea>' : '')
+      + outBoxHtml(s, 'save', 'The trip as text')
       + '</div>'
+      + handbackHtml(s)
       + '<div class="sh-sec"><span class="label">Paste a block</span>'
       + '<p class="note">Paste what the chat gave you, from its first line to its last. Anything around it is ignored.</p>'
       + '<textarea class="in copybox" id="inBox" aria-label="A block to load" placeholder="--- BEGIN day-planner/2 ---">' + esc(s.paste || '') + '</textarea>'
@@ -1742,14 +1838,69 @@ function dataSheet() {
   if (!App.ui.sheet || App.ui.sheet.kind !== 'data') openSheet('data');
   return App.ui.sheet;
 }
+// The note and the alternatives come off the sheet as it stands, so what you typed goes with it
+// without a Save step of its own. Anything that redraws the sheet has to keep the note first:
+// ticking a version is a redraw, and losing a paragraph to it would be its own small betrayal.
+function keepNote() {
+  const box = $('#hbNote');
+  if (box && App.ui.sheet) App.ui.sheet.hbNote = box.value;
+}
+function handbackOpts() {
+  keepNote();
+  const s = App.ui.sheet || {};
+  return { note: s.hbNote || '', alternatives: s.alts || [] };
+}
 function takeIn(text) {
   const s = dataSheet();
   const res = C.readBlock(text);
-  const note = C.importNote(res, App.trip);
   s.pending = null;
+  s.merge = null;
   if (!res.ok) { s.report = { bad: true, title: res.message, lines: [] }; render(); return; }
+  // A package is folded into what you have; everything else replaces it.
+  if (res.kind === 'package' && App.trip) { openMerge(res); return; }
+  const note = C.importNote(res, App.trip);
   if (note.confirm) { s.report = null; s.pending = { res: res, note: note }; render(); return; }
   applyImport(res);
+}
+// Work the merge out, and only stop to ask if there is something worth asking about.
+function openMerge(res) {
+  const s = dataSheet();
+  const plan = C.mergePackage(App.trip, res.trip, readBase(), {}, null);
+  if (!plan.conflicts.length) { applyMerge(res, {}); return; }
+  s.report = null;
+  s.merge = { res: res, conflicts: plan.conflicts, choices: {} };
+  render();
+  // You paste at the bottom of the sheet and the questions appear at the top, so on a phone you
+  // would land below them, looking at buttons without the values they are about.
+  const sheet = $('#sheet');
+  if (sheet) sheet.scrollTop = 0;
+}
+function applyMerge(res, choices) {
+  const s = dataSheet();
+  const done = C.mergePackage(App.trip, res.trip, readBase(), choices, null);
+  Store.write(KEY.undo, C.envelope(App.trip, 'save'));
+  App.undo = readUndo();
+  App.trip = done.trip;
+  // What came in is what the next merge compares against, however the questions were answered.
+  Store.write(KEY.base, C.envelope(res.trip, 'package'));
+  App.storageProblem = null;
+  s.pending = null;
+  s.merge = null;
+  s.paste = '';
+  const r = done.report;
+  const lines = [];
+  const some = (list, word) => { if (list.length) lines.push(word + ': ' + C.joinList(list)); };
+  some(r.added, 'Added');
+  some(r.updated, 'Filled in');
+  some(r.restored, 'Put back');
+  some(r.asked, 'You settled');
+  if (r.newDays.length) lines.push('New days: ' + C.joinList(r.newDays.map(C.fmtDateUK)));
+  if (!r.baseline) lines.push('No earlier package was stored in this browser, so anything you had set and the package disagreed with had to be asked about.');
+  if (!lines.length) lines.push('Nothing in it was new.');
+  s.report = { bad: false, title: 'Merged ' + res.title, lines: lines.concat(done.issues) };
+  saveUi();
+  changed();
+  toast('Merged ' + res.title, { label: 'Undo', fn: undoImport }, 9000);
 }
 function applyImport(res) {
   const s = dataSheet();
@@ -1760,6 +1911,9 @@ function applyImport(res) {
   App.trip = res.trip;
   App.ui.dayId = null;
   App.storageProblem = null;
+  // A baseline belongs to one trip. Swapping to another leaves it meaningless, so it goes.
+  const base = Store.read(KEY.base);
+  if (!base || C.cleanId(base.tripId) !== res.tripId) Store.drop(KEY.base);
   s.pending = null;
   s.paste = '';
   s.text = '';
@@ -2171,6 +2325,7 @@ const ACTIONS = {
     saveNow();
     const block = C.writeBlock(App.trip, 'save');
     App.ui.sheet.text = block;
+    App.ui.sheet.textKind = 'save';
     render();
     const box = $('#outBox');
     if (box) { box.focus(); box.select(); }
@@ -2181,6 +2336,56 @@ const ACTIONS = {
   },
   'import-go': () => { if (App.ui.sheet.pending) applyImport(App.ui.sheet.pending.res); },
   'import-cancel': () => { App.ui.sheet.pending = null; render(); },
+  'merge-pick': (el) => {
+    const m = App.ui.sheet.merge;
+    if (!m) return;
+    m.choices[el.dataset.key] = el.dataset.side === 'theirs' ? 'theirs' : 'mine';
+    render();
+  },
+  'merge-all': (el) => {
+    const m = App.ui.sheet.merge;
+    if (!m) return;
+    for (const c of m.conflicts) m.choices[c.key] = el.dataset.side === 'theirs' ? 'theirs' : 'mine';
+    render();
+  },
+  'merge-go': () => { const m = App.ui.sheet.merge; if (m) applyMerge(m.res, m.choices); },
+  'merge-cancel': () => {
+    App.ui.sheet.merge = null;
+    App.ui.sheet.report = { bad: true, title: 'Nothing was merged. The package is still in the box below if you want another go.', lines: [] };
+    render();
+  },
+  // What goes back to the chat: the note, the version you settled on, the alternatives you want
+  // looked at, what you changed, and every travel time with the service that measured it.
+  'hand-back': (el) => {
+    if (!App.trip) return;
+    saveNow();
+    const opts = handbackOpts();
+    const asFile = el.dataset.how === 'file';
+    const now = new Date();
+    if (asFile) {
+      download('handback ' + C.fileName(App.trip, now), C.writeHandbackJson(App.trip, readBase(), opts, now.toISOString()));
+      toast('Saved the hand-back');
+      return;
+    }
+    const block = C.writeHandbackBlock(App.trip, readBase(), opts, now.toISOString());
+    App.ui.sheet.text = block;
+    App.ui.sheet.textKind = 'handback';
+    render();
+    const box = $('#outBox');
+    if (box) { box.focus(); box.select(); }
+    const byHand = () => toast('Select the text below and copy it yourself.');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(block).then(() => toast('Copied — ' + C.sizeText(block)), byHand);
+    } else byHand();
+  },
+  'hand-alt': (el) => {
+    keepNote();
+    const s = App.ui.sheet;
+    const key = el.dataset.key;
+    const have = (s.alts || []).includes(key);
+    s.alts = have ? (s.alts || []).filter((k) => k !== key) : (s.alts || []).concat([key]);
+    render();
+  },
   version: (el) => {
     const day = currentDay();
     if (!day || day.shown === el.dataset.v) return;
