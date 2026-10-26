@@ -590,8 +590,13 @@ function creditsHtml() {
     + (Snap.man && Snap.man.built ? ' as of ' + esc(C.fmtDateUK(Snap.man.built)) : '')
     + ', from © OpenStreetMap contributors ('
     + CREDIT('https://opendatacommons.org/licenses/odbl/', 'ODbL') + ')<br>'
-    + 'Planner by ' + CREDIT('https://github.com/tigerasks', 'tigerasks')
+    // Transitous and OSRM both ask for two things on the page: that it is non-commercial, and
+    // somewhere to reach whoever runs it. The GitHub profile is that somewhere, so it is labelled
+    // as contact rather than left as a byline anyone would read past.
+    + 'A personal, non-commercial planner by '
+    + CREDIT('https://github.com/tigerasks', 'tigerasks')
     + ' · ' + CREDIT('https://github.com/tigerasks/plan-my-trip', 'source code') + ' (AGPL-3.0)'
+    + ' · Something wrong? ' + CREDIT('https://github.com/tigerasks/plan-my-trip/issues', 'tell me here')
     + '</p>';
 }
 

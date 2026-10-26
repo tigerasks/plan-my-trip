@@ -1481,6 +1481,8 @@ with sync_playwright() as pw:
        'and nothing has changed yet')
     ck(pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].duration") == 120, 'the trip is untouched while it asks')
     pg.screenshot(path=str(SHOTS / 'app_merge_desktop_light.png'))
+    ck('non-commercial' in pg.inner_text('.credits') and 'tell me here' in pg.inner_text('.credits'),
+       'the page says what it is and where to complain, which is what the services ask for')
     pg.click('[data-act="merge-pick"][data-side="theirs"]')
     pg.wait_for_timeout(200)
     ck(pg.locator('[data-act="merge-pick"][data-side="theirs"][aria-pressed="true"]').count() == 1, 'the choice shows which side it is on')
