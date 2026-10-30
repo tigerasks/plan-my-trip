@@ -536,7 +536,10 @@ Three rules hold at all times, and the planner repairs anything that breaks them
 
 - a place's `dayId` says where it lives — a day, or `null` for the backlog;
 - `plans` hold order only, and may only name places of their own day — a place may appear more than
-  once, for a station you pass back through, and each appearance is its own stop;
+  once, for a station you pass back through, and each appearance is its own stop. A day's order
+  naming a place is itself a statement about where that place lives, so a package proposing an order
+  without restating `dayId` is taken at its word; saying `dayId` outright still wins, and anything an
+  order loses is reported rather than dropped in silence;
 - the backlog is exactly the places with no day.
 
 "Ideas for today" is worked out, never stored: the day's places that the version on screen does not
@@ -545,13 +548,16 @@ dates are `YYYY-MM-DD`, and timestamps are ISO UTC.
 
 **From the chat.** A package carries places for the backlog and the days, researched and verified as before, optionally with priority labels and proposed plan versions. It also carries your own versions from your last hand-back.
 
+A package is partial on purpose: it says what the chat has learned and leaves the rest alone, so
+reading one also notes which fields were really in it (decision 29).
+
 Loading it merges by place id, three ways against the package the chat last sent (decisions 26 to 28). Places, days, stays and the trip's own settings all merge field by field; `legs` never do, because travel times are the planner's own measurements and a package cannot improve them. What the merge did is reported place by place — what it added, what it filled in, what it put back, and what you settled yourself — and the whole thing undoes in one go.
 
 **To the chat.** A hand-back carries:
 - your note;
 - the chosen version, with alternatives if you tick them;
 - the computed plan, with its issues and checks;
-- everything you added, moved or deleted since the last package;
+- everything you added, moved or deleted since the two sides were last in step (decision 30);
 - the travel times from the routing services, so the chat can tell real times from estimates — and
   tell a timetabled journey from one worked out off the stop snapshot, which has no times behind it
   at all.
@@ -571,6 +577,13 @@ Browser storage belongs to that browser on that device, though, and private wind
 - **as a file:** Save to file, then Import from file.
 
 That covers a day's hand-back and the whole trip alike, and the importer accepts either form. Files double as backups and as the way to move a trip between devices; the planner shows when you last saved one. Syncing through your GitHub account could come later.
+
+Five keys, namespaced because every GitHub Pages project of this account shares one origin:
+`plan-my-trip/trip` is the trip, `plan-my-trip/undo` the one step back, `plan-my-trip/ui` where you
+had got to, and two that exist only for talking to the chat — `plan-my-trip/base`, the package it
+last sent, and `plan-my-trip/seen`, the trip as it stood when the two of you were last in step
+(decisions 26 and 30). Neither of the last two ever travels in a file: losing them costs questions,
+not data.
 
 ## Carried over and dropped
 
@@ -630,7 +643,9 @@ The Transitous journey endpoint is versioned (v6 at the time of writing), so the
 | 25 | Which two stops does it pair? | The quickest pairing whose two stops share a line, in preference to a quicker pairing that shares none — route relation membership is the thing the old live query could not give, and it is the difference between a journey somebody could make and two stops that merely happen to be near. Where nothing is shared anywhere, the quickest pairing still stands, with no line named. Nothing silly gets through either way, because a ride is only used at all where it beats walking. For the demo trip this turned "probably the EX100 bus", an airport coach picked arbitrarily out of nine candidates, into bus 206 from Kyoto Station to Gojozaka, which is the real route to Kiyomizu-dera. |
 | 26 | How does a package know what you changed? | The planner keeps the package it last loaded, as a baseline nobody sees, and merges three ways against it. A field only becomes a question where both the chat and you moved it away from that baseline and did not land on the same answer; the chat filling in hours you never had simply lands. The baseline lives in browser storage, not in the trip, so it never travels in a file: losing it costs questions, not data. Without one — a new device, cleared storage — anything you have set and the package disagrees with has to be asked about, and the report says that is why rather than letting it look like a quiet merge. |
 | 27 | How are the questions put? | One list, one choice per place, with "keep all mine" and "take all theirs" above it. Per place rather than per field, because a package that touches twenty places would otherwise be sixty rows nobody reads, and a place is the unit people actually think in. The fields in question are still all shown, each value labelled with whose it is — side by side on a laptop, stacked on a phone, where "2h" above "2h 30" with nothing to tell them apart would be the one way this list could mislead. Nothing changes until Apply, and the whole merge undoes in one go. |
-| 28 | Can a package delete? | No. A place a package does not mention is one it had nothing to say about, not one it wants gone — packages are often only the part of the trip the chat was asked about, and a merge that read silence as deletion would quietly empty a trip. Where you have deleted something the chat has since changed, that is put to you as a question rather than settled either way. |
+| 28 | Can a package delete? | No. A place a package does not mention is one it had nothing to say about, not one it wants gone — packages are often only the part of the trip the chat was asked about, and a merge that read silence as deletion would quietly empty a trip. Where you have deleted something the chat has since changed, that is put to you as a question rather than settled either way. A single field is a smaller thing than a place: a package sending one empty is taking back a value it put there itself, which works where you never touched it, and is put to you as a question where the value is your own. |
+| 29 | How does the planner tell "nothing to say" from "set it to this"? | Reading a package also notes which fields were actually in it, and the merge treats one it never mentioned as silence: yours stands, and nobody is asked. Without that, normalising fills every gap with a default — a missing name becomes the id, a missing position becomes nowhere, a missing duration becomes an hour — so a package meaning to fill in two sets of opening hours arrives offering to rename four places, take them off the map and reset their kinds, and "take all theirs" quietly wrecks the trip. Measured on the real thing: seven questions, of which four were pure artefacts of this. Leaving a key out is the silence; a `null` or an empty value in the package is a statement of its own, which is what makes taking something back possible at all (decision 28). |
+| 30 | What does "what you changed" measure from? | A mark written whenever the two sides are in step — a package merged, or a hand-back taken. The merge's baseline cannot do this job, because it is the package itself: deliberately partial, so every field it never mentioned would count as something you had edited and every place it never mentioned as one you had added. Measured from the mark, both sides are whole trips and every difference is a real one. It matters more than it looks: the chat is told to read `edited` as "they know something you do not, so do not send it back changed", so a phantom edit does not merely mislead, it stops the chat correcting the very field it is there to correct. |
 
 ## Open questions
 

@@ -86,6 +86,9 @@ it for the life of the trip. New places get a new slug-like id (`fushimi-inari`,
 }
 ```
 
+That is a new place, where everything you have found out is worth sending. For a place the owner
+already has, send its `id` and only the fields you have learned something about — see below.
+
 | Field | Values |
 |---|---|
 | `kind` | `sight`, `food`, `shop`, `nature`, `museum`, `culture`, `view`, `experience`, `other` |
@@ -102,27 +105,47 @@ it for the life of the trip. New places get a new slug-like id (`fushimi-inari`,
 
 Times are `HH:MM` in destination local time, dates are `YYYY-MM-DD`, timestamps are ISO UTC.
 
-**Leave out what you do not know.** `null` and an absent key both mean "nothing here", and the
-merge treats them that way, so an unset field is filled in silently by the next package. A guess
-written as fact is the one thing that cannot be undone by the merge.
+**Leave out what you do not know.** The planner notes which fields were actually in the package, and
+a field you leave out is one you have no opinion about: the owner's value stands and they are not
+asked anything. So a package that mentions two places and four fields is read as being about two
+places and four fields, and nothing else. A guess written as fact is the one thing the merge cannot
+undo for them.
+
+**`null` is not the same as leaving it out.** Leaving a key out says nothing at all. Sending
+`"fixed": null` says "there is no booked time", which is a statement — and on a place the owner
+already has, it can take back a time you gave them in an earlier package. When you are describing a
+new place from scratch, nulls are honest and harmless. When you are adding to a place they already
+have, send only the keys you mean.
+
+**A blank takes back only your own.** An empty string, an empty list and `null` all mean "nothing
+here". Sending one clears a field whose value came from your last package and the owner never
+changed it — that is how you take back something you got wrong. It will not quietly clear a value of
+theirs: that is put to them as a question and left alone unless they say otherwise, and with no
+stored baseline, where it cannot tell whose the value was, theirs simply stands. A *place* cannot be
+removed by any means.
+
+**Leave the trip's own settings alone.** `title`, `tz`, `transit`, `currency` and `lookups` belong to
+the owner. Restating the title is not free: it is a different title from theirs, so the merge stops
+and asks about it.
 
 ### Days and orders
 
 ```json
 "days": {
   "2026-11-21": {
-    "id": "2026-11-21", "date": "2026-11-21", "city": "Kyoto",
-    "start": { "name": "Hotel", "lat": 34.9858, "lng": 135.7588, "time": "08:30" },
-    "end":   { "name": "Hotel", "lat": 34.9858, "lng": 135.7588, "time": "21:00" },
+    "id": "2026-11-21", "date": "2026-11-21",
     "plans": {
       "less":     ["fushimi-inari"],
       "balanced": ["fushimi-inari", "nishiki-market"],
       "packed":   ["fushimi-inari", "tofuku-ji", "nishiki-market"]
-    },
-    "shown": "balanced", "centre": null, "note": ""
+    }
   }
 }
 ```
+
+That is a whole day as a package should send one. A day has more to it — `city`, `start`, `end`,
+`shown`, `centre`, `note` — and all of it is the owner's: where they are sleeping, when they want to
+leave, which version is on screen. Send any of it and you are proposing a change to it.
 
 Three rules hold at all times, and the planner repairs anything that breaks them on the way in:
 
@@ -130,6 +153,15 @@ Three rules hold at all times, and the planner repairs anything that breaks them
 - `plans` hold **order only**, and may only name places of their own day. A place may appear twice,
   for a station you pass back through, and each appearance is its own stop;
 - the backlog is exactly the places with no day.
+
+**Every place your order names must be in `places`.** Its id on its own is enough — `{"id":
+"nishiki-market"}` carries it into the order and says nothing about it, so everything the owner has
+on that place is left exactly as it was. An id that comes with no place at all is dropped from the
+order, and the planner says so.
+
+You do not need to restate `dayId` for a place you are only putting in an order: naming it in a
+day's order is itself saying which day it is on. Do not send both at once in contradiction — a place
+with `"dayId": null` that an order also names stays in the backlog, and the order loses it.
 
 Propose all three versions where you can. `less`, `balanced` and `packed` are the owner's to choose
 between, and a package that only fills one of them leaves the other two as they were.
@@ -144,10 +176,13 @@ has now, and what you have just sent.
 
 | Baseline | Owner | You | Result |
 |---|---|---|---|
+| anything | anything | *field not in the package* | theirs stands, no question |
 | nothing | nothing | hours | your hours land, no question |
 | 60 min | 60 min | 90 min | yours lands, no question |
 | 60 min | 90 min | 60 min | theirs stays, no question |
 | 60 min | 90 min | 120 min | **it asks**, and keeps theirs unless the owner says otherwise |
+| your note | your note | `""` | your note comes off, no question |
+| your note | a note of their own | `""` | **it asks**, and keeps theirs |
 
 So the way to avoid pestering the owner is to **change only what you have actually learned
 something about**. Re-sending an unchanged place costs nothing; re-sending it with a field quietly
@@ -208,9 +243,11 @@ next package. `warn` is softer, usually a missing position.
 `check` note you wrote earlier. **This is your worklist.** Each one is a place where a package with
 a verified `hours` block would remove a question.
 
-**`changes`** — what the owner did since your last package. `edited` names fields by their label, so
-`{"name":"Fushimi Inari Taisha","fields":["How long"]}` means they overrode your duration. Take the
-hint: they know something you do not, so do not send it back changed.
+**`changes`** — what the owner did since the two of you were last in step, which is the last package
+they merged or the last hand-back they took, whichever came later. `edited` names fields by their
+label, so `{"name":"Fushimi Inari Taisha","fields":["How long"]}` means they overrode your duration.
+Take the hint: they know something you do not, so do not send it back changed. Nothing appears here
+because you left it out — these are their own edits to a whole trip.
 
 When `changes.baseline` is `false`, the planner had nothing to compare against. Treat the whole
 trip as current state and the change lists as absent, not empty.
@@ -246,7 +283,9 @@ Never present a `stops` time as a timetable, and never promise a specific bus fr
 - [ ] generated by script, both marker lines present, one JSON object between them
 - [ ] `kind` is `package`, `schema` is `day-planner/2`, `tripId` matches theirs
 - [ ] every place has a stable `id` it has had before, or a new slug if it is new
-- [ ] nothing is deleted by omission
+- [ ] every place named in an order is in `places`, if only as `{"id": "…"}`
+- [ ] nothing is deleted by omission; a field sent empty is one you mean to take back
+- [ ] no `title` or other trip setting unless you mean to change it
 - [ ] `hours.verified` is `true` only where it was really checked, for the trip's dates
 - [ ] no field changed unless you learned something about it
 - [ ] no `legs`
