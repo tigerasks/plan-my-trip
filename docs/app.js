@@ -43,7 +43,7 @@ const App = {
 // Keys are namespaced: every GitHub Pages project of this account shares one origin, so a bare
 // key would collide with another project's.
 const KEY = { trip: 'plan-my-trip/trip', undo: 'plan-my-trip/undo', ui: 'plan-my-trip/ui',
-  base: 'plan-my-trip/base' };
+  base: 'plan-my-trip/base', seen: 'plan-my-trip/seen' };
 const Store = {
   read(key) {
     try { const v = localStorage.getItem(key); return v == null ? null : JSON.parse(v); } catch (e) { return null; }
@@ -90,6 +90,20 @@ function readBase() {
   if (!env) return null;
   const res = C.readBlock(JSON.stringify(env));
   return res.ok ? res.trip : null;
+}
+// Where the two of you were last in step: the trip as it stood when a package was merged, or when
+// a hand-back was taken. The hand-back measures what you changed from here, which is a different
+// question from the one the merge asks of the package itself.
+function readSeen() {
+  const env = Store.read(KEY.seen);
+  if (env) {
+    const res = C.readBlock(JSON.stringify(env));
+    if (res.ok) return res.trip;
+  }
+  return readBase();   // a browser that merged a package before the mark existed still has that
+}
+function markSeen() {
+  if (App.trip) Store.write(KEY.seen, C.envelope(App.trip, 'save'));
 }
 function restore() {
   const ui = Store.read(KEY.ui);
@@ -1868,7 +1882,7 @@ function takeIn(text) {
 // Work the merge out, and only stop to ask if there is something worth asking about.
 function openMerge(res) {
   const s = dataSheet();
-  const plan = C.mergePackage(App.trip, res.trip, readBase(), {}, null);
+  const plan = C.mergePackage(App.trip, res.trip, readBase(), {}, null, res.said);
   if (!plan.conflicts.length) { applyMerge(res, {}); return; }
   s.report = null;
   s.merge = { res: res, conflicts: plan.conflicts, choices: {} };
@@ -1880,12 +1894,13 @@ function openMerge(res) {
 }
 function applyMerge(res, choices) {
   const s = dataSheet();
-  const done = C.mergePackage(App.trip, res.trip, readBase(), choices, null);
+  const done = C.mergePackage(App.trip, res.trip, readBase(), choices, null, res.said);
   Store.write(KEY.undo, C.envelope(App.trip, 'save'));
   App.undo = readUndo();
   App.trip = done.trip;
   // What came in is what the next merge compares against, however the questions were answered.
   Store.write(KEY.base, C.envelope(res.trip, 'package'));
+  markSeen();
   App.storageProblem = null;
   s.pending = null;
   s.merge = null;
@@ -1914,9 +1929,10 @@ function applyImport(res) {
   App.trip = res.trip;
   App.ui.dayId = null;
   App.storageProblem = null;
-  // A baseline belongs to one trip. Swapping to another leaves it meaningless, so it goes.
+  // The baseline and the mark both belong to one trip. Swapping to another leaves them
+  // meaningless, so they go.
   const base = Store.read(KEY.base);
-  if (!base || C.cleanId(base.tripId) !== res.tripId) Store.drop(KEY.base);
+  if (!base || C.cleanId(base.tripId) !== res.tripId) { Store.drop(KEY.base); Store.drop(KEY.seen); }
   s.pending = null;
   s.paste = '';
   s.text = '';
@@ -2366,11 +2382,13 @@ const ACTIONS = {
     const asFile = el.dataset.how === 'file';
     const now = new Date();
     if (asFile) {
-      download('handback ' + C.fileName(App.trip, now), C.writeHandbackJson(App.trip, readBase(), opts, now.toISOString()));
+      download('handback ' + C.fileName(App.trip, now), C.writeHandbackJson(App.trip, readSeen(), opts, now.toISOString()));
+      markSeen();
       toast('Saved the hand-back');
       return;
     }
-    const block = C.writeHandbackBlock(App.trip, readBase(), opts, now.toISOString());
+    const block = C.writeHandbackBlock(App.trip, readSeen(), opts, now.toISOString());
+    markSeen();   // taking a hand-back puts the two of you back in step
     App.ui.sheet.text = block;
     App.ui.sheet.textKind = 'handback';
     render();

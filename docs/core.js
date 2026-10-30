@@ -405,10 +405,22 @@ function dayEnd(trip, dayId) {
   return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time: d.end.time, stayId: null };
 }
 
+// A package from the chat is partial on purpose: it says what it has learned and leaves the rest
+// alone. But normalising fills every gap with a default — a missing name becomes the id, a missing
+// position becomes nowhere, a missing duration becomes an hour — and by the time the merge sees
+// it, "nothing to say" and "set it to this" look the same. So normalising also notes which fields
+// were actually there, and the merge reads that to tell silence from a proposal.
+const POS_RAW = { pos: ['lat', 'lng', 'lon'] };
+function mentioned(raw, keys, alias) {
+  const r = obj(raw);
+  const has = (k) => Object.prototype.hasOwnProperty.call(r, k) && r[k] !== undefined;
+  return keys.filter((k) => (obj(alias)[k] || [k]).some(has));
+}
 function normTrip(raw, now) {
   const r = obj(raw);
   const issues = [];
   now = now || new Date().toISOString();
+  const said = { trip: mentioned(r, TRIP_FIELDS), places: {}, days: {}, stays: {} };
   const t = {};
   t.title = str(r.title, 80) || 'Untitled trip';
   t.id = cleanId(r.id) || slug(t.title) || 'trip';
@@ -443,6 +455,7 @@ function normTrip(raw, now) {
       st.id = st.id + '-' + k;
     }
     stayIds.add(st.id);
+    said.stays[st.id] = mentioned(rawStay, STAY_FIELDS, POS_RAW);
     t.stays.push(st);
     if (t.stays.length >= 60) break;
   }
@@ -458,11 +471,13 @@ function normTrip(raw, now) {
       continue;
     }
     if (t.days[d.id]) { issues.push(fmtDateUK(d.id) + ' appeared twice; the second one was left out'); continue; }
+    said.days[d.id] = mentioned(rawDay, DAY_FIELDS);
     t.days[d.id] = d;
   }
 
   // places, keyed by a unique id
   t.places = {};
+  const badDay = new Set();     // pointed at a day this trip does not have, so it has no day at all
   const placeEntries = Array.isArray(r.places) ? r.places : Object.values(obj(r.places));
   for (const rawPlace of placeEntries) {
     const p = normPlace(rawPlace, issues, now);
@@ -472,18 +487,54 @@ function normTrip(raw, now) {
       issues.push(p.name + ': another place already had the id "' + p.id + '", so this one became "' + p.id + '-' + k + '"');
       p.id = p.id + '-' + k;
     }
+    const told = mentioned(rawPlace, PLACE_FIELDS, POS_RAW);
     if (p.dayId && !t.days[p.dayId]) {
       issues.push(p.name + ': it pointed at a day that is not in this trip, so it went to the backlog');
       p.dayId = null;
+      // It did say which day — but it named one that does not exist, and an unreadable statement
+      // is no statement, so yours stands rather than the place being moved to the backlog. It is
+      // not an invitation to read a day off an order either: that is what this day failed to be.
+      told.splice(told.indexOf('dayId'), 1);
+      badDay.add(p.id);
     }
+    said.places[p.id] = told;
     t.places[p.id] = p;
   }
 
-  // Plan versions hold order only: every id must be a place of that same day. A place may appear
-  // more than once — you might pass back through a station in the evening.
-  for (const d of Object.values(t.days)) {
+  // A day's running order naming a place is itself a statement about where that place lives. A
+  // package proposes an order and leaves the day off the places it is not moving, so reading the
+  // order as saying "this one is on that day" is what it means. Saying so outright still wins:
+  // a package that puts a place in the backlog and then names it in an order contradicts itself,
+  // and the quieter of the two statements is the one to doubt. Our own files never need any of
+  // this — they keep the invariant already.
+  for (const id of Object.keys(t.days).sort()) {
     for (const k of PLAN_KEYS) {
-      d.plans[k] = d.plans[k].filter((id) => { const p = t.places[id]; return p && p.dayId === d.id; });
+      for (const pid of t.days[id].plans[k]) {
+        const p = t.places[pid], told = said.places[pid];
+        if (!p || p.dayId || badDay.has(pid) || !told || told.includes('dayId')) continue;
+        p.dayId = id;
+        told.push('dayId');
+      }
+    }
+  }
+
+  // Plan versions hold order only: every id must be a place of that same day. A place may appear
+  // more than once — you might pass back through a station in the evening. Whatever cannot stay is
+  // said out loud, because an order quietly losing a stop is how a package loses its point.
+  for (const d of Object.values(t.days)) {
+    const lost = [];
+    for (const k of PLAN_KEYS) {
+      d.plans[k] = d.plans[k].filter((id) => {
+        const p = t.places[id];
+        if (p && p.dayId === d.id) return true;
+        const what = !p ? '"' + id + '", which did not come with it'
+          : p.name + ', which is ' + (p.dayId ? 'on ' + fmtDateUK(p.dayId) : 'in the backlog');
+        if (!lost.includes(what)) lost.push(what);
+        return false;
+      });
+    }
+    if (lost.length) {
+      issues.push(fmtDateUK(d.id) + ': its running order mentioned ' + joinList(lost) + ', so that was left out');
     }
   }
 
@@ -498,7 +549,7 @@ function normTrip(raw, now) {
 
   t.createdAt = str(r.createdAt, 32) || now;
   t.updatedAt = str(r.updatedAt, 32) || now;
-  return { trip: t, issues };
+  return { trip: t, issues, said };
 }
 const normalise = normTrip;
 
@@ -2157,7 +2208,7 @@ function readBlock(text, now) {
   if (kind === 'handback') return fail('handback', found, env);
   if (!KINDS_INOUT.includes(kind)) return fail('unknown-kind', found, env);
   if (!env.trip || typeof env.trip !== 'object' || Array.isArray(env.trip)) return fail('no-trip', found, env);
-  const { trip, issues } = normTrip(env.trip, now);
+  const { trip, issues, said } = normTrip(env.trip, now);
   return {
     ok: true,
     kind,
@@ -2165,7 +2216,7 @@ function readBlock(text, now) {
     title: str(env.title, 80) || trip.title,
     at: str(env.at, 32),
     app: str(env.app, 40),
-    trip, issues,
+    trip, issues, said,
     summary: summarise(trip),
   };
 }
@@ -2259,6 +2310,7 @@ const blank = (v) => v == null || v === '' || v === false
   || (Array.isArray(v) && !v.length)
   || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
 const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stringify(b);
+const sameFields = (a, b, keys) => keys.every((k) => same(a[k], b[k]));
 
 const PLACE_FIELDS = ['pos', 'name', 'localName', 'kind', 'area', 'duration', 'fixed', 'window',
   'hours', 'closed', 'booked', 'priority', 'price', 'check', 'note', 'links', 'osm', 'dayId'];
@@ -2296,9 +2348,12 @@ function threeWay(mine, theirs, base) {
   if (same(mine, base) || same(mine, theirs)) return { value: theirs, how: 'theirs' };
   return { value: mine, how: 'conflict' };
 }
-function mergeFields(mineF, theirsF, baseF, keys) {
+function mergeFields(mineF, theirsF, baseF, keys, said) {
   const value = {}, fields = [], took = [];
   for (const k of keys) {
+    // A field the package never mentioned is one it has no opinion about: yours stands, and
+    // nobody is asked anything about it.
+    if (said && !said.includes(k)) { value[k] = mineF[k]; continue; }
     const r = threeWay(mineF[k], theirsF[k], baseF ? baseF[k] : undefined);
     value[k] = r.value;
     if (r.how === 'conflict') fields.push({ key: k, label: FIELD_LABEL[k] || k, mine: mineF[k], theirs: theirsF[k] });
@@ -2318,10 +2373,14 @@ function writeFields(onto, value) {
 // Merge a package into the trip that is open. Call it once with no choices to find out what it
 // would ask, show the sheet, then call it again with the answers: it is the same function both
 // times, so what you were shown is what you get. An unanswered conflict keeps yours.
-function mergePackage(current, incoming, base, choices, now) {
+function mergePackage(current, incoming, base, choices, now, said) {
   const pick = obj(choices);
   const out = clone(obj(current));
   const them = obj(incoming);
+  // What the package said, as `readBlock` noted it. Without it every field it left out reads as a
+  // proposal to set that field to a default, which is how a package that means to fill in two
+  // hours ends up offering to rename your places and move them nowhere.
+  const spoke = (scope, id) => (said ? arr(obj(obj(said)[scope])[id]) : null);
   const conflicts = [];
   const report = { baseline: !!base, added: [], updated: [], restored: [], asked: [], newDays: [] };
   const ask = (scope, id, label, fields, extra) => {
@@ -2340,18 +2399,18 @@ function mergePackage(current, incoming, base, choices, now) {
   out.places = obj(out.places);
   for (const id of Object.keys(theirPlaces)) {
     const t = theirPlaces[id], b = basePlaces[id], mine = out.places[id];
-    const tf = placeFields(t);
+    const tf = placeFields(t), sf = spoke('places', id);
     if (!mine) {
       // Not here. Either it is new, or it was in the last package and you deleted it since.
       if (!b) { out.places[id] = clone(t); report.added.push(t.name); continue; }
-      if (same(tf, placeFields(b))) continue;        // they did not touch it either, so it stays gone
+      if (sameFields(tf, placeFields(b), sf || PLACE_FIELDS)) continue;   // they did not touch it either, so it stays gone
       const c = ask('place', id, t.name,
         [{ key: 'gone', label: 'You deleted it', mine: null, theirs: tf }], { gone: true });
       if (c.choice === 'theirs') { out.places[id] = clone(t); report.restored.push(t.name); }
       report.asked.push(t.name);
       continue;
     }
-    const m = mergeFields(placeFields(mine), tf, b ? placeFields(b) : null, PLACE_FIELDS);
+    const m = mergeFields(placeFields(mine), tf, b ? placeFields(b) : null, PLACE_FIELDS, sf);
     if (m.fields.length) settle(ask('place', id, mine.name, m.fields), m, tf);
     out.places[id] = writeFields(mine, m.value);
     if (m.took.length) report.updated.push(mine.name + ': ' + joinList(m.took));
@@ -2366,7 +2425,7 @@ function mergePackage(current, incoming, base, choices, now) {
       if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
-    const m = mergeFields(dayFields(mine), dayFields(t), b ? dayFields(b) : null, DAY_FIELDS);
+    const m = mergeFields(dayFields(mine), dayFields(t), b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
     if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, dayFields(t));
     out.days[id] = writeFields(mine, m.value);
     if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
@@ -2381,7 +2440,7 @@ function mergePackage(current, incoming, base, choices, now) {
     if (!t || !t.id) continue;
     const mine = mineStays[t.id], b = baseStayMap[t.id];
     if (!mine) { if (!b) { out.stays.push(clone(t)); report.added.push(t.name); } continue; }
-    const m = mergeFields(stayFields(mine), stayFields(t), b ? stayFields(b) : null, STAY_FIELDS);
+    const m = mergeFields(stayFields(mine), stayFields(t), b ? stayFields(b) : null, STAY_FIELDS, spoke('stays', t.id));
     if (m.fields.length) settle(ask('stay', t.id, mine.name, m.fields), m, stayFields(t));
     const merged = writeFields(mine, m.value);
     out.stays = out.stays.map((x) => (x && x.id === t.id ? merged : x));
@@ -2389,7 +2448,8 @@ function mergePackage(current, incoming, base, choices, now) {
   }
 
   // the trip's own settings
-  const m = mergeFields(tripFields(out), tripFields(them), base ? tripFields(base) : null, TRIP_FIELDS);
+  const m = mergeFields(tripFields(out), tripFields(them), base ? tripFields(base) : null, TRIP_FIELDS,
+    said ? arr(obj(said).trip) : null);
   if (m.fields.length) settle(ask('trip', 'settings', 'Trip settings', m.fields), m, tripFields(them));
   Object.assign(out, m.value);
   if (m.took.length) report.updated.push('Trip settings: ' + joinList(m.took));
@@ -2421,8 +2481,11 @@ function versionReport(trip, dayId, key) {
   };
 }
 
-// What you have done since the package the chat last sent. Without a baseline there is nothing
-// honest to say, so it says that rather than calling the whole trip new.
+// What you have done since the planner and the chat were last in step: a package merged, or a
+// hand-back taken. Both sides here are whole trips, so every difference is a real one — measured
+// against the package instead, every field it never mentioned would read as something you edited.
+// With nothing to compare against there is nothing honest to say, so it says that rather than
+// calling the whole trip new.
 function changesSince(trip, base) {
   if (!base) {
     return { baseline: false, why: 'No package has been loaded in this browser, so there is nothing to compare against. Everything here is simply how the trip stands.' };
@@ -2476,7 +2539,12 @@ function travelReport(trip) {
   return out;
 }
 
-function handback(trip, base, opts, now) {
+// `seen` is the trip as it stood when the chat and the planner were last in step — when a package
+// was merged, or when a hand-back was taken. It is not the baseline the merge compares against:
+// that one is the package itself, because a package re-sending what you already turned down must
+// not read as a fresh proposal. "What you changed since" is a different question, and asking it of
+// the package would count every field the package never mentioned as something you had edited.
+function handback(trip, seen, opts, now) {
   const o = obj(opts);
   const alts = arr(o.alternatives).filter((k) => PLAN_KEYS.includes(k));
   const env = envelope(trip, 'handback', now);
@@ -2488,14 +2556,14 @@ function handback(trip, base, opts, now) {
       return { date: id, city: day.city, note: day.note, chosen: day.shown,
         versions: keys.map((k) => versionReport(trip, id, k)).filter(Boolean) };
     }),
-    changes: changesSince(trip, base),
+    changes: changesSince(trip, seen),
     travel: travelReport(trip),
   };
   return env;
 }
-const writeHandbackJson = (trip, base, opts, now) => JSON.stringify(handback(trip, base, opts, now), null, 2) + '\n';
-const writeHandbackBlock = (trip, base, opts, now) =>
-  BEGIN_LINE + '\n' + JSON.stringify(handback(trip, base, opts, now)) + '\n' + END_LINE + '\n';
+const writeHandbackJson = (trip, seen, opts, now) => JSON.stringify(handback(trip, seen, opts, now), null, 2) + '\n';
+const writeHandbackBlock = (trip, seen, opts, now) =>
+  BEGIN_LINE + '\n' + JSON.stringify(handback(trip, seen, opts, now)) + '\n' + END_LINE + '\n';
 
 const Core = {
   SCHEMA, VERSION, APP,

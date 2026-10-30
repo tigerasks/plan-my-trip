@@ -1040,6 +1040,68 @@ ok(noBase.conflicts.length === 0 && noBase.trip.places['example-temple'].fixed =
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
 ok(!C.same(0, null), 'zero is a value, not nothing');
 
+console.log('\n== What a package actually said ==');
+// A package is partial on purpose. Normalising fills its gaps with defaults, so reading it also
+// notes which fields were really there — otherwise leaving a field out reads as proposing the
+// default, and a package meaning to fill in two opening hours offers to rename your places.
+const pack = (places, days, extra) => C.readBlock(JSON.stringify(Object.assign({
+  schema: 'day-planner/2', kind: 'package', tripId: 'example-kyoto', app: 'chat',
+  trip: Object.assign({ id: 'example-kyoto', places: places, days: days || {} }, extra || {}),
+}, {})));
+
+let read = pack([{ id: 'example-temple', duration: 120, check: 'Busy by 10:00' }]);
+ok(JSON.stringify(read.said.places['example-temple']) === '["duration","check"]',
+  'reading a package notes just the fields it carried: ' + JSON.stringify(read.said.places['example-temple']));
+ok(read.said.trip.length === 0, 'and nothing about the trip itself when it said nothing');
+ok(JSON.stringify(pack([{ id: 'p', lat: 1, lng: 2 }]).said.places.p) === '["pos"]',
+  'a latitude and a longitude are the one fact "Position"');
+
+// The whole point: what it did not mention is not a proposal.
+let mix = C.mergePackage(base0, read.trip, null, {}, '2026-10-30T00:00:00Z', read.said);
+ok(mix.conflicts.length === 1 && mix.conflicts[0].fields.length === 2,
+  'a partial place is asked about only where it spoke: ' + JSON.stringify(mix.conflicts.map((c) => c.fields.map((f) => f.label))));
+const took = C.mergePackage(base0, read.trip, null, { 'place:example-temple': 'theirs' }, '2026-10-30T00:00:00Z', read.said);
+const t2 = took.trip.places['example-temple'];
+ok(t2.duration === 120 && t2.check === 'Busy by 10:00', 'taking their side takes what they said');
+ok(t2.name === 'Example Temple' && t2.lat === 34.9948 && t2.kind === 'culture' && t2.dayId === '2026-11-21',
+  'and leaves the rest of your place exactly as it was: ' + [t2.name, t2.lat, t2.kind].join(' | '));
+ok(!C.mergePackage(base0, pack([{ id: 'example-temple', duration: 90 }]).trip, null, {}, '2026-10-30T00:00:00Z',
+  pack([{ id: 'example-temple', duration: 90 }]).said).conflicts.length,
+  'agreeing with you is not a question either');
+
+// A day the package only proposes an order for says nothing about where the day starts.
+read = pack([{ id: 'example-temple' }, { id: 'made-up-market' }],
+  { '2026-11-21': { id: '2026-11-21', plans: { balanced: ['made-up-market', 'example-temple'] } } });
+ok(JSON.stringify(read.said.days['2026-11-21']) === '["plans"]',
+  'a day that only proposes an order has only said "plans"');
+mix = C.mergePackage(base0, read.trip, null, { 'day:2026-11-21': 'theirs' }, '2026-10-30T00:00:00Z', read.said);
+ok(JSON.stringify(mix.trip.days['2026-11-21'].plans.balanced) === '["made-up-market","example-temple"]',
+  'its order arrives, named by id alone: ' + JSON.stringify(mix.trip.days['2026-11-21'].plans.balanced));
+ok(mix.trip.days['2026-11-21'].start.name === 'Example Hotel · Kyoto Station',
+  'and where the day starts is still yours');
+const keptX = mix.trip.places['made-up-market'];
+ok(keptX.name === 'Made-up Market' && keptX.lat === 35.005 && keptX.duration === 60,
+  'a place carried by its id alone keeps everything it had');
+
+// An order is a statement about which day a place is on, but saying so outright wins.
+ok(pack([{ id: 'x', name: 'X' }], { '2026-11-21': { id: '2026-11-21', plans: { less: ['x'] } } })
+  .trip.places.x.dayId === '2026-11-21', 'naming a place in an order puts it on that day');
+read = pack([{ id: 'x', name: 'X', dayId: null }], { '2026-11-21': { id: '2026-11-21', plans: { less: ['x'] } } });
+ok(read.trip.places.x.dayId === null, 'unless the package puts it in the backlog itself');
+ok(read.issues.length === 1 && /running order/.test(read.issues[0]) && /backlog/.test(read.issues[0]),
+  'and then the order it cannot keep is said out loud: ' + read.issues[0]);
+read = pack([{ id: 'x', name: 'X' }], { '2026-11-21': { id: '2026-11-21', plans: { less: ['x', 'never-heard-of-it'] } } });
+ok(read.issues.length === 1 && /did not come with it/.test(read.issues[0]),
+  'an order naming something the package did not bring is said out loud too: ' + read.issues[0]);
+
+// Our own files state everything, so none of this changes how they read.
+const whole = C.readBlock(JSON.stringify(demoEnv));
+const said0 = whole.said.places['example-temple'];
+ok(said0.includes('name') && said0.includes('pos') && said0.includes('duration') && said0.includes('dayId'),
+  'a file the planner wrote counts as having said its fields: ' + said0.length + ' of them');
+ok(C.mergePackage(base0, theirs2, base0, {}, '2026-10-30T00:00:00Z', undefined).conflicts.length === 0,
+  'and a merge given nothing about what was said behaves as it always did');
+
 console.log('\n== Handing back to the chat ==');
 const hb = C.handback(mineT, base0, { note: 'Swapped the afternoon around', alternatives: ['packed'] }, '2026-10-23T09:00:00Z');
 ok(hb.kind === 'handback' && hb.schema === 'day-planner/2', 'a hand-back says what it is');
