@@ -1868,7 +1868,7 @@ function takeIn(text) {
 // Work the merge out, and only stop to ask if there is something worth asking about.
 function openMerge(res) {
   const s = dataSheet();
-  const plan = C.mergePackage(App.trip, res.trip, readBase(), {}, null);
+  const plan = C.mergePackage(App.trip, res.trip, readBase(), {}, null, res.said);
   if (!plan.conflicts.length) { applyMerge(res, {}); return; }
   s.report = null;
   s.merge = { res: res, conflicts: plan.conflicts, choices: {} };
@@ -1880,7 +1880,7 @@ function openMerge(res) {
 }
 function applyMerge(res, choices) {
   const s = dataSheet();
-  const done = C.mergePackage(App.trip, res.trip, readBase(), choices, null);
+  const done = C.mergePackage(App.trip, res.trip, readBase(), choices, null, res.said);
   Store.write(KEY.undo, C.envelope(App.trip, 'save'));
   App.undo = readUndo();
   App.trip = done.trip;
