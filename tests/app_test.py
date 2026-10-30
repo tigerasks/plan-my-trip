@@ -1453,6 +1453,52 @@ with sync_playwright() as pw:
        'and the package becomes the baseline the next merge compares against')
     ctx.close()
 
+    # ---- a package that says a little about a lot, which is what the chat actually sends
+    # Every field it leaves out used to arrive as the default the normaliser puts there, so a
+    # package filling in two opening hours offered to rename your places and move them nowhere.
+    ctx, pg = open_page(held=DEMO)
+    partial = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': 'example-kyoto',
+               'title': 'Research', 'app': 'chat', 'trip': {'id': 'example-kyoto', 'places': [
+                   {'id': 'example-temple', 'duration': 120},
+                   {'id': 'pretend-noodle-bar', 'closed': ['2026-11-21']},
+                   {'id': 'made-up-market'}],
+                   'days': {'2026-11-21': {'id': '2026-11-21', 'plans': {
+                       'less': ['example-temple'],
+                       'balanced': ['example-temple', 'pretend-noodle-bar', 'made-up-market'],
+                       'packed': ['example-temple', 'pretend-noodle-bar', 'made-up-market']}}}}}
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(partial))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    rows = pg.locator('.cf')
+    asked = ' | '.join(rows.nth(i).inner_text().replace('\n', ' ') for i in range(rows.count()))
+    ck(rows.count() == 2, 'a partial package asks only about what it spoke about: %d question(s)' % rows.count())
+    ck('Name' not in asked and 'Position' not in asked and 'Kind' not in asked,
+       'never offering to rename a place or move it nowhere: ' + asked[:120])
+    pg.click('[data-act="merge-all"][data-side="theirs"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="merge-go"]')
+    pg.wait_for_timeout(400)
+    after = pg.evaluate("""() => { const p = window.DayPlannerApp.trip.places['example-temple'];
+      return { name: p.name, lat: p.lat, kind: p.kind, duration: p.duration, day: p.dayId,
+               order: window.DayPlannerApp.trip.days['2026-11-21'].plans.balanced }; }""")
+    ck(after['name'] == 'Example Temple' and after['lat'] == 34.9948 and after['kind'] == 'culture',
+       'and taking the chat side leaves your own place alone: ' + json.dumps(after))
+    ck(after['duration'] == 120, 'while taking what it did say')
+    ck(after['order'] == ['example-temple', 'pretend-noodle-bar', 'made-up-market'],
+       'the order it proposed arrives, places named by id alone: ' + json.dumps(after['order']))
+    ck(pg.evaluate("JSON.parse(localStorage.getItem('plan-my-trip/seen')).kind") == 'save',
+       'and a merge marks where the two of you are in step')
+    # The hand-back then has to describe what *you* did, not what the package happened to omit.
+    pg.fill('#hbNote', 'Nothing to report')
+    pg.click('[data-act="hand-back"][data-how="text"]')
+    pg.wait_for_timeout(400)
+    hb0 = json.loads(pg.input_value('#outBox').strip().split(chr(10))[1])['handback']['changes']
+    ck(hb0['baseline'] is True and not hb0['added'] and not hb0['moved'] and not hb0['edited'],
+       'a hand-back straight after a merge reports no changes of yours: ' + json.dumps(hb0))
+    ctx.close()
+
     # ---- when you and the chat have both changed the same thing
     mine = json.loads(json.dumps(DEMO))
     mine['trip']['places']['example-temple']['duration'] = 120          # you made it longer
