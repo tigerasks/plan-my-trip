@@ -250,6 +250,38 @@ outside Japan, the day the global snapshot went up):
   stops in a whole degree of map is close to nothing, and the planner presents its pairing with the
   same confidence either way. It should be able to say when the map is this thin.
 
+**Eighth run, Fri 30 Oct 2026** (the chat round trip, against the app served from the branch with
+every live service, driving a package written from `chat-guide.md` and nothing else):
+- **The guide's own instructions produced a package the planner read wrongly.** "Leave out what you
+  do not know" was the advice; a generator written from the guide alone sent five places and about a
+  dozen fields, and the planner read every omission as a proposal. Four of its seven questions
+  offered to rename places to their own ids, take them off the map and reset their kinds, because
+  normalising fills a gap with a default and the merge could not tell a default from a statement.
+  Every proposed running order was thrown away on the way in, reported as nothing at all, because
+  the places they named carried no `dayId`. "Take all theirs" — the obvious button when you trust
+  the research — blanked the day's start, emptied all three versions and left the trip without a
+  single position, with `issues` empty. The hand-back then told the chat the owner had moved three
+  places and edited seven fields they had never touched, which is worse than noise: the chat is told
+  to read `edited` as "do not send that back changed". One cause, in two places (decisions 29
+  and 30).
+- **The same package now asks four questions, every one real:** the temple's duration, hours and
+  note, the noodle bar's check, and the two running orders. Taking the chat's side everywhere leaves
+  names, positions, kinds and the day's start exactly as they were, and the proposed orders arrive —
+  one of them carrying a place by its id alone, which is now all a package needs to put something in
+  an order.
+- **A second package asks nothing at all.** The same places, one new fact; with a baseline stored it
+  merged in silence and still filled in the viewpoint's check and note. That is the guide's claim
+  that re-sending an unchanged place costs nothing, which was not true before.
+- **The hand-back is honest both ways.** Straight after a merge, `added`, `moved`, `edited` and
+  `orders` are all empty. After the owner shortened the garden and wrote a note on it: `edited:
+  [{Example Garden, [How long, Note]}]`, and nothing else.
+- **Through the live services, as before.** OSRM 5 requests, Transitous 5, the stop snapshot 7,
+  `overpass-api.de` none. The first leg came back as a 44-minute walk against "32 min, probably the
+  206 bus" off the snapshot, hedged because the snapshot has no times. 22 Nov showed a 187-minute
+  wait before the brewery's fixed 15:00 — which is precisely what the owner's note in the hand-back
+  complained about, so the two halves of the round trip agree about the same day. No console errors
+  at any step.
+
 **Still to verify during the build:**
 - answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
   relation carrying a line number. Rail relations around a station are named rather than numbered;
@@ -260,6 +292,9 @@ outside Japan, the day the global snapshot went up):
 - answered (fifth run): the stop query the fallback sends, and that every stop it returns carries a
   position;
 - answered (fifth run): MOTIS states `legGeometry.precision`, and it is 6;
+- answered (eighth run): the chat round trip works end to end — but only once the merge could tell a
+  field a package left out from a field it set, and once a day's running order counted as saying
+  which day its places are on. A guide-conforming package was the thing that found it;
 - answered (seventh run): it holds in another country, three of them. London, Buenos Aires and
   Nairobi each worked, by Transitous and by the snapshot, with no errors — but how much the answer is
   worth follows OpenStreetMap's coverage, which varies from 92% of stops on a named line to none;

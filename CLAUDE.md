@@ -30,7 +30,9 @@ The app works on its own. It also exchanges data with the owner's Claude chat (a
   ways against the package it last sent, asking only where both sides moved the same thing; a
   hand-back carries the note, the chosen version with any alternatives, the computed plan with its
   issues and checks, what changed, and every travel time with the service that measured it. The
-  format is written down in `documentation/chat-guide.md`.
+  format is written down in `documentation/chat-guide.md`. The first round trip driven from that
+  guide alone, on Fri 30 Oct 2026, found the merge reading an omission as a proposal — see the
+  eighth run and decisions 29 and 30.
 - v1 (a Claude-hosted artifact) is still in use; its code is in `reference/v1/` for reuse.
 
 ## Repository layout
@@ -186,6 +188,12 @@ These are proposed; confirm each with the owner before starting it.
      from an estimate, and a stop-based guess from a timetable;
    - the credits say the planner is personal and non-commercial and give somewhere to complain,
      which is what Transitous and OSRM ask for;
+   - a package is read for what it actually says. Normalising fills every gap with a default, so
+     reading one also notes which fields were really in it: a field it leaves out is silence and
+     yours stands, a `null` or an empty value is a statement that can take back what an earlier
+     package put there, and a day's running order counts as saying which day its places are on.
+     Anything an order still loses is reported. A hand-back's "what changed" is measured from a mark
+     of where the two sides were last in step, not from the package, which is deliberately partial;
    - `documentation/chat-guide.md` is written. The v1 spec stays as it is.
 6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
    stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
