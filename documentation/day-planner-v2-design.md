@@ -250,8 +250,9 @@ outside Japan, the day the global snapshot went up):
   stops in a whole degree of map is close to nothing, and the planner presents its pairing with the
   same confidence either way. It should be able to say when the map is this thin.
 
-**Eighth run, Fri 30 Oct 2026** (the chat round trip, against the app served from the branch with
-every live service, driving a package written from `chat-guide.md` and nothing else):
+**Eighth run, Fri 30 Oct 2026** (the chat round trip against every live service, driving a package
+written from `chat-guide.md` and nothing else — first against the fix on its branch, then the same
+run again against the published app, with the same result in both):
 - **The guide's own instructions produced a package the planner read wrongly.** "Leave out what you
   do not know" was the advice; a generator written from the guide alone sent five places and about a
   dozen fields, and the planner read every omission as a proposal. Four of its seven questions
@@ -281,6 +282,10 @@ every live service, driving a package written from `chat-guide.md` and nothing e
   wait before the brewery's fixed 15:00 — which is precisely what the owner's note in the hand-back
   complained about, so the two halves of the round trip agree about the same day. No console errors
   at any step.
+- **A note on GitHub Pages.** The deploy of this fix failed outright on GitHub's side — the build
+  produced its artefact and the deployment step answered "Deployment failed, try again later",
+  then sat queued for twenty minutes. A later push built and deployed in under a minute. Worth
+  knowing: a push is not a deploy, and the thing to check is the run, not the clock.
 
 **Still to verify during the build:**
 - answered (fourth run): OpenStreetMap's bus lines are mapped well enough in Kyoto to name one, every
