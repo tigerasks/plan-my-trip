@@ -46,6 +46,7 @@ GitHub Pages publishes the `docs/` folder of `main`; the only choices GitHub off
 | `reference/v1/` | v1 code for reuse | No |
 | `tests/` | Playwright tests, mocks, screenshots; `harness.py` serves `docs/` locally, `app_test.py` covers the planner, `probe_test.py` the service test page, `core_test.js` the model in Node. See `tests/README.md` | No |
 | `tools/` | Scripts the owner runs by hand, not part of the app: `refresh-stops.py` builds the stop snapshot from OpenStreetMap and publishes it | No |
+| `skill/plan-my-trip/` | The skill the owner installs on claude.ai so the chat can plan days and exchange blocks without being handed the guide. `SKILL.md`, two references, and two scripts: `read_trip.py` reads a save or hand-back into a worklist, `make_package.py` builds a package and says what it will do before it is pasted. It encodes the same contract as the design doc, so a change to the format changes both | No |
 
 If an older `probe.html` is still at the repository root, delete it: the copy in `docs/` is the one that gets published. Make sure `docs/.nojekyll` exists.
 
@@ -194,7 +195,11 @@ These are proposed; confirm each with the owner before starting it.
      package put there, and a day's running order counts as saying which day its places are on.
      Anything an order still loses is reported. A hand-back's "what changed" is measured from a mark
      of where the two sides were last in step, not from the package, which is deliberately partial;
-   - `documentation/chat-guide.md` is written. The v1 spec stays as it is.
+   - `documentation/chat-guide.md` is written. The v1 spec stays as it is;
+   - `skill/plan-my-trip/` packages the same contract as a skill for claude.ai, so a chat does the
+     planning without being handed the guide. Its `make_package.py` checks a package against the
+     owner's own trip and reports what will land quietly, what they will be asked about, and what it
+     refuses to send — it predicted the real merge's four questions exactly.
 6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
    stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
    them from a snapshot we publish instead:
