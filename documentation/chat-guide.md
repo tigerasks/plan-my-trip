@@ -203,6 +203,19 @@ A day nobody has planned counts as unset in the same way, even though its three 
 there as three empty lists. So the first order you propose for a day simply arrives; it is only a
 day they have already put in an order of their own that stops to ask.
 
+## Stays
+
+A package may carry `stays`, and they merge by `id` field by field like places. Send what the owner
+has told you; where a base is not settled, send a placeholder whose **name says it is not booked**
+("Osaka — not booked yet") with an approximate position for the district. Never write a hotel name
+they have not chosen.
+
+The position matters more than it looks: a day starts at the stay of the night before and ends at
+the stay of that night, so a stay with no position leaves every travel time on those days unknown.
+
+A stay does not create the days it covers — the app only does that when the owner adds one by hand
+— so send those days in `days` as well.
+
 If the owner has never loaded a package in that browser there is no baseline, and anything they have
 set that you disagree with has to be asked about. The planner tells them this is why.
 

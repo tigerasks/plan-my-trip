@@ -9,6 +9,7 @@ planner disagree, the planner wins — but it has been checked against it field 
 - [Places](#places)
 - [Opening hours](#opening-hours)
 - [Days and running orders](#days-and-running-orders)
+- [Stays](#stays)
 - [What never goes in a package](#what-never-goes-in-a-package)
 - [What the planner repairs without asking](#what-the-planner-repairs-without-asking)
 - [A complete package](#a-complete-package)
@@ -29,7 +30,7 @@ planner disagree, the planner wins — but it has been checked against it field 
 | `title` | a **label for this block**, shown as "Merged …". Not the trip's name — the trip's name is a setting of theirs and must not be sent inside `trip` |
 | `at` | ISO timestamp |
 | `app` | `chat` |
-| `trip` | `{ "id": ..., "places": [...], "days": {...} }` and nothing else |
+| `trip` | `{ "id": ..., "places": [...], "days": {...}, "stays": [...] }` and nothing else |
 
 The JSON must be on one line between the two marker lines. Both marker lines are part of the block.
 The planner will cope with a block that was re-wrapped, but not with one that was edited.
@@ -126,13 +127,50 @@ in its issues rather than failing.
 place onto a day without sending `dayId`. An explicit `dayId` wins where the two disagree, so do not
 send both unless you mean the `dayId`.
 
+## Stays
+
+Where they sleep, as a list. Each one merges by `id`, field by field, exactly like a place, so a
+placeholder refines into the real booking later without destroying anything.
+
+```json
+"stays": [
+  { "id": "kagurazaka-base", "name": "Kagurazaka base", "area": "Kagurazaka, Shinjuku",
+    "lat": 35.7020, "lng": 139.7400, "from": "2026-11-21", "nights": 6 },
+  { "id": "osaka-tbd", "name": "Osaka — not booked yet", "area": "near Namba",
+    "lat": 34.6660, "lng": 135.5010, "from": "2026-12-03", "nights": 2 }
+]
+```
+
+| Key | Value |
+|---|---|
+| `id` | permanent slug, as for a place |
+| `name` | up to 120 characters. If it is not booked, **say so in the name** |
+| `localName` | up to 120 |
+| `lat`, `lng` | numbers. Approximate is fine for a placeholder and far better than none |
+| `area` | up to 80 characters |
+| `from` | `"YYYY-MM-DD"`, the first night. A stay without one is **dropped entirely** |
+| `nights` | 1 to 60 |
+| `note` | up to 500 characters |
+| `osm` | as for a place |
+
+Two things the planner does with a stay, which are the reasons to send one:
+
+- a day **ends** at the stay whose night it is, and **starts** at the stay of the night before. So
+  the day they arrive has no start until they set one, because there is no previous night.
+- without a position it still anchors the day by name, but every travel time for that day becomes
+  "no idea — nothing to measure from".
+
+And one it does not: **a stay does not create the days it covers.** The app does that when the
+owner adds a stay by hand; a merge does not. Send the days in `days`.
+
+Never invent a booking. A base they have not chosen is a placeholder and must read as one.
+
 ## What never goes in a package
 
 | Not this | Why |
 |---|---|
 | `legs` | travel times are the planner's own measurements, from OSRM, Transitous and its stop snapshot. Yours would be guesses overwriting facts |
-| `title`, `tz`, `tzLabel`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose |
-| `stays` | where they sleep |
+| `title`, `tz`, `tzLabel`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose — except `title` on a package that creates the trip, where there is nothing of theirs to overwrite |
 | a day's `start`, `end`, `shown`, `centre`, `note` | when they leave the hotel, which version they are looking at, where the map is pointed |
 | `added`, `createdAt`, `updatedAt` | the planner's own bookkeeping |
 | `backlog` | worked out from which places have no day |
@@ -210,7 +248,8 @@ All of it arrives in the owner's issues list. A quiet repair is still a failure 
 - [ ] every `id` already in their trip is spelled exactly as they have it
 - [ ] every place named in an order is in `places`
 - [ ] every day carries its own `id`
-- [ ] no `legs`, no trip settings, no day `start`/`end`/`shown`/`note`, no `stays`
+- [ ] no `legs`, no trip settings, no day `start`/`end`/`shown`/`note`
+- [ ] every stay is one they told you about, or a placeholder whose name says it is not booked
 - [ ] no field restated that you did not actually learn something about
 - [ ] no `null` or `""` that you did not mean as "there is none"
 - [ ] `hours.verified` is `true` only where you really checked, for these dates
