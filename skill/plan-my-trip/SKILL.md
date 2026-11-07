@@ -100,6 +100,11 @@ places you do it for. Correcting times is an ordinary change; confirming them is
 Say `verified: true` only where you actually checked for the trip's own dates. It is the flag that
 makes the planner stop warning them, so a careless `true` is worse than leaving it unverified.
 
+The first running order you propose for a day is free in the same way: a day nobody has planned
+counts as unset, so your order simply arrives. It is only a day they have already ordered
+themselves that stops to ask — and when that happens, their order usually came out of the app's
+"Optimise order", which knew the real travel times. Start from theirs.
+
 ## Build the package
 
 Write a `plan.json` holding only what you want to send:

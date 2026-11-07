@@ -88,9 +88,18 @@ def warn(text):
 # ---------- comparing the way the planner does ----------
 
 def blank(v):
+    """Nothing in particular, the way the planner reads it.
+
+    A list or an object counts as nothing when everything inside it does, because a day's running
+    order is three versions that start out empty and a position is two nulls. Zero is a value.
+    """
     if v is None or v is False or v == '':
         return True
-    return isinstance(v, (list, dict)) and not v
+    if isinstance(v, list):
+        return all(blank(x) for x in v)
+    if isinstance(v, dict):
+        return all(blank(x) for x in v.values())
+    return False
 
 
 def same(a, b):
