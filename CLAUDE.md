@@ -179,8 +179,10 @@ These are proposed; confirm each with the owner before starting it.
 5. **Chat round trip — built:**
    - a package is merged by place id, three ways against the package the chat last sent, so filling
      in hours nobody had set lands quietly and only a field both sides moved is put as a question
-     (design doc, decisions 26 and 27). A package never deletes: a place it leaves out is one it had
-     nothing to say about;
+     (design doc, decisions 26 and 27). Opening hours are compared on their times rather than whole,
+     so confirming hours the owner already had is a confirmation and not a disagreement, however
+     many places it covers (decision 31). A package never deletes: a place it leaves out is one it
+     had nothing to say about;
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
    - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed
