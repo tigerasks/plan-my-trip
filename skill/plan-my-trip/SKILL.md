@@ -1,98 +1,127 @@
 ---
 name: plan-my-trip
 description: >-
-  Plan trip days for the plan-my-trip planner (tigerasks.github.io/plan-my-trip) and exchange
-  day-planner/2 blocks with it. Use this whenever a trip file, saved trip, package or hand-back from
-  that planner is uploaded or pasted, whenever a block between "--- BEGIN day-planner/2 ---" and
-  "--- END day-planner/2 ---" appears, and whenever the user wants days planned, researched,
-  reordered or costed for a trip they keep in that planner — including when they just say "plan
-  these days", "what should I do on the Saturday", "here's my trip file", "check the opening hours"
-  or "send me a package". Also use it to read a hand-back and work out what to fix next. It does the
-  planning; the app is where the owner adjusts it.
+  Plan the days of a trip for the plan-my-trip planner (tigerasks.github.io/plan-my-trip) and swap
+  day-planner/2 blocks with it. Use this whenever a saved trip, package or hand-back from that
+  planner is uploaded or pasted, whenever text appears between "--- BEGIN day-planner/2 ---" and
+  "--- END day-planner/2 ---", and whenever someone wants days planned, researched, reordered,
+  checked or costed for a trip they keep in that planner. That includes "plan these days", "what
+  should I do on the Saturday", "here is my trip file", "check these opening hours", "the hand-back
+  says I arrive late" and "send me a package". The planning is yours to do; the app is where the
+  owner adjusts it afterwards.
 license: AGPL-3.0-or-later
 ---
 
 # Planning days for plan-my-trip
 
-The owner keeps their trip in a planner that runs entirely in their browser. It has the routing and
-the map; you have the research and the time to think. So the division of labour is: **you plan the
-days, they adjust in the app.**
+The owner keeps their trip in a planner that runs entirely in their browser. It owns the map, the
+routing and the timeline; you own the research, the judgement and the time to think. They are
+handing you the planning, so **plan the days** — do not hand back a list of options for them to
+choose from.
 
-You exchange two things with it, both plain text:
+Nothing is connected. You exchange two plain-text blocks, copied by hand:
 
-| | You send | It sends back |
+| | You send | They send back |
 |---|---|---|
-| `kind` | `package` | `handback` (or `save`, the whole trip as they saved it) |
-| Carries | places, hours, durations, fixed times, proposed orders | the trip, what they settled, what they changed, every travel time it measured |
+| `kind` | `package` | `handback`, or `save` for the whole trip as it stands |
+| Carries | places, opening hours, durations, fixed times, proposed running orders | the trip, the computed day with its times, what they changed, every travel time it measured |
 
-The owner copies one into the other. Nothing is connected, so a block that cannot be pasted in one
-go is a block that fails.
+A block that cannot be pasted in one go is a block that failed. Never hand-write one and never edit
+one by hand: `scripts/make_package.py` writes it.
 
-## The loop
+## Start from what they gave you
 
-### 1. Read what they gave you
+Every command below is run from this skill's own folder, so `scripts/…` finds the scripts.
 
-```bash
-python3 scripts/read_trip.py <their file or pasted block>
-```
+| What arrived | Do this |
+|---|---|
+| A file, or a block pasted into the chat | `python3 scripts/read_trip.py <file, or - for stdin>` and start from the worklist it prints |
+| A hand-back | the same, then work the order under **Reading what comes back** |
+| Nothing — just "plan my trip" | They have no trip yet. See **Starting from nothing** |
+| A question about one day | Answer it, and still send a package if you changed anything |
 
-It prints the trip's days, stays, places and plans, and — for a hand-back — the note, the issues,
-the checks and every measured travel time, ending in a worklist. Start there rather than reading the
-JSON by eye: the worklist is the shortest path to what actually needs doing.
+Read the worklist rather than the JSON. It is the shortest path to what actually needs doing, and
+the JSON is long.
 
-### 2. Research the gaps
+If you have no way to run Python, you can still do all of this: read the trip yourself and build
+the block by hand from `references/package-format.md`, then walk its checklist line by line. The
+scripts are a safety net, not a dependency — but use them when you have them, because the format
+has traps that careful reading does not catch.
 
-The worklist names them: places with no opening hours, hours nobody has verified for these dates,
-`check` notes left over, days with nothing planned. Find out what the owner cannot easily find
-themselves — hours **for the actual dates**, closures, whether a ticket must be bought ahead, how
-long a visit really takes, whether it is worth the detour.
+## Plan the day, properly
 
-Put what you learn on the place, not only in your prose. Prose is for them; the package is for the
-planner.
+**Ask first, once.** Before the first package, find out what you cannot guess: who is travelling,
+what they have already booked, how hard they like to push, anything they would rather avoid. One
+short round of questions beats three rounds of rework. After that, stop asking and plan.
 
-### 3. Plan the days
+**One anchor per day.** Decide what the day is *for* — the temple, the market morning, the hike —
+and build around it. A day that is six equal stops is a day with no shape.
 
-This is the part they are handing you, so do it properly rather than listing options.
+**Group by geography.** Crossing the city twice costs an hour nobody enjoys. The planner measures
+the legs, but it cannot rescue an order that was never coherent.
 
-- **Group by geography.** A day that crosses the city twice costs an hour nobody enjoys. The planner
-  will measure the legs, but it cannot undo an order that was never coherent.
-- **Fill all three versions.** `less` is a calm day, `balanced` is the day you would actually
-  recommend, `packed` is for when they wake up with energy. Roughly two, three to four, and five
-  stops — a version with eight stops is a version nobody uses.
-- **Set `duration` honestly**, in 15-minute steps. The default is 60, which is wrong for most things.
-- **Pin what is pinned.** A booked slot or a timed entry goes in `fixed` as `"HH:MM"`; something that
-  only works in part of the day goes in `window`. The planner builds the day around those, and a
-  fixed time with a long gap before it shows up as a wait, which is the signal you got the order
-  wrong.
-- **Mind the hours you just looked up.** `lastEntry` is often earlier than closing, and a `closed`
-  date beats the usual week.
-- **Leave the sequence open to improvement.** The app has "Optimise order", which re-sequences a day
-  using the real measured legs. Decide *what* they do and *what is fixed*; let the app settle the
-  exact order.
+**The three versions are one day at three intensities**, not three different days. `less` is the
+calm version, `balanced` is the day you would actually recommend, `packed` is for the morning they
+wake up with energy. Roughly two stops, three or four, five. They share the anchor, so dropping to
+`less` on the morning is not a replan. A version with eight stops is a version nobody uses.
 
-You cannot measure travel. Do not pretend to: never send `legs`, and never state a journey time as
-fact in your prose. After the first round the hand-back gives you real measured times, and that is
-when a day gets tightened.
+**Set `duration` honestly**, in 15-minute steps. The default is 60 minutes, which is wrong for most
+things: a major temple is two hours, a viewpoint is twenty minutes, a sit-down lunch is ninety.
 
-### 4. Write the plan, then let the script build the block
+**Meals are stops.** Put them in, near where they will actually be, with real opening hours. A day
+plan that silently assumes they will find lunch is a day plan that runs an hour late.
 
-Write a `plan.json` — the places and days you want to send, and nothing else:
+**Mind the clock you cannot see.** Check what time it gets dark on those dates — a viewpoint at
+17:30 in late November is a viewpoint in the dark. Check which weekday things shut: museums very
+often close on Mondays, and `lastEntry` is routinely an hour before closing.
+
+**Pin what is pinned.** A booked slot or timed entry goes in `fixed` as `"HH:MM"`. Something that
+only works in part of the day — a market that is over by noon — goes in `window`. The planner
+builds the day around both, and a long wait before a fixed time is the planner telling you the
+order is wrong.
+
+**Say what must be booked, and by when.** That is the thing with a deadline, and the one part of
+your reply that cannot wait for the next round.
+
+**Leave the exact sequence open.** The app has "Optimise order", which re-sequences a day using the
+real measured legs. Decide *what* they do and *what is fixed*; let the app settle the order.
+
+**You cannot measure travel.** Never send `legs`, and never state a journey time as fact in prose.
+After the first round the hand-back gives you real measured times, and that is when a day gets
+tightened.
+
+## Checking opening hours is your highest-value job
+
+The owner cannot easily check thirty places for the dates they are going. You can, and the planner
+is built to let you: if you report the times it already has and mark them `verified: true`, the
+merge reads that as a confirmation rather than a disagreement, so it lands quietly however many
+places you do it for. Correcting times is an ordinary change; confirming them is free.
+
+Say `verified: true` only where you actually checked for the trip's own dates. It is the flag that
+makes the planner stop warning them, so a careless `true` is worse than leaving it unverified.
+
+## Build the package
+
+Write a `plan.json` holding only what you want to send:
 
 ```json
 {
   "tripId": "example-kyoto",
+  "label": "Hours checked, Saturday planned",
   "places": [
     { "id": "example-temple", "duration": 120,
       "hours": { "source": "chat", "verified": true, "raw": "06:00-18:00",
-                 "week": { "mon": [["06:00","18:00"]], "tue": [["06:00","18:00"]] } } },
+                 "week": { "mon": [["06:00","18:00"]], "sat": [["06:00","21:00"]] },
+                 "lastEntry": { "sat": "20:30" } } },
     { "id": "nishiki-market", "name": "Nishiki Market", "lat": 35.0050, "lng": 135.7649,
       "kind": "food", "duration": 60, "dayId": "2026-11-21" },
     { "id": "example-garden" }
   ],
   "days": {
-    "2026-11-21": { "plans": { "less": ["example-temple"],
-                               "balanced": ["example-temple", "nishiki-market"],
-                               "packed": ["example-temple", "nishiki-market", "example-garden"] } }
+    "2026-11-21": { "plans": {
+      "less": ["example-temple"],
+      "balanced": ["example-temple", "nishiki-market"],
+      "packed": ["example-temple", "nishiki-market", "example-garden"] } }
   }
 }
 ```
@@ -101,64 +130,64 @@ Write a `plan.json` — the places and days you want to send, and nothing else:
 python3 scripts/make_package.py --trip <their file> --plan plan.json --out package.txt
 ```
 
-The script writes the block and, because it has their trip too, tells you what the package will
-actually do: what lands quietly, what the owner will be asked about, and what it refuses to send.
-Read that report. A package that raises six questions is usually a package that restated six things
-it never learned.
+Because the script has their trip as well as your plan, it does not merely write the block — it
+says what the block will *do*: what lands quietly, what the owner will be asked about, and what it
+refuses to send at all. Read that report before you hand anything over. A package that raises six
+questions is usually a package that restated six things it never learned.
 
-Never hand-write a block, and never edit one. One stray character and the whole thing fails to
-paste.
+## Give it to them
 
-### 5. Give it to them
+Reply with the block, then a short plain summary underneath: what you planned, what needs booking
+and by when, what you could not verify. Three or four sentences. They are about to paste the block
+and look at the timeline — the prose is so they know what to expect, not a second copy of it.
 
-Reply with the block, then a short plain summary: what you planned, what needs booking and by when,
-what you could not verify. Three or four sentences, not a wall. They are about to paste the block
-and look at the timeline; the prose is so they know what to expect.
+## Reading what comes back
 
-### 6. Next round
+Run `read_trip.py` on the hand-back, then work in this order:
 
-They paste the block, adjust the day, and copy a hand-back back to you. Run `read_trip.py` on it and
-work in this order:
-
-1. **`issues` with `severity: "error"`** — the day does not work: arriving after a booked time, a
+1. **`issues` with `severity: "error"`.** The day does not work: arriving after a booked time, a
    place shut that day, getting back late. Fix these first, in the next package.
 2. **The note.** It is the only part a person wrote. Answer it.
-3. **`checks`** — your worklist: hours the planner has never had confirmed, `check` notes you left.
-4. **`changes.edited`** — what they overrode. They know something you do not; do not send it back
-   changed.
-5. **`travel`** — now you have real times. `osrm` and `transitous` are measured. `stops` is **not** a
-   timetable: it is two stops that share a line in OpenStreetMap, with no times behind it, so never
+3. **`checks`.** The planner's own worklist: hours it has never had confirmed, `check` notes you
+   left behind.
+4. **`changes.edited`.** What they overrode. They know something you do not — do not send it back
+   changed, and do not argue with it in prose.
+5. **`travel`.** Now you have real times. `osrm` and `transitous` measured them. `stops` did not:
+   it is two stops that share a line in OpenStreetMap, with no timetable behind it, so never
    promise a particular bus from one. `mine` is a time they entered themselves and beats everything.
+
+`references/handback.md` has the full shape.
 
 ## The rules that bite
 
-These are the ones that cause real damage, and the script checks every one of them.
+The script checks every one of these. They are here because breaking them does real damage.
 
 - **A field you leave out is silence**, and the owner's value stands. That is what makes a small
-  package safe: say what you learned, leave the rest alone.
-- **`null` and `""` are not silence.** They are a statement — "there is none" — and they take back a
-  value an earlier package of yours put there. Useful on purpose, awful by accident: never send a
-  whole place back with its nulls filled in just because you have the shape to hand.
-- **Every place an order names must be in `places`.** `{"id": "example-garden"}` on its own is
-  enough, and says nothing about the place.
-- **Naming a place in an order says which day it is on.** Do not also send `dayId` contradicting it.
-- **A package never deletes a place.** If something should be dropped, say so in prose.
-- **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; new places
-  get a new slug, like `fushimi-inari`.
-- **The trip and the days are theirs.** Do not send `title`, `tz`, `currency` or `lookups`, nor a
-  day's `start`, `end`, `shown`, `centre` or `note`. Where they sleep and when they leave is not
-  yours to propose.
+  package safe: say what you learned and leave the rest alone.
+- **`null` and `""` are not silence.** They are a statement — "there is none" — which takes back a
+  value one of your earlier packages put there. Useful deliberately, awful by accident: never send a
+  place back with every key filled in just because you have the shape to hand.
+- **Every place named in a running order must appear in `places`.** `{"id": "example-garden"}` on
+  its own is enough, and says nothing else about the place.
+- **Naming a place in an order says which day it is on.** Do not also send a `dayId` contradicting
+  it.
+- **A package never deletes.** If something should be dropped, say so in prose and let them do it.
+- **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
+  gets a new slug, like `fushimi-inari`.
+- **The trip and the days are theirs.** Never send `title`, `tz`, `currency`, `lookups`, `stays`, a
+  day's `start`, `end`, `shown`, `centre` or `note`, or anybody's `legs`. Where they sleep and when
+  they leave the hotel is not yours to propose. Put the suggestion in prose instead.
 - **Prices stay in their own currency.** Never convert.
 
 ## Going deeper
 
-- `references/package-format.md` — every field, its values and its bounds; the envelope; the
-  invariants the planner repairs; a complete worked package.
-- `references/handback.md` — everything a hand-back carries and what to do with each part.
+- `references/package-format.md` — every field with its values and bounds, the envelope, what the
+  planner repairs silently, and a complete worked package.
+- `references/handback.md` — everything a hand-back carries, and what to do with each part.
 
 ## Starting from nothing
 
-If they have no trip yet, a package is also how a trip is created: send one with `days` for the
-dates and places in the backlog, and the planner will open it as a new trip. Ask them for the dates,
-the city and where they are staying first — the day's start and end are theirs to set, and without
-them the planner cannot time anything.
+A package is also how a trip is born: one with `days` for the dates and places in the backlog opens
+as a new trip. Ask for the dates, the city and where they are staying first — the day's start and
+end are theirs to set, and without them the planner cannot time anything. Then tell them to open
+the planner and paste it in.

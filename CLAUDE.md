@@ -200,8 +200,9 @@ These are proposed; confirm each with the owner before starting it.
    - `documentation/chat-guide.md` is written. The v1 spec stays as it is;
    - `skill/plan-my-trip/` packages the same contract as a skill for claude.ai, so a chat does the
      planning without being handed the guide. Its `make_package.py` checks a package against the
-     owner's own trip and reports what will land quietly, what they will be asked about, and what it
-     refuses to send — it predicted the real merge's four questions exactly.
+     owner's own trip and reports what will land quietly, what they will be asked about, what has no
+     effect at all, and what it refuses to send. Every prediction is checked against `docs/core.js`
+     itself rather than a mock, and matched the real merge exactly on each round tried.
 6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
    stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
    them from a snapshot we publish instead:
