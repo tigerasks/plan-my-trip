@@ -1,99 +1,121 @@
 # Reading a hand-back
 
-A hand-back is the whole trip plus a `handback` section. Run `scripts/read_trip.py` on it first — it
-prints all of this and ends with a worklist. This file is for when you need to know what a field
-means rather than what to do next.
+A hand-back is what the owner copies back after they have adjusted the day. It is the same envelope
+as a save — `kind: "handback"`, with the whole `trip` — plus a `handback` section holding everything
+the planner worked out that you could not.
 
-A `save` — the trip as the owner saved it — is the same thing without the `handback` section. Read it
-the same way.
+It can only be read. Pasting one back into the planner is refused on purpose.
 
 ```json
 {
-  "schema": "day-planner/2", "kind": "handback", "tripId": "japan-2026",
-  "at": "2026-11-18T19:04:00Z", "trip": { … },
+  "schema": "day-planner/2", "kind": "handback", "tripId": "example-kyoto",
+  "title": "Kyoto", "at": "2026-11-07T18:12:00Z", "app": "day-planner",
+  "trip": { ...the whole trip as it now stands... },
   "handback": {
-    "note": "Dropped the market, it looked like a tourist trap",
-    "days": [{
-      "date": "2026-11-21", "city": "Kyoto", "note": "", "chosen": "balanced",
-      "versions": [{
-        "key": "balanced", "label": "Balanced",
-        "order": ["fushimi-inari", "nishiki-market"],
-        "starts": "08:30", "finishes": "17:40",
-        "summary": { "stops": 2, "travel": 58, "wait": 0, "visit": 150, "spare": 200,
-                     "estimated": 1, "checked": 2, "errors": 0 },
-        "stops": [{ "id": "fushimi-inari", "name": "Fushimi Inari Taisha",
-                    "arrive": "08:50", "at": "08:50", "until": "10:50", "waited": 0, "minutes": 120 }],
-        "issues": [{ "severity": "warn", "text": "…" }],
-        "checks": [{ "name": "Nishiki Market", "text": "Hours not checked yet" }]
-      }]
-    }],
-    "changes": { "baseline": true, "added": [], "deleted": [], "moved": [], "edited": [], "orders": [] },
-    "travel": [{
-      "date": "2026-11-21", "leg": "start>fushimi-inari",
-      "from": "the start of the day", "to": "Fushimi Inari Taisha",
-      "pick": null, "mine": null,
-      "ways": { "walk":    { "minutes": 44, "km": 3.32, "source": "osrm" },
-                "transit": { "minutes": 17, "source": "transitous", "name": "Karasuma line",
-                             "detail": "walk 11 min to 四条 · 3 min to 京都 · walk 3 min" } }
-    }]
+    "note": "...",
+    "days": [ ... ],
+    "changes": { ... },
+    "travel": [ ... ]
   }
 }
 ```
 
-## Each part, and what it is for
+## `note`
 
-**`note`** — the only part a person wrote. Read it first and answer it.
+What the owner typed before copying. It is the only part of the hand-back a person wrote, and the
+only part that can say something no field can. **Answer it first**, in prose, before anything else.
 
-**`days[].chosen`** names the version they settled on. Any other version present is one they want a
-second opinion about, not one they are using.
+## `days`
 
-**`versions[].summary`** — `travel`, `wait`, `visit` and `spare` are minutes. `estimated` counts legs
-the planner guessed rather than measured; `checked` counts places with something still to confirm;
-`errors` counts issues that make the day not work.
+One entry per day of the trip:
 
-**`versions[].stops`** — `arrive` is when they get there, `at` when the visit starts, `waited` the
-minutes lost between the two. A large `waited` before a `fixed` time means the order is wrong, not
-that the place is wrong.
-
-**`versions[].issues`** — `severity: "error"` means **the day does not work as planned**: arriving
-after a booked time, a place shut that day, getting back late. Fix these first. `warn` is softer,
-usually a missing position.
-
-**`versions[].checks`** — what the planner could not verify: hours it never had confirmed, and the
-`check` notes you wrote. **This is your worklist.** Each one is a place where a package with a
-verified `hours` block removes a question for good.
-
-**`changes`** — what they did since the two of you were last in step, which is the last package they
-merged or the last hand-back they took, whichever came later. Both sides of that comparison are
-whole trips, so everything listed is a real edit of theirs — nothing appears because you left it
-out.
-
-- `edited` names fields by their label: `{"name": "Fushimi Inari Taisha", "fields": ["How long"]}`
-  means they overrode your duration. **Take the hint.** They know something you do not, so do not
-  send it back changed.
-- `moved`, `added`, `deleted` and `orders` are the same in spirit: their decisions, not invitations.
-- `baseline: false` means the planner had nothing to compare against — a new device, or cleared
-  storage. Treat the trip as current state and the change lists as absent rather than empty.
-
-**`travel`** — the measured times, and the part to be most careful with.
-
-| `source` | What it is |
+| Key | What it is |
 |---|---|
-| `osrm` | a real route along real streets, walking or driving. Trustworthy |
-| `transitous` | a real timetabled journey. `detail` spells it out; `departs` says which departure it answers |
-| `stops` | **not a timetable.** Two stops near each end that share a line in OpenStreetMap, with no times behind it. `name` is hedged — "probably the 206 bus" — for exactly that reason |
-| `mine` | a time they entered themselves. It beats everything, including yours |
+| `date`, `city`, `note` | the day itself |
+| `chosen` | the version they are actually looking at: `less`, `balanced` or `packed` |
+| `versions` | the chosen one, plus any alternative they ticked |
 
-A leg with no `ways` is one nothing could answer. A slot with `asked` set but no `minutes` is a
-service that was asked and had nothing — do not suggest asking it again.
+Each version carries the day as the planner computed it:
 
-Never present a `stops` time as a timetable, and never promise a particular bus from one.
+| Key | What it is |
+|---|---|
+| `key`, `label` | which version |
+| `order` | the ids, in order |
+| `starts`, `finishes` | `"HH:MM"` for the whole day |
+| `summary` | the day in a line |
+| `stops` | per stop: `id`, `name`, `arrive`, `at` (when the visit starts), `until`, `waited` minutes, `minutes` of visit |
+| `issues` | `{severity, text}` — see below |
+| `checks` | `{name, text}` — things it could not verify |
 
-## What to do with it
+`waited` is the quiet signal. A long wait means they arrive before the place opens or before a
+fixed time, so the order is wrong — not that the day is too full.
 
-1. Fix every `error` in the next package.
-2. Answer the note.
-3. Work the `checks` list — that is what turns a plan into one they can trust.
-4. Leave alone everything in `changes.edited`.
-5. Re-plan the days that now have real travel times, especially any with a long `wait` or little
-   `spare`. This is the round where a day stops being a guess.
+### `issues`
+
+| `severity` | Meaning | What to do |
+|---|---|---|
+| `error` | the day does not work: a closed place, arriving after a booked time, getting home late | fix it in the next package, before anything else |
+| `warn` | it works but it is tight or odd | worth a sentence; fix if it is cheap |
+| `info` | something to be aware of | usually nothing |
+
+### `checks`
+
+The planner's own worklist: hours it has never had confirmed, and every `check` note you left on a
+place. This is the list to work through when you research. A verified `hours` block removes the
+first kind; answering the question and sending `"check": ""` removes the second.
+
+## `changes`
+
+What the owner has done since the two sides were last in step — since a package of yours was merged
+or a hand-back was taken. Both sides of that comparison are whole trips, so everything here is real.
+
+| Key | What it is |
+|---|---|
+| `baseline` | `false` means the planner has nothing to compare against, and `why` says so. Then the rest is absent and the trip is simply how it stands |
+| `added` | `{id, name, dayId, how}` — places they added themselves. `how` is `search`, `map`, `pin` or `package` |
+| `deleted` | `{id, name}` — places they removed. **Do not send them back.** |
+| `moved` | `{id, name, from, to}` — a place that changed day |
+| `edited` | `{id, name, fields}` — fields they changed, in words: "How long", "Opening hours", "Note" |
+| `orders` | `{date, version, now}` — a running order they re-sequenced, with the order as it now is. `{date, added: true}` is a new day |
+
+**`edited` is the one to take seriously.** They changed it because they know something you do not.
+Do not send that field back changed, and do not argue with it in prose. If you think it is a
+mistake, ask.
+
+An order under `orders` has usually been through the app's "Optimise order", which used the real
+measured legs. Start from it rather than from yours.
+
+## `travel`
+
+Every leg the planner measured, which is the part you cannot do at all:
+
+```json
+{ "date": "2026-11-21", "leg": "start>example-temple",
+  "from": "the start of the day", "to": "Example Temple",
+  "pick": "transit", "mine": null,
+  "ways": {
+    "walk":    {"minutes": 52, "km": 4.1, "source": "osrm"},
+    "transit": {"minutes": 23, "source": "transitous", "name": "Bus 206", "departs": "08:41"}
+  } }
+```
+
+| `source` | What it is | How much to trust it |
+|---|---|---|
+| `osrm` | a real walking or driving route | a measurement |
+| `transitous` | a real timetabled journey, with the service named and a departure time | a measurement, for that departure |
+| `stops` | two stops that share a line in OpenStreetMap, with **no timetable behind it** | a plausible connection and nothing more. Never promise a particular bus from one |
+| `mine` | a time the owner entered themselves | beats everything else |
+
+`pick` is the mode they chose for that leg. A slot with `asked` but no minutes is a service that
+was asked and had nothing to offer.
+
+Use these to tighten the next round: a leg that costs 40 minutes is an argument for reordering the
+day or dropping a stop, and now you can say so with a number behind it.
+
+## Where to start
+
+1. every `error` in `issues`
+2. the `note`
+3. `checks`
+4. `changes.edited`, then `changes.orders`
+5. `travel`, for anything that now looks expensive

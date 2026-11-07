@@ -179,8 +179,10 @@ These are proposed; confirm each with the owner before starting it.
 5. **Chat round trip — built:**
    - a package is merged by place id, three ways against the package the chat last sent, so filling
      in hours nobody had set lands quietly and only a field both sides moved is put as a question
-     (design doc, decisions 26 and 27). A package never deletes: a place it leaves out is one it had
-     nothing to say about;
+     (design doc, decisions 26 and 27). Opening hours are compared on their times rather than whole,
+     so confirming hours the owner already had is a confirmation and not a disagreement, however
+     many places it covers (decision 31). A package never deletes: a place it leaves out is one it
+     had nothing to say about;
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
    - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed
@@ -198,8 +200,9 @@ These are proposed; confirm each with the owner before starting it.
    - `documentation/chat-guide.md` is written. The v1 spec stays as it is;
    - `skill/plan-my-trip/` packages the same contract as a skill for claude.ai, so a chat does the
      planning without being handed the guide. Its `make_package.py` checks a package against the
-     owner's own trip and reports what will land quietly, what they will be asked about, and what it
-     refuses to send — it predicted the real merge's four questions exactly.
+     owner's own trip and reports what will land quietly, what they will be asked about, what has no
+     effect at all, and what it refuses to send. Every prediction is checked against `docs/core.js`
+     itself rather than a mock, and matched the real merge exactly on each round tried.
 6. **Stops from a snapshot — built.** Overpass turned out not to be dependable enough to ask about
    stops (design doc, decisions 22 to 25 and the fifth and sixth service runs), so the planner reads
    them from a snapshot we publish instead:

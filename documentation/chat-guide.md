@@ -183,10 +183,19 @@ has now, and what you have just sent.
 | 60 min | 90 min | 120 min | **it asks**, and keeps theirs unless the owner says otherwise |
 | your note | your note | `""` | your note comes off, no question |
 | your note | a note of their own | `""` | **it asks**, and keeps theirs |
+| anything | unverified hours | the same times, `verified: true` | your confirmation lands, no question |
+| anything | verified hours | the same times, `verified: false` | theirs stays, no question |
+| anything | hours of their own | **different** times | the ordinary rules above |
 
 So the way to avoid pestering the owner is to **change only what you have actually learned
 something about**. Re-sending an unchanged place costs nothing; re-sending it with a field quietly
 rewritten costs them a question.
+
+Opening hours are the exception, and deliberately so, because checking them is most of what you are
+for. The merge compares the *times*, not the account of where they came from: if you report the
+hours the owner already had and mark them `verified`, that is a confirmation, not a disagreement, so
+it lands without a question however many places you do it for. Say `verified: true` only where you
+really checked.
 
 If the owner has never loaded a package in that browser there is no baseline, and anything they have
 set that you disagree with has to be asked about. The planner tells them this is why.

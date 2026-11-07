@@ -1,365 +1,709 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build a day-planner/2 package from a plan, checking it against the owner's own trip first.
+"""Build a day-planner/2 package, and say what it will do before anyone pastes it.
 
-    python3 make_package.py --trip <their file> --plan plan.json --out package.txt
+    python3 make_package.py --trip their-trip.json --plan plan.json --out package.txt
 
-`plan.json` holds only what you mean to say:
+`--plan` is a small file holding only what you want to send:
 
-    { "tripId": "example-kyoto",
-      "places": [ { "id": "example-temple", "duration": 120 },
-                  { "id": "new-place", "name": "…", "lat": 1.0, "lng": 2.0, "dayId": "2026-11-21" },
-                  { "id": "example-garden" } ],
-      "days":   { "2026-11-21": { "plans": { "balanced": ["example-temple", "new-place"] } } } }
+    {
+      "tripId": "example-kyoto",
+      "label": "Saturday planned",
+      "places": [ { "id": "example-temple", "duration": 120 } ],
+      "days": { "2026-11-21": { "plans": { "balanced": ["example-temple"] } } }
+    }
 
-Because it has their trip as well, it does not merely emit the block: it works out what the package
-will do when they paste it — what lands quietly, what they will be asked about, and what it will not
-send at all. A package that asks six questions has usually restated six things it never learned.
+Because this script has the owner's own trip as well as your plan, it does not only write the
+block. It works the merge out first and reports what will land quietly, what the owner will be
+asked about, and what it refuses to send at all. Read that before handing anything over.
+
+If you still have the package you sent last time, pass it as `--base` and the prediction improves:
+the planner merges three ways against it, so a field you both changed from the same starting point
+can land without a question.
 """
+
 import argparse
 import json
+import os
 import re
 import sys
 
-WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-PLAN_KEYS = ['less', 'balanced', 'packed']
+# read_trip.py sits beside this one, and Python puts a script's own directory on the path.
+from read_trip import payload, load, as_map, fmt_date, fmt_dur, die
+
+SCHEMA = 'day-planner/2'
 KINDS = ['sight', 'food', 'shop', 'nature', 'museum', 'culture', 'view', 'experience', 'other']
 PRIORITIES = ['must', 'want', 'maybe']
 HOURS_SOURCES = ['osm', 'you', 'chat']
 OSM_TYPES = ['node', 'way', 'relation']
-PLACE_FIELDS = ['name', 'localName', 'lat', 'lng', 'kind', 'area', 'duration', 'fixed', 'window',
-                'hours', 'closed', 'booked', 'priority', 'price', 'check', 'note', 'links', 'osm',
-                'dayId']
-# A day's own arrangements belong to the owner: where they sleep, when they leave, what is on screen.
-DAY_OK = ['id', 'date', 'city', 'plans']
-TRIP_OWN = ['title', 'tzLabel', 'tz', 'transit', 'currency', 'fx', 'fxAt', 'lookups']
-IDENTITY = ['name', 'lat', 'lng']
-BEGIN = '--- BEGIN day-planner/2 ---'
-END = '--- END day-planner/2 ---'
-DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-TIME = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
-SLUG = re.compile(r'^[a-z0-9][a-z0-9-]*$')
+WEEK = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+PLAN_KEYS = ['less', 'balanced', 'packed']
+PLAN_LABEL = {'less': 'Do less', 'balanced': 'Balanced', 'packed': 'Packed'}
+MAX_DURATION = 720
+TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 
-errors, warnings, quiet = [], [], []
-asks = {}        # subject -> the fields it will be asked about, as the owner sees it
+PLACE_KEYS = ['id', 'name', 'localName', 'lat', 'lng', 'lon', 'kind', 'area', 'duration', 'fixed',
+              'window', 'hours', 'closed', 'booked', 'priority', 'price', 'check', 'note', 'links',
+              'osm', 'dayId']
+# Fields the merge compares, in the planner's own words.
+FIELD_LABEL = {
+    'pos': 'Position', 'name': 'Name', 'localName': 'Local name', 'kind': 'Kind', 'area': 'Area',
+    'duration': 'How long', 'fixed': 'Fixed time', 'window': 'Time window', 'hours': 'Opening hours',
+    'closed': 'Closed dates', 'booked': 'Booked', 'priority': 'Priority', 'price': 'Price',
+    'check': 'Check', 'note': 'Note', 'links': 'Links', 'osm': 'OpenStreetMap', 'dayId': 'Which day',
+}
+NOT_YOURS = {
+    'legs': 'travel times are the planner\'s own measurements; yours would be guesses over facts',
+    'added': 'the planner\'s own bookkeeping',
+    'createdAt': 'the planner\'s own bookkeeping',
+    'updatedAt': 'the planner\'s own bookkeeping',
+    'title': 'the trip\'s name is a setting of theirs. Use "label" at the top of the plan for this block\'s label',
+    'tz': 'a trip setting of theirs', 'tzLabel': 'a trip setting of theirs',
+    'transit': 'a trip setting of theirs', 'currency': 'a trip setting of theirs',
+    'lookups': 'a trip setting of theirs', 'fx': 'a trip setting of theirs',
+    'stays': 'where they sleep is theirs', 'backlog': 'worked out from which places have no day',
+}
+# A day carries only its id and its running orders. Everything else about it is the owner's.
+DAY_NOT_YOURS = dict(NOT_YOURS, **{
+    'start': 'when they leave is theirs', 'end': 'when they get back is theirs',
+    'shown': 'which version they are looking at is theirs',
+    'centre': 'where their map is pointed is theirs',
+    'city': 'the day\'s city is theirs', 'note': 'the day\'s own note is theirs',
+})
+
+PROBLEMS = []
+WARNINGS = []
 
 
-def ask(subject, line):
-    asks.setdefault(subject, []).append(line)
+def problem(text):
+    PROBLEMS.append(text)
 
 
-def load(path):
-    text = sys.stdin.read() if path == '-' else open(path, encoding='utf-8').read()
-    if BEGIN in text and END in text:
-        body = text.split(BEGIN, 1)[1].split(END, 1)[0]
-        return json.loads(''.join(l.strip() for l in body.strip().splitlines()))
-    return json.loads(text)
+def warn(text):
+    WARNINGS.append(text)
 
 
-def as_map(x, key='id'):
-    if isinstance(x, list):
-        return {d.get(key) or d.get('date'): d for d in x if isinstance(d, dict)}
-    return x or {}
-
+# ---------- comparing the way the planner does ----------
 
 def blank(v):
-    return v is None or v == '' or v == [] or v == {} or v is False
+    if v is None or v is False or v == '':
+        return True
+    return isinstance(v, (list, dict)) and not v
 
 
-def brief(v, width=52):
-    """Values go in a report a person reads, so an opening-hours object has to fit on the line."""
-    if isinstance(v, dict):
-        if 'week' in v or 'source' in v:
-            week = v.get('week') or {}
-            shut = [d for d in WEEK if week.get(d) == []]
-            known = [d for d in WEEK if week.get(d)]
-            return ('hours %s/%s, open %s%s' % (v.get('source'), 'verified' if v.get('verified') else 'unverified',
-                                                ','.join(known) or 'nothing',
-                                                ', shut ' + ','.join(shut) if shut else ''))
-        v = json.dumps(v, ensure_ascii=False)
-    elif not isinstance(v, str):
-        v = json.dumps(v, ensure_ascii=False)
-    return v if len(v) <= width else v[:width - 1] + '…'
+def same(a, b):
+    if blank(a) and blank(b):
+        return True
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
-def check_hours(pid, h):
-    if not isinstance(h, dict):
-        errors.append('%s: hours must be an object' % pid)
-        return
-    if h.get('source') not in HOURS_SOURCES:
-        errors.append('%s: hours.source is %r, not one of %s' % (pid, h.get('source'), HOURS_SOURCES))
-    week = h.get('week') or {}
-    for day, spans in week.items():
-        if day not in WEEK:
-            errors.append('%s: hours.week has "%s"; the keys are %s' % (pid, day, WEEK))
+def hours_times(h):
+    """Opening hours, minus the account of where they came from."""
+    if blank(h) or not isinstance(h, dict):
+        return None
+    return {'week': h.get('week'), 'lastEntry': h.get('lastEntry')}
+
+
+def three_way(mine, theirs, base):
+    """mine is the owner's, theirs is ours. Whoever moved away from the baseline wins."""
+    if same(theirs, base):
+        return 'nothing'
+    if same(mine, base) or same(mine, theirs):
+        return 'quiet'
+    return 'question'
+
+
+def value_text(v):
+    if v is None or v == '':
+        return '(nothing)'
+    if isinstance(v, bool):
+        return 'yes' if v else 'no'
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        return v if len(v) <= 48 else v[:47] + '…'
+    text = json.dumps(v, sort_keys=True)
+    return text if len(text) <= 64 else text[:63] + '…'
+
+
+# ---------- checking the plan ----------
+
+def want_str(where, key, value, limit):
+    if not isinstance(value, str):
+        problem('%s: %s must be text' % (where, key))
+        return None
+    if len(value) > limit:
+        warn('%s: %s is longer than %d characters and will be cut' % (where, key, limit))
+    return value
+
+
+def want_time(where, key, value):
+    if not isinstance(value, str) or not TIME_RE.match(value):
+        problem('%s: %s must be a 24-hour time like "09:30", not %r' % (where, key, value))
+        return None
+    return value
+
+
+def want_date(where, key, value):
+    if not isinstance(value, str) or not DATE_RE.match(value):
+        problem('%s: %s must be a date like "2026-11-21", not %r' % (where, key, value))
+        return None
+    return value
+
+
+def check_window(where, value):
+    if isinstance(value, str):
+        bits = re.split(r'\s*[-–—]\s*', value)
+        value = bits if len(bits) == 2 else [value]
+    if isinstance(value, list):
+        if len(value) != 2:
+            problem('%s: window needs an opening and a closing time' % where)
+            return None
+        value = {'from': value[0], 'to': value[1]}
+    if not isinstance(value, dict):
+        problem('%s: window must be {"from": "HH:MM", "to": "HH:MM"}' % where)
+        return None
+    out = {}
+    for key in ('from', 'to'):
+        if value.get(key) is not None:
+            out[key] = want_time(where, 'window ' + key, value[key])
+    return out or None
+
+
+def check_hours(where, value):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        problem('%s: hours must be an object with week, source and verified' % where)
+        return None
+    extra = set(value) - {'source', 'verified', 'raw', 'week', 'lastEntry'}
+    if extra:
+        problem('%s: hours has no %s' % (where, ', '.join(sorted(extra))))
+    out = {}
+    source = value.get('source', 'chat')
+    if source not in HOURS_SOURCES:
+        problem('%s: hours source must be one of %s' % (where, ', '.join(HOURS_SOURCES)))
+    out['source'] = source
+    if 'verified' in value and not isinstance(value['verified'], bool):
+        problem('%s: hours verified must be true or false' % where)
+    out['verified'] = value.get('verified') is True
+    if value.get('raw') is not None:
+        out['raw'] = want_str(where, 'hours raw', value['raw'], 200) or ''
+    week = value.get('week') or {}
+    if not isinstance(week, dict):
+        problem('%s: hours week must be an object keyed mon to sun' % where)
+        week = {}
+    bad = set(week) - set(WEEK)
+    if bad:
+        problem('%s: hours week has no day called %s' % (where, ', '.join(sorted(bad))))
+    out_week = {}
+    for day in WEEK:
+        if day not in week:
             continue
+        spans = week[day]
         if spans is None:
             continue
         if not isinstance(spans, list):
-            errors.append('%s: hours.week.%s must be a list of [open, close] pairs, or [] for closed' % (pid, day))
+            problem('%s: hours for %s must be a list of ["open","close"] pairs, or [] for closed'
+                    % (where, day))
             continue
-        for pair in spans:
-            if (not isinstance(pair, (list, tuple)) or len(pair) != 2
-                    or not all(TIME.match(str(t) or '') for t in pair)):
-                errors.append('%s: hours.week.%s has %r; each pair is ["HH:MM", "HH:MM"]' % (pid, day, pair))
-    for day, last in (h.get('lastEntry') or {}).items():
+        kept = []
+        for span in spans:
+            if not isinstance(span, list) or len(span) != 2:
+                problem('%s: an opening time on %s must be a pair like ["09:00","17:00"]' % (where, day))
+                continue
+            a = want_time(where, 'hours ' + day, span[0])
+            b = want_time(where, 'hours ' + day, span[1])
+            if a and b:
+                kept.append([a, b])
+        kept.sort()
+        out_week[day] = kept
+    out['week'] = out_week
+    last = value.get('lastEntry') or {}
+    if not isinstance(last, dict):
+        problem('%s: hours lastEntry must be an object keyed mon to sun' % where)
+        last = {}
+    out_last = {}
+    for day, when in last.items():
         if day not in WEEK:
-            errors.append('%s: hours.lastEntry has "%s"' % (pid, day))
-        elif not TIME.match(str(last) or ''):
-            errors.append('%s: hours.lastEntry.%s is %r, not "HH:MM"' % (pid, day, last))
-    if h.get('verified') and not h.get('raw'):
-        warnings.append('%s: hours say verified but carry no raw text to show for it' % pid)
-    if not h.get('verified'):
-        warnings.append('%s: hours are not marked verified, so the planner keeps asking about them' % pid)
-    if not week and not h.get('raw'):
-        errors.append('%s: hours carry neither a week nor raw text, so they say nothing' % pid)
+            problem('%s: hours lastEntry has no day called %s' % (where, day))
+            continue
+        when = want_time(where, 'lastEntry ' + day, when)
+        if when and out_week.get(day):
+            out_last[day] = when
+        elif when:
+            warn('%s: a last entry for %s with no opening times is dropped' % (where, day))
+    out['lastEntry'] = out_last
+    if not out_week and not out.get('raw'):
+        problem('%s: these hours say nothing — give a week, or leave hours out' % where)
+    return out
 
 
-def check_place(p, trip_places, day_ids, named_by_order):
-    pid = p.get('id')
-    if not pid:
-        errors.append('a place has no id; the id is how the merge finds it again')
-        return
-    if not SLUG.match(str(pid)):
-        errors.append('%s: an id is lower case letters, digits and hyphens, like "fushimi-inari"' % pid)
-    if 'legs' in p:
-        errors.append('%s: never send legs — travel times are the planner\'s own measurements' % pid)
-    for key in p:
-        if key not in PLACE_FIELDS + ['id', 'added']:
-            warnings.append('%s: "%s" is not a field the planner reads, so it is dropped on the way in'
-                            % (pid, key))
+def check_links(where, value):
+    if not isinstance(value, list):
+        problem('%s: links must be a list' % where)
+        return None
+    out = []
+    for link in value:
+        if isinstance(link, str):
+            link = {'url': link}
+        if not isinstance(link, dict) or not isinstance(link.get('url'), str):
+            problem('%s: every link needs a url' % where)
+            continue
+        if not re.match(r'^https?://', link['url'], re.I):
+            problem('%s: a link must start with http:// or https:// — %r' % (where, link['url']))
+            continue
+        label = link.get('label') or re.sub(r'^www\.', '', link['url'].split('/')[2])
+        out.append({'url': link['url'], 'label': label})
+    if len(out) > 8:
+        warn('%s: only the first 8 links are kept' % where)
+        out = out[:8]
+    return out
 
-    mine = trip_places.get(pid)
-    said = [k for k in PLACE_FIELDS if k in p]
-    if mine is None:
-        # An id is the one thing that has to stay exactly as it was, so a near miss is worth saying
-        # out loud: a typo does not fail, it silently creates a second copy of the same place.
-        loose = re.sub(r'[^a-z0-9]', '', str(pid).lower())
-        near = [k for k in trip_places if re.sub(r'[^a-z0-9]', '', k.lower()) == loose]
-        if near:
-            errors.append('%s: no such place, but the trip has "%s" — ids are exact, and a near miss '
-                          'makes a second copy instead of finding the first' % (pid, near[0]))
-    if mine is None and not any(k in p for k in IDENTITY):
-        if pid in named_by_order:
-            pass            # carried by its id so an order can name it, which is exactly right
+
+def check_price(where, value):
+    if value is None or isinstance(value, (int, float, str)):
+        return value
+    if not isinstance(value, dict):
+        problem('%s: price must be a number, some text, or {"amount":…,"currency":…}' % where)
+        return None
+    if value.get('amount') is None:
+        return {'text': want_str(where, 'price text', value.get('text', ''), 80) or ''}
+    if not isinstance(value['amount'], (int, float)):
+        problem('%s: price amount must be a number' % where)
+    currency = value.get('currency')
+    if currency is not None and not (isinstance(currency, str) and len(currency) == 3):
+        problem('%s: price currency must be a three-letter code like "JPY"' % where)
+    return {k: v for k, v in value.items() if k in ('amount', 'currency', 'per')}
+
+
+def check_place(raw, their_places):
+    if not isinstance(raw, dict):
+        problem('Every entry in places must be an object')
+        return None
+    pid = raw.get('id')
+    if not isinstance(pid, str) or not ID_RE.match(pid):
+        problem('A place needs an id: lower case, digits and hyphens, like "fushimi-inari" (got %r)' % pid)
+        return None
+    where = 'place "%s"' % pid
+    for key in raw:
+        if key in NOT_YOURS:
+            problem('%s: never send %s — %s' % (where, key, NOT_YOURS[key]))
+        elif key not in PLACE_KEYS:
+            problem('%s: there is no place field called %s' % (where, key))
+
+    out = {'id': pid}
+    if 'name' in raw:
+        out['name'] = want_str(where, 'name', raw['name'], 120)
+    if 'localName' in raw:
+        out['localName'] = want_str(where, 'localName', raw['localName'], 120)
+    if 'area' in raw:
+        out['area'] = want_str(where, 'area', raw['area'], 60)
+    if 'check' in raw:
+        out['check'] = want_str(where, 'check', raw['check'], 300)
+    if 'note' in raw:
+        out['note'] = want_str(where, 'note', raw['note'], 2000)
+
+    lat, lng = raw.get('lat'), raw.get('lng', raw.get('lon'))
+    if (lat is None) != (lng is None):
+        problem('%s: a position needs both lat and lng' % where)
+    elif lat is not None:
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            problem('%s: lat and lng must be numbers' % where)
+        elif abs(lat) > 90 or abs(lng) > 180:
+            problem('%s: lat %s, lng %s is not anywhere on Earth' % (where, lat, lng))
         else:
-            errors.append('%s: a new place needs at least a name, and should have lat and lng' % pid)
-    if mine is not None:
-        for key in IDENTITY:
-            if key in p and p[key] == mine.get(key):
-                warnings.append('%s: "%s" is already exactly that, so sending it only risks a question' % (pid, key))
-        for key in said:
-            if p[key] is None and not blank(mine.get(key)):
-                warnings.append('%s: "%s" is null, which asks to take back what they have (%s)'
-                                % (pid, key, brief(mine.get(key))))
+            out['lat'], out['lng'] = lat, lng
 
-    if 'duration' in p:
-        d = p['duration']
-        if not isinstance(d, int) or d < 0 or d > 720 or d % 15:
-            errors.append('%s: duration is %r; it is minutes, 0 to 720, in steps of 15' % (pid, d))
-    if 'kind' in p and p['kind'] not in KINDS:
-        errors.append('%s: kind is %r, not one of %s' % (pid, p['kind'], KINDS))
-    if 'priority' in p and p['priority'] is not None and p['priority'] not in PRIORITIES:
-        errors.append('%s: priority is %r, not one of %s or null' % (pid, p['priority'], PRIORITIES))
-    if 'fixed' in p and p['fixed'] is not None and not TIME.match(str(p['fixed'])):
-        errors.append('%s: fixed is %r, not "HH:MM"' % (pid, p['fixed']))
-    if 'window' in p and p['window'] is not None:
-        w = p['window']
-        if not isinstance(w, dict) or not all(TIME.match(str(w.get(k) or '')) for k in ('from', 'to')):
-            errors.append('%s: window is %r; it is {"from": "HH:MM", "to": "HH:MM"}' % (pid, w))
-    for c in p.get('closed') or []:
-        if not DATE.match(str(c)):
-            errors.append('%s: closed has %r, not a YYYY-MM-DD date' % (pid, c))
-    if 'hours' in p and p['hours'] is not None:
-        check_hours(pid, p['hours'])
-    if 'osm' in p and p['osm'] is not None:
-        o = p['osm']
+    if 'kind' in raw:
+        if raw['kind'] not in KINDS:
+            problem('%s: kind must be one of %s' % (where, ', '.join(KINDS)))
+        else:
+            out['kind'] = raw['kind']
+    if 'priority' in raw:
+        if raw['priority'] not in PRIORITIES and raw['priority'] is not None:
+            problem('%s: priority must be must, want or maybe' % where)
+        else:
+            out['priority'] = raw['priority']
+    if 'booked' in raw:
+        if not isinstance(raw['booked'], bool):
+            problem('%s: booked must be true or false' % where)
+        else:
+            out['booked'] = raw['booked']
+    if 'duration' in raw:
+        d = raw['duration']
+        if not isinstance(d, (int, float)):
+            problem('%s: duration must be a number of minutes' % where)
+        elif d < 0 or d > MAX_DURATION:
+            problem('%s: duration must be between 0 and %d minutes' % (where, MAX_DURATION))
+        else:
+            rounded = int(round(d / 15.0) * 15)
+            if rounded != d:
+                warn('%s: duration %s becomes %d — the planner works in 15-minute steps'
+                     % (where, d, rounded))
+            out['duration'] = rounded
+    if 'fixed' in raw:
+        out['fixed'] = want_time(where, 'fixed', raw['fixed']) if raw['fixed'] else raw['fixed']
+    if 'window' in raw:
+        out['window'] = check_window(where, raw['window']) if raw['window'] else raw['window']
+    if 'hours' in raw:
+        out['hours'] = check_hours(where, raw['hours'])
+    if 'closed' in raw:
+        if not isinstance(raw['closed'], list):
+            problem('%s: closed must be a list of dates' % where)
+        else:
+            out['closed'] = [want_date(where, 'closed', c) for c in raw['closed']]
+    if 'price' in raw:
+        out['price'] = check_price(where, raw['price'])
+    if 'links' in raw:
+        out['links'] = check_links(where, raw['links'])
+    if 'osm' in raw:
+        o = raw['osm']
         if not isinstance(o, dict) or o.get('type') not in OSM_TYPES or not isinstance(o.get('id'), int):
-            errors.append('%s: osm is %r; it is {"type": "node|way|relation", "id": 123}' % (pid, o))
-    for link in p.get('links') or []:
-        if not isinstance(link, dict) or not str(link.get('url', '')).startswith(('http://', 'https://')):
-            errors.append('%s: a link needs a url starting http:// or https://' % pid)
-    if 'price' in p and isinstance(p['price'], dict) and p['price'].get('amount') is not None:
-        if not p['price'].get('currency'):
-            warnings.append('%s: a price with an amount should name its currency, never converted' % pid)
-    if 'dayId' in p and p['dayId'] is not None:
-        if not DATE.match(str(p['dayId'])):
-            errors.append('%s: dayId is %r, not a YYYY-MM-DD date' % (pid, p['dayId']))
-        elif p['dayId'] not in day_ids:
-            errors.append('%s: dayId is %s, which is not a day of this trip (%s)'
-                          % (pid, p['dayId'], ', '.join(sorted(day_ids)) or 'none'))
-    if p.get('dayId') is None and 'dayId' in p and pid in named_by_order:
-        errors.append('%s: it is in the backlog (dayId null) and in a running order at the same time; '
-                      'drop the dayId and let the order say where it goes' % pid)
+            problem('%s: osm must be {"type":"node","id":123} with type node, way or relation' % where)
+        else:
+            out['osm'] = {'type': o['type'], 'id': o['id']}
+    if 'dayId' in raw:
+        out['dayId'] = want_date(where, 'dayId', raw['dayId']) if raw['dayId'] else raw['dayId']
 
-    # What the owner will see. A field they have nothing for lands quietly; one they have a
-    # different value for becomes a question, because nothing can tell who is more likely right.
-    for key in said:
-        if key == 'dayId' and 'dayId' not in p:
+    if pid not in their_places:
+        near = [i for i in their_places if close_enough(i, pid)]
+        if near:
+            problem('%s: the trip already has "%s". If you mean that place, use its id exactly; '
+                    'ids are never renamed' % (where, near[0]))
+    return out
+
+
+def close_enough(a, b):
+    """Near-miss ids, because a new place with an almost-right id silently splits one in two."""
+    if a == b or abs(len(a) - len(b)) > 2:
+        return False
+    if a.replace('-', '') == b.replace('-', ''):
+        return True
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    if len(short) >= 6 and short in long:
+        return True
+    pairs = lambda s: {s[i:i + 3] for i in range(len(s) - 2)}
+    pa, pb = pairs(a), pairs(b)
+    return bool(pa) and len(pa & pb) >= max(len(pa), len(pb)) - 1
+
+
+def check_days(raw, places_by_id, their_days):
+    if not isinstance(raw, dict):
+        problem('days must be an object keyed by date')
+        return {}
+    out = {}
+    for key, day in raw.items():
+        if not isinstance(day, dict):
+            problem('day "%s" must be an object' % key)
             continue
-        theirs = (mine or {}).get(key)
-        ours = p[key]
-        if mine is None:
+        date = day.get('id') or day.get('date') or key
+        if not want_date('day "%s"' % key, 'date', date):
             continue
-        if blank(theirs) and not blank(ours):
-            quiet.append('%s: %s' % (pid, key))
-        elif theirs != ours and not blank(ours):
-            ask(pid, '%s\n        theirs: %s\n        yours : %s' % (key, brief(theirs), brief(ours)))
+        where = 'day %s' % fmt_date(date)
+        for field in day:
+            if field in DAY_NOT_YOURS:
+                problem('%s: never send %s — %s' % (where, field, DAY_NOT_YOURS[field]))
+            elif field not in ('id', 'date', 'plans'):
+                problem('%s: there is no day field called %s that you may send' % (where, field))
+        plans = day.get('plans')
+        if not isinstance(plans, dict):
+            problem('%s: it needs plans, with less, balanced or packed' % where)
+            continue
+        kept = {}
+        for version, order in plans.items():
+            if version not in PLAN_KEYS:
+                problem('%s: there is no version called %s — it is less, balanced or packed'
+                        % (where, version))
+                continue
+            if not isinstance(order, list) or not all(isinstance(i, str) for i in order):
+                problem('%s: the %s order must be a list of place ids' % (where, version))
+                continue
+            for pid in order:
+                if pid not in places_by_id:
+                    problem('%s: the %s order names "%s", which is not in places. Add at least '
+                            '{"id": "%s"} or the stop is dropped' % (where, version, pid, pid))
+                else:
+                    stated = places_by_id[pid].get('dayId')
+                    if stated and stated != date:
+                        problem('%s: it lists "%s" in the %s order, but that place says dayId %s. '
+                                'Send one or the other' % (where, pid, version, stated))
+            kept[version] = order
+        out[date] = {'id': date, 'plans': kept}
+    for date in out:
+        if date not in their_days:
+            warn('%s is not a day of their trip yet, so the package creates it'
+                 % fmt_date(date))
+    return out
+
+
+# ---------- what it will do ----------
+
+def their_fields(place):
+    f = {'pos': {'lat': place.get('lat'), 'lng': place.get('lng')}}
+    for key in FIELD_LABEL:
+        if key != 'pos':
+            f[key] = place.get(key)
+    if f['pos']['lat'] is None and f['pos']['lng'] is None:
+        f['pos'] = None
+    return f
+
+
+def our_fields(place):
+    """Only the fields we actually said something about, in the planner's own shape."""
+    f = {}
+    if 'lat' in place:
+        f['pos'] = {'lat': place['lat'], 'lng': place['lng']}
+    for key in FIELD_LABEL:
+        if key not in ('pos',) and key in place:
+            f[key] = place[key]
+    return f
+
+
+def predict(places, days, their_trip, base_trip):
+    their_places = as_map(their_trip.get('places'))
+    their_days = as_map(their_trip.get('days'))
+    base_places = as_map((base_trip or {}).get('places'))
+    base_days = as_map((base_trip or {}).get('days'))
+
+    # Naming a place in a running order says which day it is on, so a new place lands there
+    # rather than in the backlog.
+    from_order = {}
+    for date in sorted(days):
+        for key in PLAN_KEYS:
+            for pid in days[date]['plans'].get(key) or []:
+                from_order.setdefault(pid, date)
+
+    new, quiet, asks, nothing, moot = [], [], [], [], []
+    for place in places:
+        pid = place['id']
+        theirs = their_places.get(pid)
+        if not theirs:
+            new.append((pid, place.get('name') or pid, place.get('dayId') or from_order.get(pid)))
+            continue
+        mineF, theirsF = their_fields(theirs), our_fields(place)
+        baseF = their_fields(base_places[pid]) if pid in base_places else None
+        lands, questions, restated, ignored = [], [], [], []
+        for key, value in theirsF.items():
+            mine = mineF.get(key)
+            base = baseF.get(key) if baseF else None
+            if key == 'hours' and same(hours_times(mine), hours_times(value)) and not same(mine, value):
+                if (value or {}).get('verified') and not (mine or {}).get('verified'):
+                    lands.append('Opening hours confirmed')
+                else:
+                    restated.append('Opening hours')
+                continue
+            verdict = three_way(mine, value, base)
+            if verdict == 'question':
+                questions.append((FIELD_LABEL[key], mine, value))
+            elif same(mine, value):
+                restated.append(FIELD_LABEL[key])
+            elif verdict == 'quiet':
+                lands.append(FIELD_LABEL[key])
+            else:
+                # They match the baseline, so the planner reads ours as nothing new and keeps
+                # theirs. Most often an empty field meant to take something back that was never
+                # ours to take back.
+                ignored.append(FIELD_LABEL[key])
+        if questions:
+            asks.append((pid, theirs.get('name') or pid, questions))
+        if lands:
+            quiet.append((pid, theirs.get('name') or pid, lands))
+        if ignored:
+            moot.append((pid, theirs.get('name') or pid, ignored))
+        if restated and not lands and not questions and not ignored:
+            nothing.append((pid, theirs.get('name') or pid, restated))
+
+    day_asks, day_quiet, day_new, day_moot = [], [], [], []
+    for date, day in sorted(days.items()):
+        theirs = their_days.get(date)
+        if not theirs:
+            day_new.append(date)
+            continue
+        mine = {k: (theirs.get('plans') or {}).get(k) or [] for k in PLAN_KEYS}
+        ours = {k: day['plans'].get(k, mine[k]) for k in PLAN_KEYS}
+        if same(mine, ours):
+            continue
+        base = None
+        if date in base_days:
+            base = {k: (base_days[date].get('plans') or {}).get(k) or [] for k in PLAN_KEYS}
+        verdict = three_way(mine, ours, base)
+        {'question': day_asks, 'quiet': day_quiet, 'nothing': day_moot}[verdict].append(
+            (date, mine, ours))
+
+    return {'new': new, 'quiet': quiet, 'asks': asks, 'nothing': nothing, 'moot': moot,
+            'day_new': day_new, 'day_quiet': day_quiet, 'day_asks': day_asks,
+            'day_moot': day_moot}
+
+
+def report(p, has_base):
+    print('WHAT THIS PACKAGE WILL DO')
+    print('=' * 72)
+    for pid, name, dayId in p['new']:
+        print('  NEW    %-24s arrives as a new place, %s'
+              % (pid, 'on ' + fmt_date(dayId) if dayId else 'in the backlog'))
+    for date in p['day_new']:
+        print('  NEW    %-24s a day their trip does not have yet' % fmt_date(date))
+    for pid, name, fields in p['quiet']:
+        print('  FILLS  %-24s %s' % (pid, ', '.join(fields)))
+    for date, mine, ours in p['day_quiet']:
+        print('  FILLS  %-24s its running order' % fmt_date(date))
+    for pid, name, fields in p['nothing']:
+        print('  SAME   %-24s %s — they already have it, so leave it out next time'
+              % (pid, ', '.join(fields)))
+    for date, mine, ours in p['day_moot']:
+        print('  NO USE %-24s its running order — they have re-sequenced it since, and that stands'
+              % fmt_date(date))
+    for pid, name, fields in p['moot']:
+        print('  NO USE %-24s %s — theirs stands and yours is dropped. An empty field only takes '
+              'back what one of your own packages put there' % (pid, ', '.join(fields)))
+
+    count = len(p['asks']) + len(p['day_asks'])
+    print()
+    if not count:
+        print('  NOTHING TO SETTLE. It all lands without a question.')
+    else:
+        print('  THEY WILL BE ASKED %d question(s), one per place or day:' % count)
+        for pid, name, fields in p['asks']:
+            print('    %s' % name)
+            for label, mine, ours in fields:
+                print('      %-16s theirs %s   vs   yours %s'
+                      % (label, value_text(mine), value_text(ours)))
+        for date, mine, ours in p['day_asks']:
+            print('    %s' % fmt_date(date))
+            for key in PLAN_KEYS:
+                if mine[key] != ours[key]:
+                    print('      %-16s theirs %s   vs   yours %s'
+                          % (PLAN_LABEL[key], ' → '.join(mine[key]) or '(empty)',
+                             ' → '.join(ours[key]) or '(empty)'))
+        if not has_base:
+            print()
+            print('  This is the worst case: no --base was given, so anything they have set and you')
+            print('  disagree with counts as a question. With the package you last sent as --base,')
+            print('  some of these would land quietly.')
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Build and check a day-planner/2 package.')
-    ap.add_argument('--trip', required=True, help="the owner's saved trip or hand-back ('-' for stdin)")
-    ap.add_argument('--plan', required=True, help='the places and days you mean to send')
+    ap = argparse.ArgumentParser(description='Build a day-planner/2 package and say what it will do.')
+    ap.add_argument('--trip', help='their save, package or hand-back. Leave it out only when they '
+                                   'have no trip yet and this package is to create one')
+    ap.add_argument('--plan', required=True, help='your plan.json')
     ap.add_argument('--out', default='package.txt', help='where to write the block')
-    ap.add_argument('--label', default=None, help='a short name for the block, shown while merging')
-    ap.add_argument('--at', default=None, help='the timestamp to stamp it with (ISO UTC)')
+    ap.add_argument('--base', help='the package you last sent, for a sharper prediction')
+    ap.add_argument('--label', help='the label for this block, overriding the plan')
+    ap.add_argument('--at', help='ISO timestamp for the envelope')
     args = ap.parse_args()
 
-    theirs = load(args.trip)
-    plan = load(args.plan)
-    trip = theirs.get('trip') or {}
-    trip_places = as_map(trip.get('places'))
-    their_days = as_map(trip.get('days'))
+    fresh = not args.trip
+    if fresh:
+        their_trip = {'id': None, 'places': [], 'days': {}}
+    else:
+        their_env = payload(load(args.trip))
+        their_trip = their_env.get('trip')
+        if not isinstance(their_trip, dict):
+            die('%s has no trip in it.' % args.trip)
+    base_trip = None
+    if args.base:
+        base_env = payload(load(args.base))
+        base_trip = base_env.get('trip')
 
-    tripId = plan.get('tripId') or theirs.get('tripId') or trip.get('id')
-    if not tripId:
-        errors.append('no tripId anywhere; the planner uses it to tell one trip from another')
-    elif theirs.get('tripId') and tripId != theirs.get('tripId'):
-        errors.append('the plan says tripId %r but their trip is %r; a different id is a different '
-                      'trip and the planner will offer to replace rather than merge'
-                      % (tripId, theirs.get('tripId')))
+    with open(args.plan, encoding='utf-8') as fh:
+        try:
+            plan = json.load(fh)
+        except json.JSONDecodeError as e:
+            die('%s is not valid JSON: %s' % (args.plan, e))
+    if not isinstance(plan, dict):
+        die('%s must be an object.' % args.plan)
 
-    places = plan.get('places') or []
-    if isinstance(places, dict):
-        places = list(places.values())
-    days = plan.get('days') or {}
-    if isinstance(days, list):
-        days = {d.get('id') or d.get('date'): d for d in days}
-    # The planner reads a day's date from inside the day, not from the key it sits under, so a day
-    # that only has a key is a day it drops — taking its running order with it, in silence. Filling
-    # both in here means nobody has to remember that.
-    for dayId, d in list(days.items()):
-        for key in ('id', 'date'):
-            if d.get(key) and d[key] != dayId:
-                errors.append('%s: its "%s" says %r; a day is keyed by its own date'
-                              % (dayId, key, d[key]))
-            d[key] = dayId
+    for key in plan:
+        if key == 'title' and not fresh:
+            problem('The plan has "title". A trip\'s title belongs to the owner; call it "label" '
+                    'if you mean the name of this block.')
+        elif key == 'title':
+            continue          # a trip that does not exist yet has no name of theirs to overwrite
+        elif key not in ('tripId', 'label', 'places', 'days'):
+            problem('The plan has no field called "%s" — it takes tripId, label, places and days.' % key)
 
-    if 'title' in plan:
-        errors.append('the plan\'s "title" is ambiguous: the trip\'s title is the owner\'s. Use '
-                      '"label" (or --label) for a name for this block')
-    for key in TRIP_OWN:
-        if key in (plan.get('trip') or {}) or (key != 'title' and key in plan):
-            errors.append('"%s" is the owner\'s to set; a package that sends it stops and asks them '
-                          'about it' % key)
+    their_places = as_map(their_trip.get('places'))
+    their_days = as_map(their_trip.get('days'))
 
-    day_ids = set(their_days) | set(days)
-    named_by_order = set()
-    for dayId, d in days.items():
-        if not DATE.match(str(dayId)):
-            errors.append('"%s" is not a date; days are keyed YYYY-MM-DD' % dayId)
-        for key in d:
-            if key not in DAY_OK:
-                errors.append('%s: "%s" belongs to the owner — where they sleep, when they leave and '
-                              'what is on screen are not a package\'s business' % (dayId, key))
-        for key, order in (d.get('plans') or {}).items():
-            if key not in PLAN_KEYS:
-                errors.append('%s: "%s" is not a version; they are %s' % (dayId, key, PLAN_KEYS))
-                continue
-            if len(order) > 6:
-                warnings.append('%s %s has %d stops; a version that long is one nobody uses'
-                                % (dayId, key, len(order)))
-            named_by_order.update(order)
+    trip_id = plan.get('tripId') or their_trip.get('id')
+    if fresh and not trip_id:
+        problem('With no --trip to merge into, the plan must give a tripId: a slug of its own, '
+                'like "kyoto-november".')
+    elif fresh:
+        their_trip['id'] = trip_id
+    elif trip_id != their_trip.get('id'):
+        problem('tripId is "%s" but their trip is "%s". A different id is read as a different trip.'
+                % (trip_id, their_trip.get('id')))
 
-    sent = {p.get('id') for p in places if isinstance(p, dict)}
-    for dayId, d in days.items():
-        for key, order in (d.get('plans') or {}).items():
-            for pid in order or []:
-                if pid not in sent:
-                    errors.append('%s %s names "%s", which the package does not list as a place. Add '
-                                  '{"id": "%s"} to places — its id alone is enough and says nothing '
-                                  'about it' % (dayId, key, pid, pid))
+    raw_places = plan.get('places') or []
+    if not isinstance(raw_places, list):
+        problem('places must be a list.')
+        raw_places = []
+    places = [p for p in (check_place(r, their_places) for r in raw_places) if p]
+    seen = {}
+    for place in places:
+        if place['id'] in seen:
+            problem('place "%s" appears twice in the plan' % place['id'])
+        seen[place['id']] = place
 
-    for p in places:
-        if isinstance(p, dict):
-            check_place(p, trip_places, day_ids, named_by_order)
+    days = check_days(plan.get('days') or {}, seen, their_days)
 
-    for dayId, d in days.items():
-        theirs = (their_days.get(dayId) or {}).get('plans') or {}
-        ours = dict(d.get('plans') or {})
-        if not ours:
-            continue
-        # The planner merges the three versions as one field, so a day where any version differs
-        # from what they have is one question about the running order.
-        full = {k: list(ours.get(k, theirs.get(k) or [])) for k in PLAN_KEYS}
-        had = {k: list(theirs.get(k) or []) for k in PLAN_KEYS}
-        if full == had:
-            quiet.append('%s: its running order is already exactly that' % dayId)
-        elif any(had[k] for k in PLAN_KEYS):
-            ask(dayId, 'running order\n        theirs: %s\n        yours : %s'
-                % (' / '.join('%s %d' % (k, len(had[k])) for k in PLAN_KEYS),
-                   ' / '.join('%s %d' % (k, len(full[k])) for k in PLAN_KEYS)))
-        else:
-            quiet.append('%s: a running order where they had none' % dayId)
-        # Only the versions you send are yours to propose; the rest stay as they are.
-        missing = [k for k in PLAN_KEYS if k not in ours]
-        if missing and any(had[k] for k in missing):
-            warnings.append('%s: you left %s out, so those stay as they are — send all three if you '
-                            'mean to plan the whole day' % (dayId, ', '.join(missing)))
+    if not places and not days:
+        problem('The plan says nothing: no places and no days.')
 
-    for dayId in days:
-        if dayId not in their_days:
-            warnings.append('%s is a new day; the planner will add it, but its start and end times '
-                            'are the owner\'s to set' % dayId)
-
-    now = args.at or '1970-01-01T00:00:00Z'
-    out = []
-    for p in places:
-        q = dict(p)
-        if p.get('id') not in trip_places:
-            q['added'] = {'by': 'chat', 'how': 'package', 'at': now}
-        else:
-            q.pop('added', None)
-        out.append(q)
-    env = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': tripId,
-           'title': args.label or plan.get('label') or 'Package', 'at': now, 'app': 'chat',
-           'trip': {'id': tripId, 'places': out, 'days': days}}
-
-    print('=== what this package will do ===')
-    print('%d place(s), %d day(s), %d byte(s)'
-          % (len(out), len(days), len(json.dumps(env, ensure_ascii=False))))
-    new = [p['id'] for p in out if p.get('id') not in trip_places]
-    if new:
-        print('\nnew places, simply added:')
-        for pid in new:
-            print('  + %s' % pid)
-    if quiet:
-        print('\nfills a gap, no question asked:')
-        for line in quiet:
-            print('  . %s' % line)
-    if asks:
-        print('\nTHEY WILL BE ASKED %d question(s), one per place or day:' % len(asks))
-        for subject in asks:
-            print('  ? %s' % subject)
-            for line in asks[subject]:
-                print('      %s' % line)
-        print('  — fine where you really did learn better; otherwise drop the field and leave theirs.')
-    if warnings:
-        print('\nworth a second look:')
-        for line in warnings:
-            print('  ! %s' % line)
-    if errors:
-        print('\nNOT SENT — fix these first:')
-        for line in errors:
-            print('  x %s' % line)
-        print('\nNo block written.')
+    if PROBLEMS:
+        print('REFUSED — nothing was written')
+        print('=' * 72)
+        for text in PROBLEMS:
+            print('  %s' % text)
+        print('\n%d problem(s). Fix them and run it again.' % len(PROBLEMS))
         return 1
 
-    block = BEGIN + '\n' + json.dumps(env, ensure_ascii=False, separators=(',', ':')) + '\n' + END + '\n'
+    if fresh:
+        print('NO TRIP TO MERGE INTO')
+        print('=' * 72)
+        print('  This package creates the trip. Everything in it arrives as new, and nothing can')
+        print('  be asked about. Tell them to add where they are staying in the app: the planner')
+        print('  takes each day\'s start and end from that, and until it has one every day begins')
+        print('  at 08:30 from nowhere in particular.')
+        print()
+    report(predict(places, days, their_trip, base_trip), bool(base_trip))
+
+    if WARNINGS:
+        print('\nWORTH KNOWING')
+        print('=' * 72)
+        for text in WARNINGS:
+            print('  %s' % text)
+
+    env = {
+        'schema': SCHEMA, 'kind': 'package', 'tripId': trip_id,
+        'title': args.label or plan.get('label') or 'From the chat',
+        'at': args.at or '',
+        'app': 'chat',
+        'trip': {'id': trip_id},
+    }
+    if fresh and plan.get('title'):
+        env['trip']['title'] = plan['title']
+    if not env['at']:
+        from datetime import datetime, timezone
+        env['at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    if places:
+        env['trip']['places'] = places
+    if days:
+        env['trip']['days'] = days
+
+    block = ('--- BEGIN day-planner/2 ---\n'
+             + json.dumps(env, ensure_ascii=False, separators=(',', ':'))
+             + '\n--- END day-planner/2 ---\n')
     with open(args.out, 'w', encoding='utf-8') as fh:
         fh.write(block)
-    print('\nWritten to %s — give the owner the whole block, first line to last.' % args.out)
+    print('\nWritten to %s — %d place(s), %d day(s), %d bytes.'
+          % (args.out, len(places), len(days), len(block.encode('utf-8'))))
+    print('Give them the whole block, both marker lines included.')
     return 0
 
 
