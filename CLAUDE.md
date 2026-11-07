@@ -46,7 +46,7 @@ GitHub Pages publishes the `docs/` folder of `main`; the only choices GitHub off
 | `reference/v1/` | v1 code for reuse | No |
 | `tests/` | Playwright tests, mocks, screenshots; `harness.py` serves `docs/` locally, `app_test.py` covers the planner, `probe_test.py` the service test page, `core_test.js` the model in Node. See `tests/README.md` | No |
 | `tools/` | Scripts the owner runs by hand, not part of the app: `refresh-stops.py` builds the stop snapshot from OpenStreetMap and publishes it | No |
-| `skill/plan-my-trip/` | The skill the owner installs on claude.ai so the chat can plan days and exchange blocks without being handed the guide. `SKILL.md`, two references, and two scripts: `read_trip.py` reads a save or hand-back into a worklist, `make_package.py` builds a package and says what it will do before it is pasted. It encodes the same contract as the design doc, so a change to the format changes both | No |
+| `skill/plan-my-trip/` | The skill the owner installs on claude.ai so the chat can plan days and exchange blocks without being handed the guide. `SKILL.md`, two references, three scripts and `vendor/core.js`: `read_trip.py` reads a save or hand-back into a worklist, `make_package.py` builds a package and says what it will do before it is pasted, and `check_day.js` runs the vendored `core.js` to show a day's times, waits and errors before anybody pastes anything. The vendored copy must stay byte-identical to `docs/core.js`, and `tests/core_test.js` fails if it drifts. It encodes the same contract as the design doc, so a change to the format changes both | No |
 
 If an older `probe.html` is still at the repository root, delete it: the copy in `docs/` is the one that gets published. Make sure `docs/.nojekyll` exists.
 
@@ -183,8 +183,10 @@ These are proposed; confirm each with the owner before starting it.
      whole, so confirming hours the owner already had is a confirmation and not a disagreement,
      however many places it covers (decision 31), and a field that is only ever an empty shape — a
      day's three running orders, a position of two nulls — counts as unset rather than as an
-     answer, so the first order proposed for a day simply arrives (decision 32). A package never
-     deletes: a place it leaves out is one it had nothing to say about;
+     answer, so the first order proposed for a day simply arrives (decision 32). A package may also
+     say where they are sleeping, because stays merge like places and a placeholder refines in
+     place — what it must never do is invent a booking (decision 33). A package never deletes: a
+     place it leaves out is one it had nothing to say about;
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
    - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed
