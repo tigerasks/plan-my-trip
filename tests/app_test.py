@@ -1090,6 +1090,17 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(200)
     ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edCity') == 'Kyoto',
        'the day sheet opens on what the day holds')
+    # A day nobody has set stores no times of its own, so the sheet has to offer the ones it would
+    # actually run to rather than two empty boxes.
+    pg.evaluate("""() => { const d = window.DayPlannerApp.trip.days['2026-11-21'];
+      d.start.time = null; d.end.time = null; }""")
+    pg.click('[data-act="close-sheet"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#edStartTime') == '08:30' and pg.input_value('#edEndTime') == '21:00',
+       'a day nobody has timed offers the hours it would run to: %s to %s'
+       % (pg.input_value('#edStartTime'), pg.input_value('#edEndTime')))
     pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
     pg.fill('#edStartTime', '07:45')
     pg.fill('#edEndTime', '')

@@ -30,6 +30,11 @@ const WEEK_LABEL = {
   mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
   fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
 };
+// When a day begins and ends if nobody has said. These are read at the point of use rather than
+// written into the day, because a default stored as though it were an answer is indistinguishable
+// from one — and the chat proposing the time you land then has to be put to you as a disagreement.
+const DAY_START = '08:30';
+const DAY_END = '21:00';
 const MAX_DURATION = 720;          // 12 hours
 const DURATION_STEP = 15;
 const DEFAULT_DURATION = 60;
@@ -326,9 +331,7 @@ function normDay(raw, issues, now) {
   }
   d.city = str(r.city, 60);
   d.start = normPoint(r.start, '') || { name: '', lat: null, lng: null, time: null };
-  if (!d.start.time) d.start.time = '08:30';
   d.end = r.end === null ? null : (normPoint(r.end, '') || { name: '', lat: null, lng: null, time: null });
-  if (d.end && !d.end.time) d.end.time = '21:00';
   d.plans = {};
   for (const k of PLAN_KEYS) d.plans[k] = arr(obj(r.plans)[k]).map(cleanId).filter(Boolean);
   d.shown = PLAN_KEYS.includes(r.shown) ? r.shown : 'balanced';
@@ -388,21 +391,23 @@ function stayFor(trip, dayId, which) {
 function dayStart(trip, dayId) {
   const d = obj(obj(trip).days)[dayId];
   if (!d) return null;
+  const time = d.start.time || DAY_START;
   const s = stayFor(trip, dayId, 'start');
-  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.start.time, stayId: s.id };
-  return { name: d.start.name, localName: '', lat: d.start.lat, lng: d.start.lng, time: d.start.time, stayId: null };
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time, stayId: s.id };
+  return { name: d.start.name, localName: '', lat: d.start.lat, lng: d.start.lng, time, stayId: null };
 }
 function dayEnd(trip, dayId) {
   const d = obj(obj(trip).days)[dayId];
   if (!d || !d.end) return null;
+  const time = d.end.time || DAY_END;
   const s = stayFor(trip, dayId, 'end');
-  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.end.time, stayId: s.id };
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time, stayId: s.id };
   const start = dayStart(trip, dayId);
   const own = str(d.end.name);
-  if (own) return { name: own, localName: '', lat: d.end.lat, lng: d.end.lng, time: d.end.time, stayId: null };
+  if (own) return { name: own, localName: '', lat: d.end.lat, lng: d.end.lng, time, stayId: null };
   // The morning you check out, "back where you started" would mean the hotel you have just left.
-  if (start.stayId) return { name: '', localName: '', lat: null, lng: null, time: d.end.time, stayId: null };
-  return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time: d.end.time, stayId: null };
+  if (start.stayId) return { name: '', localName: '', lat: null, lng: null, time, stayId: null };
+  return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time, stayId: null };
 }
 
 // A package from the chat is partial on purpose: it says what it has learned and leaves the rest
@@ -2597,7 +2602,7 @@ const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
   TRANSIT_TYPES, TRANSIT_LABEL, ADDED_BY, ADDED_HOW, HOURS_SOURCES, OSM_TYPES,
-  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION,
+  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION, DAY_START, DAY_END,
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,

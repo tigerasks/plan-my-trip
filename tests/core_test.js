@@ -156,6 +156,15 @@ ok(m.t.places['example-temple'].dayId === '2026-11-25', 'and its places follow i
 ok(C.normalise(m.t).issues.length === 0, 'with nothing left pointing at the old date');
 ok(!C.setDayDate(m.t, '2026-11-25', '2026-11-22').ok, 'but not onto a date the trip already has');
 
+// When a day runs to is read at the point of use, not written into the day. A stored default is
+// indistinguishable from an answer, and the chat saying when you land would be a disagreement.
+const bare = C.newDay('2026-11-30', 'Osaka');
+ok(bare.start.time === null && bare.end.time === null, 'a day nobody has set stores no times of its own');
+const bareTrip = C.normalise({ id: 't', days: { '2026-11-30': bare } }).trip;
+ok(C.dayStart(bareTrip, '2026-11-30').time === '08:30' && C.dayEnd(bareTrip, '2026-11-30').time === '21:00',
+  'and still runs 08:30 to 21:00, because that is what it would run to');
+ok(C.DAY_START === '08:30' && C.DAY_END === '21:00', 'the hours it falls back to are named, not scattered');
+
 console.log('\n== Writing a block ==');
 const demoTrip = C.normalise(demoEnv.trip).trip;
 const block = C.writeBlock(demoTrip, 'save', '2026-09-25T10:04:12Z');
@@ -1085,6 +1094,22 @@ ok(JSON.stringify(merged.trip.days['2026-11-22'].plans.balanced) === '["example-
 merged = C.mergePackage(base0, proposed, null, {}, '2026-10-23T00:00:00Z');
 ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Running order',
   'but a day they have already ordered is still a question');
+
+// Where the day starts. On the day you arrive there is no night before it, so no stay anchors it
+// and the chat is the only one who knows you land at Kansai at 10:20.
+const landed = { id: '2026-11-21',
+  start: { name: 'Kansai Airport T1', lat: 34.4342, lng: 135.2328, time: '10:20' } };
+const unset = clone(base0);
+unset.days['2026-11-21'].start = { name: '', lat: null, lng: null, time: null };
+merged = C.mergePackage(unset, { id: 'example-kyoto', days: { '2026-11-21': landed } },
+  null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0, 'telling a day where it starts, when nobody had said, asks nothing');
+ok(C.dayStart(merged.trip, '2026-11-21').name === 'Kansai Airport T1'
+  && C.dayStart(merged.trip, '2026-11-21').time === '10:20', 'and the day begins where you land');
+merged = C.mergePackage(base0, { id: 'example-kyoto', days: { '2026-11-21': landed } },
+  null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Where the day starts',
+  'a start of their own is still defended');
 
 // Empty, missing and unset are the same answer.
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
