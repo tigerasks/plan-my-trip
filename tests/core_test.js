@@ -1184,5 +1184,21 @@ ok(travel[0].ways.walk.source === 'osrm' && travel[0].ways.transit.source === 't
 const roundTrip = C.readBlock(C.writeHandbackBlock(mineT, base0, { note: 'hi' }, '2026-10-23T09:00:00Z'));
 ok(!roundTrip.ok && roundTrip.problem === 'handback', 'the planner still refuses to read its own hand-back back in');
 
+console.log('\n== The copy the skill carries ==');
+// The skill checks a day by running this very file, because a second implementation of the
+// schedule would drift from it the first time either changed. A copy still drifts if nobody
+// watches, so this is the watching: the two files are the same file or the suite fails.
+const fs = require('fs');
+const path = require('path');
+const here = (p) => path.join(__dirname, '..', p);
+const vendored = here('skill/plan-my-trip/vendor/core.js');
+ok(fs.existsSync(vendored), 'the skill carries a copy of core.js');
+if (fs.existsSync(vendored)) {
+  const mine = fs.readFileSync(here('docs/core.js'));
+  const theirs = fs.readFileSync(vendored);
+  ok(mine.equals(theirs),
+    'and it is the same file, byte for byte — otherwise: cp docs/core.js skill/plan-my-trip/vendor/core.js');
+}
+
 console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASSED'));
 process.exit(fails ? 1 : 0);

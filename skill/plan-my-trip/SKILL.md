@@ -29,6 +29,10 @@ Nothing is connected. You exchange two plain-text blocks, copied by hand:
 A block that cannot be pasted in one go is a block that failed. Never hand-write one and never edit
 one by hand: `scripts/make_package.py` writes it.
 
+You can, however, see what a package would do to their days **before** you hand it over, because
+this skill carries the planner's own code. That is `scripts/check_day.js`, and it is what makes
+planning iteratively possible without making them paste anything.
+
 ## Start from what they gave you
 
 Every command below is run from this skill's own folder, so `scripts/…` finds the scripts.
@@ -39,6 +43,7 @@ Every command below is run from this skill's own folder, so `scripts/…` finds 
 | A hand-back | the same, then work the order under **Reading what comes back** |
 | Nothing — just "plan my trip" | They have no trip yet. See **Starting from nothing** |
 | A question about one day | Answer it, and still send a package if you changed anything |
+| You have drafted a day and want to know whether it works | `node scripts/check_day.js --trip <file> --package package.txt` |
 
 Read the worklist rather than the JSON. It is the shortest path to what actually needs doing, and
 the JSON is long.
@@ -140,6 +145,36 @@ says what the block will *do*: what lands quietly, what the owner will be asked 
 refuses to send at all. Read that report before you hand anything over. A package that raises six
 questions is usually a package that restated six things it never learned.
 
+## Check the day before you send it
+
+```bash
+node scripts/check_day.js --trip <their file> --package package.txt
+```
+
+This runs the planner's actual schedule — the same `core.js` the app runs — over the merged trip
+and prints each day you touched:
+
+```
+Mon 23 Nov — Shimokitazawa — Balanced
+  08:30          leave Kagurazaka base
+                 ↓ 22 min train or bus (estimate)
+  08:52 – 10:22  Kitazawa Hachiman Shrine        1h 30
+  ...
+  2 stops · 4h visiting · 1h 12 travelling · 25 min waiting · 1h 48 spare
+  [ERROR] ZEN NIGHT TOKYO: you would arrive 18:45, after the 18:30 you have booked
+```
+
+So you can fix the order, the durations and the fixed times yourself, iterating until the day
+holds, and only then give it to them. Options: `--day` for one date, `--version` for one of the
+three, `--keep-mine` to see it as they would before answering any questions.
+
+**The travel times are the planner's own estimates, not measured routes.** Only the app can ask
+OSRM and Transitous, and those answers come back in the hand-back. So an estimate is good enough to
+choose an order and to spot a day that cannot work; it is not good enough to promise a train.
+
+If `node` is missing, say so plainly and fall back: propose the day, and let them paste it in and
+tell you how it looked.
+
 ## Give it to them
 
 Reply with the block, then a short plain summary underneath: what you planned, what needs booking
@@ -179,9 +214,15 @@ The script checks every one of these. They are here because breaking them does r
 - **A package never deletes.** If something should be dropped, say so in prose and let them do it.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
-- **The trip and the days are theirs.** Never send `title`, `tz`, `currency`, `lookups`, `stays`, a
-  day's `start`, `end`, `shown`, `centre` or `note`, or anybody's `legs`. Where they sleep and when
-  they leave the hotel is not yours to propose. Put the suggestion in prose instead.
+- **The trip and the days are theirs.** Never send `title`, `tz`, `currency`, `lookups`, a day's
+  `start`, `end`, `shown`, `centre` or `note`, or anybody's `legs`. Which version they are looking
+  at and when they leave the hotel is not yours to propose. Put the suggestion in prose instead.
+- **Stays you may send, but never invent one.** Where they sleep drives every day's start and end,
+  so carrying what they have already told you is worth doing. A place they have booked gets its
+  real name. A base that is not settled gets a name that says so — "Osaka — not booked yet" — and
+  an approximate position for the district, because a stay with no position costs every day it
+  anchors all of its travel times. Ids are permanent, as for places, so the booking refines in
+  place later. Never write a hotel name they have not chosen.
 - **Prices stay in their own currency.** Never convert.
 
 ## Going deeper
@@ -192,7 +233,13 @@ The script checks every one of these. They are here because breaking them does r
 
 ## Starting from nothing
 
-A package is also how a trip is born: one with `days` for the dates and places in the backlog opens
-as a new trip. Ask for the dates, the city and where they are staying first — the day's start and
-end are theirs to set, and without them the planner cannot time anything. Then tell them to open
-the planner and paste it in.
+A package is also how a trip is born: one with `days` for the dates, `stays` for the bases and
+places in the backlog opens as a new trip. Ask for the dates, the cities and where they are staying
+first; send a placeholder stay where a base is not booked, so the days can still be timed.
+
+Two things to say in prose, because you cannot send them:
+
+- **the day they arrive has no base behind it**, so its start is wherever they land. Tell them to
+  set it at the top of that day — the planner cannot time the first leg without it;
+- **a stay does not bring its days with it.** Send the days you want in `days`; `make_package.py`
+  warns about the nights you left uncovered.
