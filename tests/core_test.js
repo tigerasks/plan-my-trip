@@ -1072,9 +1072,26 @@ merged = C.mergePackage(mineLater, later, base0, {}, '2026-10-23T00:00:00Z');
 ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Opening hours',
   'two different answers about the times is still a question');
 
+// An order proposed for a day that has none. The three versions are always there, so a day with
+// nothing planned still looks like an object with three keys — and used to read as an answer.
+const emptyDay = clone(base0);
+emptyDay.days['2026-11-22'].plans = { less: [], balanced: [], packed: [] };
+const proposed = clone(emptyDay);
+proposed.days['2026-11-22'].plans.balanced = ['example-garden'];
+merged = C.mergePackage(emptyDay, proposed, null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0, 'an order for a day that has none is not a choice between two orders');
+ok(JSON.stringify(merged.trip.days['2026-11-22'].plans.balanced) === '["example-garden"]',
+  'it simply lands');
+merged = C.mergePackage(base0, proposed, null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Running order',
+  'but a day they have already ordered is still a question');
+
 // Empty, missing and unset are the same answer.
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
-ok(!C.same(0, null), 'zero is a value, not nothing');
+ok(C.same({ less: [], balanced: [], packed: [] }, null) && C.same({ lat: null, lng: null }, undefined),
+  'and a shape that is always there, holding nothing, is nothing too');
+ok(!C.same({ less: ['a'], balanced: [], packed: [] }, null), 'one stop in it makes it something');
+ok(!C.same(0, null) && !C.same({ amount: 0 }, null), 'zero is a value, not nothing, however deep it sits');
 
 console.log('\n== What a package actually said ==');
 // A package is partial on purpose. Normalising fills its gaps with defaults, so reading it also
