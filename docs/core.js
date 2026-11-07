@@ -2306,9 +2306,14 @@ const FIELD_LABEL = {
 };
 // Nothing-in-particular: an empty string, an empty list and a missing value are the same answer to
 // "has this been set?", and treating them as different would ask about hours nobody ever typed.
+// A list or an object counts as nothing when everything inside it does, because several fields are
+// kept as a fixed shape that is always there: a day's running order is three versions that start
+// out empty, and a position is a latitude and a longitude that start out null. Reading those as
+// something rather than nothing is how proposing an order for a day that has none became a choice
+// between your order and no order. Zero is a value, so a price of nothing still counts.
 const blank = (v) => v == null || v === '' || v === false
-  || (Array.isArray(v) && !v.length)
-  || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
+  || (Array.isArray(v) && v.every(blank))
+  || (typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(blank));
 const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stringify(b);
 // Opening hours are two facts in one field: when the place is open, and how well that is known.
 // Only the first is a matter of opinion. Somebody who reports the times you already had and says

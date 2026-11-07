@@ -1522,6 +1522,28 @@ with sync_playwright() as pw:
     ck(got['raw'] == 'Mo-Su 06:00-18:00 (invented)', 'keeping the text it confirmed')
     ctx.close()
 
+    # ---- an order for a day they have not planned at all
+    # A day's three versions are always there, so a day with nothing planned still arrives as an
+    # object with three keys, and used to read as an answer worth defending.
+    unplanned = json.loads(json.dumps(DEMO))
+    unplanned['trip']['days']['2026-11-22']['plans'] = {'less': [], 'balanced': [], 'packed': []}
+    ctx, pg = open_page(held=unplanned)
+    offer = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': 'example-kyoto',
+             'title': 'A Sunday', 'app': 'chat',
+             'trip': {'id': 'example-kyoto', 'places': [{'id': 'example-garden'}],
+                      'days': {'2026-11-22': {'id': '2026-11-22',
+                                              'plans': {'balanced': ['example-garden']}}}}}
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(offer))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    ck(pg.locator('.cf').count() == 0,
+       'an order for a day they never planned asks nothing: %d question(s)' % pg.locator('.cf').count())
+    ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-22'].plans.balanced") == ['example-garden'],
+       'and the order simply arrives')
+    ctx.close()
+
     # ---- when you and the chat have both changed the same thing
     mine = json.loads(json.dumps(DEMO))
     mine['trip']['places']['example-temple']['duration'] = 120          # you made it longer

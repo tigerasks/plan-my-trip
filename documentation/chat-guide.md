@@ -186,6 +186,8 @@ has now, and what you have just sent.
 | anything | unverified hours | the same times, `verified: true` | your confirmation lands, no question |
 | anything | verified hours | the same times, `verified: false` | theirs stays, no question |
 | anything | hours of their own | **different** times | the ordinary rules above |
+| anything | a day with no running order | an order | your order lands, no question |
+| anything | a day they have ordered | a different order | **it asks**, and keeps theirs |
 
 So the way to avoid pestering the owner is to **change only what you have actually learned
 something about**. Re-sending an unchanged place costs nothing; re-sending it with a field quietly
@@ -196,6 +198,10 @@ for. The merge compares the *times*, not the account of where they came from: if
 hours the owner already had and mark them `verified`, that is a confirmation, not a disagreement, so
 it lands without a question however many places you do it for. Say `verified: true` only where you
 really checked.
+
+A day nobody has planned counts as unset in the same way, even though its three versions are always
+there as three empty lists. So the first order you propose for a day simply arrives; it is only a
+day they have already put in an order of their own that stops to ask.
 
 If the owner has never loaded a package in that browser there is no baseline, and anything they have
 set that you disagree with has to be asked about. The planner tells them this is why.
