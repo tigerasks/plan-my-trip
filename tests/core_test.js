@@ -1036,6 +1036,42 @@ const noBase = C.mergePackage(base0, fills, null, {}, '2026-10-23T00:00:00Z');
 ok(noBase.conflicts.length === 0 && noBase.trip.places['example-temple'].fixed === '10:00',
   'but filling in something you never set still lands quietly, baseline or no baseline');
 
+// The same opening times, told again with better evidence. Checking hours is most of what the chat
+// does for a trip, so comparing the whole object would put a question on every place every round.
+const checked = clone(base0);
+checked.places['example-temple'].hours = Object.assign(clone(base0.places['example-temple'].hours),
+  { source: 'chat', verified: true, raw: '' });
+merged = C.mergePackage(base0, checked, null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0, 'the same times confirmed is not a disagreement, baseline or no baseline');
+ok(merged.trip.places['example-temple'].hours.verified === true, 'the confirmation lands');
+ok(merged.trip.places['example-temple'].hours.raw === 'Mo-Su 06:00-18:00 (invented)',
+  'and the text it confirmed is not thrown away');
+ok(merged.report.updated.some((s) => /Opening hours confirmed/.test(s)),
+  'the report says what it was: ' + merged.report.updated.join(' | '));
+
+// The other way round: nobody un-checks your hours behind your back.
+const unchecked = clone(base0);
+unchecked.places['made-up-market'].hours = Object.assign(clone(base0.places['made-up-market'].hours),
+  { source: 'osm', verified: false });
+merged = C.mergePackage(base0, unchecked, null, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0 && merged.trip.places['made-up-market'].hours.verified === true,
+  'the same times told with less evidence changes nothing and asks nothing');
+
+// Times that actually differ are a different matter.
+const later = clone(base0);
+later.places['example-temple'].hours = clone(base0.places['example-temple'].hours);
+later.places['example-temple'].hours.verified = true;
+later.places['example-temple'].hours.week.mon = [['07:00', '18:00']];
+merged = C.mergePackage(base0, later, base0, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 0 && merged.trip.places['example-temple'].hours.week.mon[0][0] === '07:00',
+  'hours you never touched are simply corrected');
+const mineLater = clone(base0);
+mineLater.places['example-temple'].hours = clone(base0.places['example-temple'].hours);
+mineLater.places['example-temple'].hours.week.mon = [['08:00', '18:00']];
+merged = C.mergePackage(mineLater, later, base0, {}, '2026-10-23T00:00:00Z');
+ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Opening hours',
+  'two different answers about the times is still a question');
+
 // Empty, missing and unset are the same answer.
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
 ok(!C.same(0, null), 'zero is a value, not nothing');

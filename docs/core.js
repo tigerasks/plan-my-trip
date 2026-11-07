@@ -2310,7 +2310,21 @@ const blank = (v) => v == null || v === '' || v === false
   || (Array.isArray(v) && !v.length)
   || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length);
 const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stringify(b);
-const sameFields = (a, b, keys) => keys.every((k) => same(a[k], b[k]));
+// Opening hours are two facts in one field: when the place is open, and how well that is known.
+// Only the first is a matter of opinion. Somebody who reports the times you already had and says
+// they checked them is agreeing with you, so comparing the object whole would put a question on
+// every place on every round of checking — which is the noise three-way merging exists to remove.
+// Compare the times; the confirmation is dealt with separately, in `mergeFields`.
+const hoursTimes = (h) => (blank(h) ? null : { week: obj(h).week, lastEntry: obj(h).lastEntry });
+const sameField = (k, a, b) => (k === 'hours' ? same(hoursTimes(a), hoursTimes(b)) : same(a, b));
+const confirms = (theirs, mine) => obj(theirs).verified === true && obj(mine).verified !== true;
+// Taking a confirmation should not throw away the text it confirmed.
+function confirmedHours(mine, theirs) {
+  const t = clone(theirs);
+  if (!t.raw && obj(mine).raw) t.raw = obj(mine).raw;
+  return t;
+}
+const sameFields = (a, b, keys) => keys.every((k) => sameField(k, a[k], b[k]));
 
 const PLACE_FIELDS = ['pos', 'name', 'localName', 'kind', 'area', 'duration', 'fixed', 'window',
   'hours', 'closed', 'booked', 'priority', 'price', 'check', 'note', 'links', 'osm', 'dayId'];
@@ -2354,6 +2368,15 @@ function mergeFields(mineF, theirsF, baseF, keys, said) {
     // A field the package never mentioned is one it has no opinion about: yours stands, and
     // nobody is asked anything about it.
     if (said && !said.includes(k)) { value[k] = mineF[k]; continue; }
+    // The same opening times told again, with a different account of where they came from. A
+    // confirmation is an upgrade and simply lands; a report that the times are now less well known
+    // than you had them is not, so yours stands. Either way there is nothing to ask about.
+    if (k === 'hours' && sameField(k, mineF[k], theirsF[k]) && !same(mineF[k], theirsF[k])) {
+      const up = confirms(theirsF[k], mineF[k]);
+      value[k] = up ? confirmedHours(mineF[k], theirsF[k]) : mineF[k];
+      if (up) took.push('Opening hours confirmed');
+      continue;
+    }
     const r = threeWay(mineF[k], theirsF[k], baseF ? baseF[k] : undefined);
     value[k] = r.value;
     if (r.how === 'conflict') fields.push({ key: k, label: FIELD_LABEL[k] || k, mine: mineF[k], theirs: theirsF[k] });

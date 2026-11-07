@@ -1499,6 +1499,29 @@ with sync_playwright() as pw:
        'a hand-back straight after a merge reports no changes of yours: ' + json.dumps(hb0))
     ctx.close()
 
+    # ---- the chat checking hours it already had
+    # Confirming opening times is most of what a research round does. Comparing the stored object
+    # whole made every confirmation read as a disagreement, which is a question per place per round.
+    ctx, pg = open_page(held=DEMO)
+    told = json.loads(json.dumps(DEMO['trip']['places']['example-temple']['hours']))
+    told.update({'source': 'chat', 'verified': True, 'raw': ''})
+    confirmed = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': 'example-kyoto',
+                 'title': 'Hours checked', 'app': 'chat',
+                 'trip': {'id': 'example-kyoto', 'places': [{'id': 'example-temple', 'hours': told}]}}
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(confirmed))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    text = pg.inner_text('#sheet')
+    ck(pg.locator('.cf').count() == 0, 'the same times confirmed asks nothing: %d question(s)' % pg.locator('.cf').count())
+    ck('Opening hours confirmed' in text, 'and the report says what landed: '
+       + ' | '.join(l for l in text.split(chr(10)) if 'Opening hours' in l))
+    got = pg.evaluate("window.DayPlannerApp.trip.places['example-temple'].hours")
+    ck(got['verified'] is True and got['source'] == 'chat', 'the confirmation itself lands')
+    ck(got['raw'] == 'Mo-Su 06:00-18:00 (invented)', 'keeping the text it confirmed')
+    ctx.close()
+
     # ---- when you and the chat have both changed the same thing
     mine = json.loads(json.dumps(DEMO))
     mine['trip']['places']['example-temple']['duration'] = 120          # you made it longer
