@@ -154,7 +154,7 @@ Write a `plan.json` holding only what you want to send:
       "hours": { "source": "chat", "verified": true, "raw": "06:00-18:00",
                  "week": { "mon": [["06:00","18:00"]], "sat": [["06:00","21:00"]] },
                  "lastEntry": { "sat": "20:30" } } },
-    { "id": "nishiki-market", "name": "Nishiki Market", "lat": 35.0050, "lng": 135.7649,
+    { "id": "nishiki-market", "name": "Nishiki Market", "lat": 35.0050, "lng": 135.7650,
       "kind": "food", "duration": 60, "dayId": "2026-11-21" },
     { "id": "example-garden" }
   ],
@@ -258,8 +258,9 @@ The script checks every one of these. They are here because breaking them does r
   builder refuses one unless you add `"restore": true` on purpose.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
-- **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, or a day's `shown`,
-  `centre`, `note` or `city`. Which version they are looking at and where their map is pointed is
+- **The trip is theirs**, once it exists. Never send `title`, `tz`, `transit`, `currency`,
+  `lookups`, or a day's `shown`, `centre`, `note` or `city`. The one exception is a package that
+  *creates* the trip, where there is nothing of theirs to overwrite — see below. Which version they are looking at and where their map is pointed is
   not yours to propose. Put the suggestion in prose instead.
 - **Never send a travel time you have not checked**, and never one marked as a service. A leg is
   `source: "chat"` with the link you read it from, or it is not in the package at all.
@@ -289,11 +290,28 @@ every answer about what will happen comes from.
 ## Starting from nothing
 
 A package is also how a trip is born: one with `days` for the dates, `stays` for the bases and
-places in the backlog opens as a new trip. Ask for the dates, the cities and where they are staying
+places in the backlog opens as a new trip. Only then may it set the trip's own settings, and one of
+them it **must**:
+
+```json
+{ "tripId": "example-trip", "title": "Example trip", "tz": "Asia/Tokyo", "transit": "metro", … }
+```
+
+- **`tz` is not optional.** A timetable is asked about an instant, and without a zone the planner
+  uses whatever one the owner's browser is in. Planning a trip to Japan from Europe, a 09:00 leg
+  gets looked up at 17:00 and an 18:00 leg at 02:00 the next morning, when nothing runs — and the
+  answer that comes back looks like any other answer. The builder refuses a creating package
+  without it.
+- **`transit`** is `metro`, `city` or `sparse`: how much public transport there is where they are
+  going. It only shapes the first rough estimates, but it costs nothing to get right. Ask for the dates, the cities and where they are staying
 first; send a placeholder stay where a base is not booked, so the days can still be timed.
 
 Two things to get right, because nothing else will:
 
+- **a day with no stops is still a day.** On the one they fly home, give the day an `end` at the
+  airport with the time they must be there, and the planner will tell you whether leaving the
+  hotel that morning gets them there. Putting the check-in in as a fixed stop works too, and shows
+  up on the timeline;
 - **the day they arrive and the day they fly home are not anchored by a stay** — one has no night
   before it, the other ends at an airport. Send those days a `start` and an `end` of their own, or
   the first and last legs of the trip cannot be timed at all;
