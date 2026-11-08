@@ -1542,11 +1542,21 @@ const TRANSIT_MODEL = {
   sparse: { overhead: 20, near: 22, far: 45, detour: 1.35 },
 };
 const CAR_MODEL = { overhead: 6, near: 20, far: 60, detour: 1.35 };
+// Beyond a city the trains are different trains. Left to the city curve alone, speed settles at
+// about 38 km/h however far you go, so Tokyo to Kyoto came out at nearly ten hours against two and
+// a quarter on the Shinkansen — not a rounding error but an answer that would wreck a transfer
+// day. This second term lets the speed keep climbing with distance, towards intercity rail, and it
+// is slow enough to arrive that a city hop is barely touched by it.
+const INTERCITY_SPEED = 180;   // km/h, the speed a long leg tends towards
+const INTERCITY_FROM = 50;     // km, below which nothing changes at all
+const INTERCITY_REACH = 120;   // km beyond that, how quickly it gets there
 const MAX_WALK = 20;      // minutes: beyond this, riding wins even if it is no quicker
 const WALK_BIAS = 5;      // and below it, walking wins unless riding saves more than this
 const MODE_WORD = { walk: 'walk', transit: 'train or bus', car: 'taxi' };
 function rideMinutes(km, model) {
-  const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  const city = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  const far = Math.max(0, km - INTERCITY_FROM);
+  const speed = city + (INTERCITY_SPEED - model.far) * (1 - Math.exp(-far / INTERCITY_REACH));
   return model.overhead + (km * model.detour / speed) * 60;
 }
 // A taxi has to reach you before it can take you anywhere, and OSRM knows nothing of that.
@@ -2146,7 +2156,7 @@ const KIND_LABELS = { save: 'a saved trip', package: 'a package from the chat', 
 const KINDS_INOUT = Object.keys(KIND_LABELS);
 
 function envelope(trip, kind, now) {
-  return {
+  const env = {
     schema: SCHEMA,
     kind: KINDS_INOUT.includes(kind) ? kind : 'save',
     tripId: trip.id,
@@ -2155,6 +2165,7 @@ function envelope(trip, kind, now) {
     app: APP,
     trip: clone(trip),
   };
+  return env;
 }
 const writeJson = (trip, kind, now) => JSON.stringify(envelope(trip, kind, now), null, 2) + '\n';
 const writeBlock = (trip, kind, now) => BEGIN_LINE + '\n' + JSON.stringify(envelope(trip, kind, now)) + '\n' + END_LINE + '\n';
@@ -2625,7 +2636,7 @@ const Core = {
   STOP_REACH, STOP_REACH_WIDE, sharedLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
   STOP_KINDS, parseTile, stopsWithin,
-  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK, INTERCITY_SPEED, INTERCITY_FROM, INTERCITY_REACH,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,
   decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,

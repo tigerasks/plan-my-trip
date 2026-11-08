@@ -344,6 +344,22 @@ ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーテ
   === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
   'Google Maps is asked for the local name plus the city, as the service test did');
 
+console.log('\n== Estimating a long leg ==');
+// Left to the city curve alone the speed settled at about 38 km/h however far you went, so a
+// transfer day came out four times too long and the planner showed it without a flicker.
+const rideFar = (km, transit) => {
+  const a = { lat: 35, lng: 139 }, b = { lat: 35, lng: 139 + km / 91.0 };
+  return C.legGuess(a, b, { transit: transit || 'metro' }).transit;
+};
+ok(rideFar(1) === 13 && rideFar(5) === 21 && rideFar(20) === 43, 'a city hop is estimated exactly as it was');
+ok(rideFar(50) === rideFar(50, 'metro') && rideFar(49) < rideFar(51), 'and nothing changes below 50 km');
+const tokyoKyoto = C.legGuess({ lat: 35.6717, lng: 139.765 }, { lat: 34.9858, lng: 135.7588 }, { transit: 'metro' });
+ok(tokyoKyoto.transit > 120 && tokyoKyoto.transit < 240,
+  'Tokyo to Kyoto comes out in hours, not half a day: ' + C.fmtDur(tokyoKyoto.transit));
+let last = -1, backwards = false;
+for (let km = 0.5; km <= 600; km += 0.5) { const m = rideFar(km); if (m < last) backwards = true; last = m; }
+ok(!backwards, 'and the curve never goes backwards, so a longer leg is never a quicker one');
+
 console.log('\n== How far a place is from the day ==');
 const near = (lat, lng, key) => C.nearestInDay(demoTrip, '2026-11-21', { lat, lng }, key);
 let n = near(34.9950, 135.7855);                       // a few steps from Example Temple

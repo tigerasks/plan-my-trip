@@ -171,6 +171,8 @@ These are proposed; confirm each with the owner before starting it.
    - priority labels only when imported.
 4. **Travel times — built:**
    - estimates first, then real routes: OSRM for walking (with real paths) and taxi (with a pickup allowance), Transitous for public transport;
+   - an intercity term in the estimate, so a leg between cities is measured against rail rather
+     than against city traffic (design doc, decision 37);
    - handling of how far ahead timetables reach;
    - when Transitous finds nothing, a check whether it knows any stops nearby, to tell "no timetables" from "no connection";
    - the stop-based fallback: every stop within 10 minutes' walk of each end, widening to 20 minutes where an end has none, and no public transport estimate if there are still none; lines from OpenStreetMap where mapped; the quickest combination; used only when it clearly beats walking;
