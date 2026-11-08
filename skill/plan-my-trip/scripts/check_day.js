@@ -50,6 +50,8 @@ function slurp(file) {
   return '';
 }
 
+let carriedBase = null;        // a hand-back brings the baseline the next merge compares against
+
 function readTrip(file) {
   const text = slurp(file);
   const found = C.findPayload(text);
@@ -57,6 +59,13 @@ function readTrip(file) {
   let env;
   try { env = JSON.parse(found.body); } catch (e) { die(file + ' is damaged: ' + e.message); }
   if (!env || !env.trip) die(file + ' has no trip in it.');
+  if (env.sum && C.sumOf(env) !== env.sum) {
+    console.log('! ' + file + ' fails its own checksum: it was changed somewhere on the way.');
+    console.log('  Ask for it again before trusting any of this.');
+    console.log();
+  }
+  const base = env.handback && env.handback.base;
+  if (base) carriedBase = C.normalise(base, NOW).trip;
   return C.normalise(env.trip, NOW).trip;
 }
 
@@ -130,10 +139,10 @@ function main() {
     } else {
       // Every conflict answered the package's way, because what you want to see is the day you
       // are proposing. --keep-mine shows the other branch: what they see before they answer.
-      const dry = C.mergePackage(trip, r.trip, null, {}, NOW, r.said);
+      const dry = C.mergePackage(trip, r.trip, carriedBase, {}, NOW, r.said);
       const choices = {};
       if (!o.keepMine) for (const c of dry.conflicts) choices[c.key] = 'theirs';
-      const done = C.mergePackage(trip, r.trip, null, choices, NOW, r.said);
+      const done = C.mergePackage(trip, r.trip, carriedBase, choices, NOW, r.said);
       trip = done.trip;
       touched = new Set(Object.keys(r.trip.days || {}));
       for (const p of Object.values(r.trip.places || {})) {
