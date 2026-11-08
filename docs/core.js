@@ -30,6 +30,11 @@ const WEEK_LABEL = {
   mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
   fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
 };
+// When a day begins and ends if nobody has said. These are read at the point of use rather than
+// written into the day, because a default stored as though it were an answer is indistinguishable
+// from one — and the chat proposing the time you land then has to be put to you as a disagreement.
+const DAY_START = '08:30';
+const DAY_END = '21:00';
 const MAX_DURATION = 720;          // 12 hours
 const DURATION_STEP = 15;
 const DEFAULT_DURATION = 60;
@@ -326,9 +331,7 @@ function normDay(raw, issues, now) {
   }
   d.city = str(r.city, 60);
   d.start = normPoint(r.start, '') || { name: '', lat: null, lng: null, time: null };
-  if (!d.start.time) d.start.time = '08:30';
   d.end = r.end === null ? null : (normPoint(r.end, '') || { name: '', lat: null, lng: null, time: null });
-  if (d.end && !d.end.time) d.end.time = '21:00';
   d.plans = {};
   for (const k of PLAN_KEYS) d.plans[k] = arr(obj(r.plans)[k]).map(cleanId).filter(Boolean);
   d.shown = PLAN_KEYS.includes(r.shown) ? r.shown : 'balanced';
@@ -388,21 +391,23 @@ function stayFor(trip, dayId, which) {
 function dayStart(trip, dayId) {
   const d = obj(obj(trip).days)[dayId];
   if (!d) return null;
+  const time = d.start.time || DAY_START;
   const s = stayFor(trip, dayId, 'start');
-  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.start.time, stayId: s.id };
-  return { name: d.start.name, localName: '', lat: d.start.lat, lng: d.start.lng, time: d.start.time, stayId: null };
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time, stayId: s.id };
+  return { name: d.start.name, localName: '', lat: d.start.lat, lng: d.start.lng, time, stayId: null };
 }
 function dayEnd(trip, dayId) {
   const d = obj(obj(trip).days)[dayId];
   if (!d || !d.end) return null;
+  const time = d.end.time || DAY_END;
   const s = stayFor(trip, dayId, 'end');
-  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time: d.end.time, stayId: s.id };
+  if (s) return { name: s.name, localName: s.localName, lat: s.lat, lng: s.lng, time, stayId: s.id };
   const start = dayStart(trip, dayId);
   const own = str(d.end.name);
-  if (own) return { name: own, localName: '', lat: d.end.lat, lng: d.end.lng, time: d.end.time, stayId: null };
+  if (own) return { name: own, localName: '', lat: d.end.lat, lng: d.end.lng, time, stayId: null };
   // The morning you check out, "back where you started" would mean the hotel you have just left.
-  if (start.stayId) return { name: '', localName: '', lat: null, lng: null, time: d.end.time, stayId: null };
-  return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time: d.end.time, stayId: null };
+  if (start.stayId) return { name: '', localName: '', lat: null, lng: null, time, stayId: null };
+  return { name: start.name, localName: '', lat: start.lat, lng: start.lng, time, stayId: null };
 }
 
 // A package from the chat is partial on purpose: it says what it has learned and leaves the rest
@@ -420,7 +425,7 @@ function normTrip(raw, now) {
   const r = obj(raw);
   const issues = [];
   now = now || new Date().toISOString();
-  const said = { trip: mentioned(r, TRIP_FIELDS), places: {}, days: {}, stays: {} };
+  const said = { trip: mentioned(r, TRIP_FIELDS), places: {}, days: {}, orders: {}, stays: {} };
   const t = {};
   t.title = str(r.title, 80) || 'Untitled trip';
   t.id = cleanId(r.id) || slug(t.title) || 'trip';
@@ -472,6 +477,10 @@ function normTrip(raw, now) {
     }
     if (t.days[d.id]) { issues.push(fmtDateUK(d.id) + ' appeared twice; the second one was left out'); continue; }
     said.days[d.id] = mentioned(rawDay, DAY_FIELDS);
+    // The three versions are one field in the merge, but a package proposes one at a time. Which
+    // of them it actually spoke about has to be noted too, or the two it left out arrive as two
+    // empty orders and "take all theirs" empties them.
+    said.orders[d.id] = mentioned(obj(rawDay).plans, PLAN_KEYS);
     t.days[d.id] = d;
   }
 
@@ -2453,8 +2462,17 @@ function mergePackage(current, incoming, base, choices, now, said) {
       if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
-    const m = mergeFields(dayFields(mine), dayFields(t), b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
-    if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, dayFields(t));
+    // A version the package never mentioned is one it has nothing to say about, so yours stands
+    // there and only the orders it really proposed are weighed.
+    const tf = dayFields(t);
+    const told = said ? arr(obj(obj(said).orders)[id]) : null;
+    if (told) {
+      const orders = {};
+      for (const k of PLAN_KEYS) orders[k] = told.includes(k) ? tf.plans[k] : mine.plans[k];
+      tf.plans = orders;
+    }
+    const m = mergeFields(dayFields(mine), tf, b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
+    if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, tf);
     out.days[id] = writeFields(mine, m.value);
     if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
   }
@@ -2597,7 +2615,7 @@ const Core = {
   SCHEMA, VERSION, APP,
   PLAN_KEYS, PLAN_LABEL, KINDS, KIND_LABEL, PRIORITIES, PRIORITY_LABEL,
   TRANSIT_TYPES, TRANSIT_LABEL, ADDED_BY, ADDED_HOW, HOURS_SOURCES, OSM_TYPES,
-  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION,
+  WEEK, WEEK_LABEL, MAX_DURATION, DURATION_STEP, DEFAULT_DURATION, DAY_START, DAY_END,
   isNum, toNum, str, obj, arr, clamp, slug, cleanId, hashStr,
   parseTime, hhmm, normTime, fmtTime, fmtDur, normDate, fmtDateUK, fmtDateLongUK, weekdayOf,
   fmtMoney, kmBetween, hasPos, walkMinutes, nearestInDay, nearText,

@@ -1194,7 +1194,10 @@ const SHEETS = {
   },
   day: (s) => {
     const day = currentDay();
-    const end = day.end;
+    // The times a day really runs to, which is what to edit: a day nobody has set runs to the
+    // planner's own hours, and they are filled in here rather than stored as if you had chosen them.
+    const start = C.dayStart(App.trip, day.id);
+    const end = day.end ? C.dayEnd(App.trip, day.id) : null;
     const timeIn = (id, v) => '<input class="in" type="time" id="' + id + '" value="' + esc(v || '') + '">';
     return sheetHead('Day settings', C.fmtDateLongUK(day.id))
       + (s.error ? '<p class="note bad">' + esc(s.error) + '</p>' : '')
@@ -1204,7 +1207,7 @@ const SHEETS = {
       + '</div>'
       + '<div class="sh-sec"><span class="label">Times</span>'
       + '<div class="pair" style="margin-top:6px">'
-      + field('edStartTime', 'Set off at', timeIn('edStartTime', day.start.time))
+      + field('edStartTime', 'Set off at', timeIn('edStartTime', start.time))
       + field('edEndTime', 'Back by', timeIn('edEndTime', end ? end.time : ''))
       + '</div>'
       + '<p class="hint">Leave the time back empty for an open-ended day. Where the day starts and ends comes from '
@@ -2074,7 +2077,7 @@ const ACTIONS = {
       day = currentDay();
     }
     day.city = val('edCity');
-    day.start.time = val('edStartTime') || day.start.time;
+    day.start.time = val('edStartTime') || null;
     const backBy = val('edEndTime');
     if (!backBy) day.end = null;
     else if (day.end) day.end.time = backBy;

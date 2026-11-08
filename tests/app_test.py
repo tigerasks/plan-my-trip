@@ -1090,6 +1090,17 @@ with sync_playwright() as pw:
     pg.wait_for_timeout(200)
     ck(pg.input_value('#edDate') == '2026-11-21' and pg.input_value('#edCity') == 'Kyoto',
        'the day sheet opens on what the day holds')
+    # A day nobody has set stores no times of its own, so the sheet has to offer the ones it would
+    # actually run to rather than two empty boxes.
+    pg.evaluate("""() => { const d = window.DayPlannerApp.trip.days['2026-11-21'];
+      d.start.time = null; d.end.time = null; }""")
+    pg.click('[data-act="close-sheet"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="day"]')
+    pg.wait_for_timeout(200)
+    ck(pg.input_value('#edStartTime') == '08:30' and pg.input_value('#edEndTime') == '21:00',
+       'a day nobody has timed offers the hours it would run to: %s to %s'
+       % (pg.input_value('#edStartTime'), pg.input_value('#edEndTime')))
     pg.screenshot(path=str(SHOTS / 'app_dayedit_desktop_light.png'))
     pg.fill('#edStartTime', '07:45')
     pg.fill('#edEndTime', '')
@@ -1542,6 +1553,32 @@ with sync_playwright() as pw:
        'an order for a day they never planned asks nothing: %d question(s)' % pg.locator('.cf').count())
     ck(pg.evaluate("window.DayPlannerApp.trip.days['2026-11-22'].plans.balanced") == ['example-garden'],
        'and the order simply arrives')
+    ctx.close()
+
+    # ---- a package that proposes one version of a day
+    # The three versions are one field in the merge, so the two it leaves out used to arrive as two
+    # empty orders, and "take all theirs" emptied them.
+    ctx, pg = open_page(held=DEMO)
+    one = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': 'example-kyoto',
+           'title': 'A tighter Saturday', 'app': 'chat',
+           'trip': {'id': 'example-kyoto',
+                    'places': [{'id': 'made-up-market'}, {'id': 'example-temple'}],
+                    'days': {'2026-11-21': {'id': '2026-11-21', 'plans': {
+                        'balanced': ['made-up-market', 'example-temple']}}}}}
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(one))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    pg.click('[data-act="merge-all"][data-side="theirs"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="merge-go"]')
+    pg.wait_for_timeout(400)
+    plans = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans")
+    ck(plans['balanced'] == ['made-up-market', 'example-temple'], 'the version it proposed is taken')
+    ck(plans['less'] == DEMO['trip']['days']['2026-11-21']['plans']['less']
+       and plans['packed'] == DEMO['trip']['days']['2026-11-21']['plans']['packed'],
+       'and taking all theirs leaves the two it never mentioned alone: %s' % json.dumps(plans))
     ctx.close()
 
     # ---- when you and the chat have both changed the same thing
