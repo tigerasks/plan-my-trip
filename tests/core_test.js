@@ -1181,9 +1181,46 @@ ok(theirLegs['example-temple>made-up-market'].transit.minutes === 150
 ok(!theirLegs['made-up-market>example-temple'], 'a package claiming to be a service is not one, so it is dropped');
 ok(!theirLegs['example-temple>pretend-noodle-bar'], 'and a time with nowhere it was read is dropped too');
 ok(merged.conflicts.length === 0, 'none of which is a question for anybody');
+
+// Only a measurement outranks it. An answer with no minutes and a stop pairing are exactly the
+// state a leg is in when the chat is sent off to find a real time.
+const shinkansen = C.readBlock(JSON.stringify({
+  schema: 'day-planner/2', kind: 'package', tripId: 'example-kyoto',
+  trip: { id: 'example-kyoto', days: { '2026-11-21': { id: '2026-11-21', legs: {
+    'start>example-temple': { mode: 'transit', minutes: 135, source: 'chat', link: 'https://example.org/' },
+  } } } },
+}));
+const against = (slot) => {
+  const t = clone(base0);
+  if (slot) C.setLeg(t, '2026-11-21', 'start', 'example-temple', slot, '2026-10-23T00:00:00Z');
+  const m = C.mergePackage(t, shinkansen.trip, null, {}, '2026-10-23T00:00:00Z', shinkansen.said);
+  const leg = m.trip.days['2026-11-21'].legs['start>example-temple'] || {};
+  return { minutes: (leg.transit || {}).minutes, by: (leg.transit || {}).source, said: m.issues.join(' ') };
+};
+ok(against(null).by === 'chat', 'a leg nobody has tried takes the time the chat looked up');
+ok(against({ transit: { asked: 'x', source: 'transitous' } }).by === 'chat',
+  'so does one a service was asked about and had nothing for');
+ok(against({ transit: { minutes: 188, source: 'stops', at: 'x' } }).by === 'chat',
+  'and so does the planner\'s own guess from nearby stops, which measured nothing');
+const beaten = against({ transit: { minutes: 70, source: 'transitous', at: 'x' } });
+ok(beaten.minutes === 70 && beaten.by === 'transitous', 'a real timetable is not written over');
+ok(/looked up was not used/.test(beaten.said), 'and the one that did not land is said out loud: ' + beaten.said);
+
+// Nor may the planner undo it later by asking a service that has nothing to say.
+const lookedUp = clone(base0);
+C.setLeg(lookedUp, '2026-11-21', 'start', 'example-temple',
+  { transit: { minutes: 135, source: 'chat', link: 'https://example.org/' } }, 'x');
+const slotNow = () => lookedUp.days['2026-11-21'].legs['start>example-temple'].transit;
+C.setLeg(lookedUp, '2026-11-21', 'start', 'example-temple', { transit: { asked: 'now', source: 'transitous' } }, 'x');
+ok(slotNow().minutes === 135 && slotNow().asked === 'now',
+  'asking again and finding nothing leaves the looked-up time, and records that it asked');
+C.setLeg(lookedUp, '2026-11-21', 'start', 'example-temple', { transit: { minutes: 188, source: 'stops', at: 'now' } }, 'x');
+ok(slotNow().minutes === 135, 'a stop-based guess does not displace it either');
+C.setLeg(lookedUp, '2026-11-21', 'start', 'example-temple', { transit: { minutes: 70, source: 'transitous', at: 'now' } }, 'x');
+ok(slotNow().minutes === 70 && slotNow().source === 'transitous', 'but a real timetable does');
 const reported = C.travelReport(merged.trip).find((l) => l.leg === 'example-temple>made-up-market');
 ok(reported.ways.transit.source === 'chat' && reported.ways.transit.link === 'https://example.org/',
-  'and the hand-back says where it came from, so it can be checked');
+  'and the hand-back says where it came from, so it can be lookedUp');
 
 // The hand-back carries the baseline, so a chat that did not send the last package can still tell
 // what its own one will do.

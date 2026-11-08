@@ -1114,7 +1114,18 @@ function setLeg(trip, dayId, fromId, toId, leg, now) {
   if (!d) return null;
   const key = legKey(fromId, toId);
   const kept = d.legs[key];
-  const next = normLeg(Object.assign({}, kept, leg));
+  // Asking a service later must not quietly undo a time the chat looked up: a measurement
+  // replaces it, but an empty answer or a stop pairing leaves it standing, keeping the stamp that
+  // says the service was asked so it is not asked again.
+  const write = Object.assign({}, leg);
+  for (const mode of LEG_MODES) {
+    const had = obj(kept)[mode];
+    if (!had || had.source !== 'chat' || had.minutes == null) continue;
+    if (!(mode in write) || write[mode] === null) continue;
+    if (measured(obj(write[mode]))) continue;
+    write[mode] = Object.assign({}, had, { asked: obj(write[mode]).asked || had.asked });
+  }
+  const next = normLeg(Object.assign({}, kept, write));
   if (!next) { delete d.legs[key]; touch(trip, now); return null; }
   d.legs[key] = next;
   touch(trip, now);
@@ -2451,7 +2462,13 @@ function writeFields(onto, value) {
 // where no service has answered and you have entered nothing yourself. A measurement is never
 // written over by something somebody read on a website, and `mine` is never touched at all. A leg
 // of any other source in a package is not a measurement it made; it is dropped.
-function takeLegs(mineLegs, theirLegs) {
+// Only a measurement outranks a time somebody looked up and showed their source for. An answer
+// with no minutes in it — a service asked and found nothing — measured nothing, and a `stops`
+// pairing is two stops on a shared line with no timetable behind it, which is a guess. Both are
+// exactly the state a leg is in when the chat is asked to go and find a real time, so treating
+// them as untouchable would have made the whole thing useless.
+const measured = (slot) => !!slot && slot.minutes != null && MEASURED.includes(slot.source);
+function takeLegs(mineLegs, theirLegs, dropped) {
   const out = clone(obj(mineLegs));
   for (const [key, raw] of Object.entries(obj(theirLegs))) {
     const ends = legEnds(key);
@@ -2461,11 +2478,14 @@ function takeLegs(mineLegs, theirLegs) {
     let any = false;
     for (const mode of LEG_MODES) {
       const slot = obj(t[mode]);
-      const take = slot.source === 'chat' && slot.minutes != null && slot.link
-        && (!mine[mode] || obj(mine[mode]).source === 'chat');
+      const offered = slot.source === 'chat' && slot.minutes != null && slot.link;
+      const take = offered && !measured(mine[mode]);
+      if (offered && !take && dropped) {
+        dropped.push(ends[0] + ' to ' + ends[1] + ': the ' + (MODE_WORD[mode] || mode)
+          + ' time the chat looked up was not used, because that leg has already been measured');
+      }
       const kept = take ? clone(slot) : (mine[mode] ? clone(mine[mode]) : null);
       if (kept) { next[mode] = kept; any = true; }
-      if (take) any = true;
     }
     const leg = any || next.mine ? normLeg(next) : null;
     if (leg) out[key] = leg; else delete out[key];
@@ -2485,6 +2505,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
   // hours ends up offering to rename your places and move them nowhere.
   const spoke = (scope, id) => (said ? arr(obj(obj(said)[scope])[id]) : null);
   const conflicts = [];
+  const lost = [];          // times the chat looked up that a measurement already answers
   const report = { baseline: !!base, added: [], updated: [], restored: [], asked: [], newDays: [] };
   const ask = (scope, id, label, fields, extra) => {
     const c = Object.assign({ key: scope + ':' + id, scope, id, label, fields,
@@ -2525,7 +2546,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
   for (const id of Object.keys(theirDays)) {
     const t = theirDays[id], b = baseDays[id], mine = out.days[id];
     if (!mine) {
-      if (!b) { out.days[id] = clone(t); out.days[id].legs = takeLegs(null, t.legs); report.newDays.push(id); }
+      if (!b) { out.days[id] = clone(t); out.days[id].legs = takeLegs(null, t.legs, lost); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
     // A version the package never mentioned is one it has nothing to say about, so yours stands
@@ -2540,7 +2561,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
     const m = mergeFields(dayFields(mine), tf, b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
     if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, tf);
     out.days[id] = writeFields(mine, m.value);
-    const legs = takeLegs(mine.legs, t.legs);
+    const legs = takeLegs(mine.legs, t.legs, lost);
     if (JSON.stringify(legs) !== JSON.stringify(mine.legs)) {
       out.days[id].legs = legs;
       report.updated.push(fmtDateUK(id) + ': travel times the chat looked up');
@@ -2572,7 +2593,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
   if (m.took.length) report.updated.push('Trip settings: ' + joinList(m.took));
 
   const done = normTrip(out, now);
-  return { trip: done.trip, issues: done.issues, conflicts, report };
+  return { trip: done.trip, issues: done.issues.concat(lost), conflicts, report };
 }
 
 

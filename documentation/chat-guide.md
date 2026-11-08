@@ -188,8 +188,10 @@ has now, and what you have just sent.
 | anything | hours of their own | **different** times | the ordinary rules above |
 | anything | a day with no running order | an order | your order lands, no question |
 | anything | a day they have ordered | a different order | **it asks**, and keeps theirs |
-| anything | a leg a service measured | a leg of your own | theirs stands, no question |
-| anything | a leg nobody has | a `chat` leg with a link | yours lands, no question |
+| anything | a leg a service measured | a leg of your own | theirs stands, and the report says so |
+| anything | a leg nobody has tried | a `chat` leg with a link | yours lands, no question |
+| anything | a service asked, nothing found | a `chat` leg with a link | yours lands, no question |
+| anything | the planner's own stop-based guess | a `chat` leg with a link | yours lands, no question |
 
 So the way to avoid pestering the owner is to **change only what you have actually learned
 something about**. Re-sending an unchanged place costs nothing; re-sending it with a field quietly
@@ -245,9 +247,13 @@ it from:
                                    "name": "Nozomi 221", "link": "https://…" } }
 ```
 
-It lands only where no service has answered and the owner has entered nothing themselves. A
-measurement is never written over, a leg with no link is dropped, and a package claiming to be
-`osrm` or `transitous` is dropped outright.
+It lands wherever the leg holds no measurement: nothing tried yet, a service asked that had
+nothing to offer, or the planner's own guess from nearby stops. A measured time is never written
+over, and anything that does not land is said out loud rather than quietly dropped. A leg with no
+link is dropped, and a package claiming to be `osrm` or `transitous` is dropped outright.
+
+Asking a service afterwards will not undo it either: an empty answer or a stop pairing leaves your
+time standing, and only a real timetabled measurement replaces it.
 
 ## Stays
 
