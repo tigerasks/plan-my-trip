@@ -58,6 +58,7 @@ FIELD_LABEL = {
     'closed': 'Closed dates', 'booked': 'Booked', 'priority': 'Priority', 'price': 'Price',
     'check': 'Check', 'note': 'Note', 'links': 'Links', 'osm': 'OpenStreetMap', 'dayId': 'Which day',
     'from': 'First night', 'nights': 'Nights',
+    'plans': 'Running order', 'start': 'Where the day starts', 'end': 'Where the day ends',
 }
 NOT_YOURS = {
     'legs': 'travel times are the planner\'s own measurements; yours would be guesses over facts',
@@ -72,7 +73,6 @@ NOT_YOURS = {
 }
 # A day carries only its id and its running orders. Everything else about it is the owner's.
 DAY_NOT_YOURS = dict(NOT_YOURS, **{
-    'start': 'when they leave is theirs', 'end': 'when they get back is theirs',
     'shown': 'which version they are looking at is theirs',
     'centre': 'where their map is pointed is theirs',
     'city': 'the day\'s city is theirs', 'note': 'the day\'s own note is theirs',
@@ -127,6 +127,15 @@ def three_way(mine, theirs, base):
     if same(mine, base) or same(mine, theirs):
         return 'quiet'
     return 'question'
+
+
+def point_text(v):
+    if not v:
+        return '(nothing)'
+    bits = [v.get('name') or 'nowhere in particular']
+    if v.get('time'):
+        bits.append('at ' + v['time'])
+    return ' '.join(bits)
 
 
 def value_text(v):
@@ -505,7 +514,63 @@ def close_enough(a, b):
     return bool(pa) and len(pa & pb) >= max(len(pa), len(pb)) - 1
 
 
-def check_days(raw, places_by_id, their_days):
+def check_point(where, what, value):
+    """Where a day begins or ends: a name, a position and a time, any of which may be left out."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        problem('%s: %s must be {"name": ..., "lat": ..., "lng": ..., "time": "HH:MM"}' % (where, what))
+        return None
+    extra = set(value) - {'name', 'localName', 'lat', 'lng', 'lon', 'time'}
+    if extra:
+        problem('%s: %s has no %s' % (where, what, ', '.join(sorted(extra))))
+    out = {}
+    if 'name' in value:
+        out['name'] = want_str(where, what + ' name', value['name'], 80)
+    if 'localName' in value:
+        out['localName'] = want_str(where, what + ' localName', value['localName'], 80)
+    if 'time' in value:
+        out['time'] = want_time(where, what + ' time', value['time'])
+    lat, lng = value.get('lat'), value.get('lng', value.get('lon'))
+    if (lat is None) != (lng is None):
+        problem('%s: %s needs both lat and lng, or neither' % (where, what))
+    elif lat is not None:
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            problem('%s: %s lat and lng must be numbers' % (where, what))
+        elif abs(lat) > 90 or abs(lng) > 180:
+            problem('%s: %s is not anywhere on Earth' % (where, what))
+        else:
+            out['lat'], out['lng'] = lat, lng
+    if out.get('name') and 'lat' not in out:
+        warn('%s: %s has a name but no position, so the leg to or from it cannot be estimated'
+             % (where, what))
+    return out or None
+
+
+def anchored(date, which, stays):
+    """The stay the planner will use for a day's start or end, if any. A day starts at the stay of
+    the night before and ends at the stay of that night, so the place a package sends for an
+    anchored day is ignored — only its time is used."""
+    from datetime import date as D, timedelta
+    best = None
+    for s in stays:
+        try:
+            first = D.fromisoformat(s['from'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        nights = int(s.get('nights') or 1)
+        span = ((first + timedelta(days=1), first + timedelta(days=nights)) if which == 'start'
+                else (first, first + timedelta(days=nights - 1)))
+        try:
+            day = D.fromisoformat(date)
+        except ValueError:
+            return None
+        if span[0] <= day <= span[1] and (best is None or s['from'] > best['from']):
+            best = s
+    return best
+
+
+def check_days(raw, places_by_id, their_days, all_stays):
     if not isinstance(raw, dict):
         problem('days must be an object keyed by date')
         return {}
@@ -521,9 +586,24 @@ def check_days(raw, places_by_id, their_days):
         for field in day:
             if field in DAY_NOT_YOURS:
                 problem('%s: never send %s — %s' % (where, field, DAY_NOT_YOURS[field]))
-            elif field not in ('id', 'date', 'plans'):
+            elif field not in ('id', 'date', 'plans', 'start', 'end'):
                 problem('%s: there is no day field called %s that you may send' % (where, field))
+        entry = {'id': date}
+        for which in ('start', 'end'):
+            if which not in day:
+                continue
+            point = check_point(where, which, day[which])
+            if point is None and day[which] is not None:
+                continue
+            entry[which] = point
+            holder = anchored(date, which, all_stays)
+            if holder and point and (point.get('name') or point.get('lat') is not None):
+                warn('%s: its %s is anchored by the stay "%s", so the place you sent is ignored — '
+                     'only the time is used. Send just the time here' % (where, which, holder['id']))
         plans = day.get('plans')
+        if plans is None and len(entry) > 1:
+            out[date] = entry
+            continue
         if not isinstance(plans, dict):
             problem('%s: it needs plans, with less, balanced or packed' % where)
             continue
@@ -546,7 +626,8 @@ def check_days(raw, places_by_id, their_days):
                         problem('%s: it lists "%s" in the %s order, but that place says dayId %s. '
                                 'Send one or the other' % (where, pid, version, stated))
             kept[version] = order
-        out[date] = {'id': date, 'plans': kept}
+        entry['plans'] = kept
+        out[date] = entry
     for date in out:
         if date not in their_days:
             warn('%s is not a day of their trip yet, so the package creates it'
@@ -555,6 +636,19 @@ def check_days(raw, places_by_id, their_days):
 
 
 # ---------- what it will do ----------
+
+def orders_of(day):
+    return {k: (day.get('plans') or {}).get(k) or [] for k in PLAN_KEYS}
+
+
+def as_point(value):
+    """Where a day begins or ends, in the shape the planner stores."""
+    if value is None:
+        return None
+    v = value or {}
+    return {'name': v.get('name') or '', 'lat': v.get('lat'), 'lng': v.get('lng'),
+            'time': v.get('time')}
+
 
 def their_fields(thing, fields):
     f = {'pos': {'lat': thing.get('lat'), 'lng': thing.get('lng')}}
@@ -616,7 +710,7 @@ def predict(places, days, stays, their_trip, base_trip):
     from_order = {}
     for date in sorted(days):
         for key in PLAN_KEYS:
-            for pid in days[date]['plans'].get(key) or []:
+            for pid in (days[date].get('plans') or {}).get(key) or []:
                 from_order.setdefault(pid, date)
 
     new, quiet, asks, nothing, moot = [], [], [], [], []
@@ -659,16 +753,30 @@ def predict(places, days, stays, their_trip, base_trip):
         if not theirs:
             day_new.append(date)
             continue
-        mine = {k: (theirs.get('plans') or {}).get(k) or [] for k in PLAN_KEYS}
-        ours = {k: day['plans'].get(k, mine[k]) for k in PLAN_KEYS}
-        if same(mine, ours):
+        base_day = base_days.get(date)
+        mineF, oursF, baseF = {}, {}, {}
+        if 'plans' in day:
+            # A version the package does not mention is one the owner's own order stands for.
+            mineF['plans'] = orders_of(theirs)
+            oursF['plans'] = dict(mineF['plans'], **{k: v for k, v in day['plans'].items()})
+            if base_day:
+                baseF['plans'] = orders_of(base_day)
+        for which in ('start', 'end'):
+            if which not in day:
+                continue
+            mineF[which] = as_point(theirs.get(which))
+            oursF[which] = as_point(day[which])
+            if base_day:
+                baseF[which] = as_point(base_day.get(which))
+        if not oursF:
             continue
-        base = None
-        if date in base_days:
-            base = {k: (base_days[date].get('plans') or {}).get(k) or [] for k in PLAN_KEYS}
-        verdict = three_way(mine, ours, base)
-        {'question': day_asks, 'quiet': day_quiet, 'nothing': day_moot}[verdict].append(
-            (date, mine, ours))
+        lands, questions, restated, ignored = weigh(mineF, oursF, baseF or None)
+        if questions:
+            day_asks.append((date, questions))
+        if lands:
+            day_quiet.append((date, lands))
+        if ignored:
+            day_moot.append((date, ignored))
 
     return {'new': new, 'quiet': quiet, 'asks': asks, 'nothing': nothing, 'moot': moot,
             'day_new': day_new, 'day_quiet': day_quiet, 'day_asks': day_asks,
@@ -691,14 +799,13 @@ def report(p, has_base):
         print('  FILLS  %-24s %s' % (sid, ', '.join(fields)))
     for pid, name, fields in p['quiet']:
         print('  FILLS  %-24s %s' % (pid, ', '.join(fields)))
-    for date, mine, ours in p['day_quiet']:
-        print('  FILLS  %-24s its running order' % fmt_date(date))
+    for date, fields in p['day_quiet']:
+        print('  FILLS  %-24s %s' % (fmt_date(date), ', '.join(fields)))
     for pid, name, fields in p['nothing']:
         print('  SAME   %-24s %s — they already have it, so leave it out next time'
               % (pid, ', '.join(fields)))
-    for date, mine, ours in p['day_moot']:
-        print('  NO USE %-24s its running order — they have re-sequenced it since, and that stands'
-              % fmt_date(date))
+    for date, fields in p['day_moot']:
+        print('  NO USE %-24s %s — theirs stands and yours is dropped' % (fmt_date(date), ', '.join(fields)))
     for pid, name, fields in p['moot']:
         print('  NO USE %-24s %s — theirs stands and yours is dropped. An empty field only takes '
               'back what one of your own packages put there' % (pid, ', '.join(fields)))
@@ -714,13 +821,18 @@ def report(p, has_base):
             for label, mine, ours in fields:
                 print('      %-16s theirs %s   vs   yours %s'
                       % (label, value_text(mine), value_text(ours)))
-        for date, mine, ours in p['day_asks']:
+        for date, fields in p['day_asks']:
             print('    %s' % fmt_date(date))
-            for key in PLAN_KEYS:
-                if mine[key] != ours[key]:
+            for label, mine, ours in fields:
+                if label != 'Running order':
                     print('      %-16s theirs %s   vs   yours %s'
-                          % (PLAN_LABEL[key], ' → '.join(mine[key]) or '(empty)',
-                             ' → '.join(ours[key]) or '(empty)'))
+                          % (label, point_text(mine), point_text(ours)))
+                    continue
+                for key in PLAN_KEYS:
+                    if (mine or {}).get(key) != (ours or {}).get(key):
+                        print('      %-16s theirs %s   vs   yours %s'
+                              % (PLAN_LABEL[key], ' → '.join((mine or {}).get(key) or []) or '(empty)',
+                                 ' → '.join((ours or {}).get(key) or []) or '(empty)'))
         if not has_base:
             print()
             print('  This is the worst case: no --base was given, so anything they have set and you')
@@ -794,14 +906,18 @@ def main():
             problem('place "%s" appears twice in the plan' % place['id'])
         seen[place['id']] = place
 
-    days = check_days(plan.get('days') or {}, seen, their_days)
-
     their_stays = as_map(their_trip.get('stays'))
     raw_stays = plan.get('stays') or []
     if not isinstance(raw_stays, list):
         problem('stays must be a list.')
         raw_stays = []
     stays = [s for s in (check_stay(r, their_stays) for r in raw_stays) if s]
+    # A day's start and end can be anchored by a stay, from this package or from their trip.
+    anchors = {s['id']: s for s in their_stays.values()}
+    for s in stays:
+        anchors[s['id']] = dict(anchors.get(s['id']) or {}, **s)
+
+    days = check_days(plan.get('days') or {}, seen, their_days, list(anchors.values()))
     # A stay does not bring its days with it: the planner only creates those when the owner adds a
     # stay by hand. Nights with no day are nights nothing can be planned on.
     for stay in stays:

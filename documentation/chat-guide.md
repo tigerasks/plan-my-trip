@@ -203,6 +203,35 @@ A day nobody has planned counts as unset in the same way, even though its three 
 there as three empty lists. So the first order you propose for a day simply arrives; it is only a
 day they have already put in an order of their own that stops to ask.
 
+## Where a day begins and ends
+
+A day starts at the stay of the night before and ends at the stay of that night, so once the stays
+are in, every day in the middle of a trip is anchored without anybody doing anything. Two days are
+not: the one they arrive on, which has no night before it, and the one they fly home on, which ends
+at an airport.
+
+So a package may send a day's `start` and `end`:
+
+```json
+"2026-11-21": {
+  "id": "2026-11-21",
+  "start": { "name": "Narita Terminal 1", "lat": 35.7719, "lng": 140.3928, "time": "10:20" }
+}
+```
+
+A day nobody has timed stores no times of its own — it simply runs 08:30 to 21:00 — so telling it
+where it starts lands quietly. A start they have set themselves is put to them as a question.
+
+On a day a stay **does** anchor, the place you send is ignored and the hotel wins; only the time is
+used. That is worth knowing rather than a problem: it is how you say "we leave at 07:00 for the
+Fuji Excursion" without claiming to know better than their own booking.
+
+## The versions you do not send
+
+The three running orders are one field, but a package proposes one at a time, and a version it
+never mentions keeps whatever the owner has. So sending only `balanced` changes only `balanced`;
+`less` and `packed` stay exactly as they were, even if they take everything else you sent.
+
 ## Stays
 
 A package may carry `stays`, and they merge by `id` field by field like places. Send what the owner

@@ -185,8 +185,10 @@ These are proposed; confirm each with the owner before starting it.
      day's three running orders, a position of two nulls — counts as unset rather than as an
      answer, so the first order proposed for a day simply arrives (decision 32). A package may also
      say where they are sleeping, because stays merge like places and a placeholder refines in
-     place — what it must never do is invent a booking (decision 33). A package never deletes: a
-     place it leaves out is one it had nothing to say about;
+     place — what it must never do is invent a booking (decision 33). It may also say where a day
+     begins and ends, which is the only way the arrival and departure days can be timed at all
+     (decision 34). A package never deletes: a place it leaves out is one it had nothing to say
+     about, and a running order it never proposed is one the owner's own stands for (decision 35);
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
    - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed

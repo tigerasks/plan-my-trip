@@ -80,6 +80,12 @@ plan that silently assumes they will find lunch is a day plan that runs an hour 
 17:30 in late November is a viewpoint in the dark. Check which weekday things shut: museums very
 often close on Mondays, and `lastEntry` is routinely an hour before closing.
 
+**Anchor the day.** Every day starts at the stay of the night before and ends at that night's
+stay, so once the bases are in, the middle of a trip looks after itself. Two days do not: the one
+they arrive on and the one they fly home on, which need a `start` and an `end` of their own. On a
+day a stay does anchor you can still set the time — "out at 07:00 for the Fuji Excursion" — and the
+hotel supplies the place.
+
 **Pin what is pinned.** A booked slot or timed entry goes in `fixed` as `"HH:MM"`. Something that
 only works in part of the day — a market that is over by noon — goes in `window`. The planner
 builds the day around both, and a long wait before a fixed time is the planner telling you the
@@ -214,9 +220,11 @@ The script checks every one of these. They are here because breaking them does r
 - **A package never deletes.** If something should be dropped, say so in prose and let them do it.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
-- **The trip and the days are theirs.** Never send `title`, `tz`, `currency`, `lookups`, a day's
-  `start`, `end`, `shown`, `centre` or `note`, or anybody's `legs`. Which version they are looking
-  at and when they leave the hotel is not yours to propose. Put the suggestion in prose instead.
+- **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, a day's `shown`,
+  `centre`, `note` or `city`, or anybody's `legs`. Which version they are looking at and where
+  their map is pointed is not yours to propose. Put the suggestion in prose instead.
+- **A version you do not send keeps whatever they have.** Sending only `balanced` changes only
+  `balanced`, even if they take everything else in the package.
 - **Stays you may send, but never invent one.** Where they sleep drives every day's start and end,
   so carrying what they have already told you is worth doing. A place they have booked gets its
   real name. A base that is not settled gets a name that says so — "Osaka — not booked yet" — and
@@ -237,9 +245,10 @@ A package is also how a trip is born: one with `days` for the dates, `stays` for
 places in the backlog opens as a new trip. Ask for the dates, the cities and where they are staying
 first; send a placeholder stay where a base is not booked, so the days can still be timed.
 
-Two things to say in prose, because you cannot send them:
+Two things to get right, because nothing else will:
 
-- **the day they arrive has no base behind it**, so its start is wherever they land. Tell them to
-  set it at the top of that day — the planner cannot time the first leg without it;
+- **the day they arrive and the day they fly home are not anchored by a stay** — one has no night
+  before it, the other ends at an airport. Send those days a `start` and an `end` of their own, or
+  the first and last legs of the trip cannot be timed at all;
 - **a stay does not bring its days with it.** Send the days you want in `days`; `make_package.py`
   warns about the nights you left uncovered.

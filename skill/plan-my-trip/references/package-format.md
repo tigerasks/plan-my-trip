@@ -9,6 +9,7 @@ planner disagree, the planner wins — but it has been checked against it field 
 - [Places](#places)
 - [Opening hours](#opening-hours)
 - [Days and running orders](#days-and-running-orders)
+- [Where a day begins and ends](#where-a-day-begins-and-ends)
 - [Stays](#stays)
 - [What never goes in a package](#what-never-goes-in-a-package)
 - [What the planner repairs without asking](#what-the-planner-repairs-without-asking)
@@ -119,6 +120,10 @@ is the single easiest way to send a package that silently does nothing; `make_pa
 The three versions are `less`, `balanced` and `packed`, and hold **order only** — no times, no
 travel. A place may appear twice in one order if the day really passes through twice.
 
+**A version you do not send keeps whatever they have.** The three orders are one field, but a
+package proposes one at a time, so sending only `balanced` changes only `balanced` — `less` and
+`packed` stay as they were even if they take everything else in the package.
+
 **Every id in an order must also be in `places`.** `{"id": "example-garden"}` on its own is enough.
 An order naming a place that did not come with the package loses that stop, and the planner says so
 in its issues rather than failing.
@@ -126,6 +131,35 @@ in its issues rather than failing.
 **Naming a place in an order is itself a statement that it is on that day.** That is how you move a
 place onto a day without sending `dayId`. An explicit `dayId` wins where the two disagree, so do not
 send both unless you mean the `dayId`.
+
+## Where a day begins and ends
+
+A day starts at the stay of the night before and ends at the stay of that night, so once the stays
+are in, every day in the middle is anchored by itself. Two are not: the day they arrive, which has
+no night before it, and the day they fly home.
+
+```json
+"2026-11-21": {
+  "id": "2026-11-21",
+  "start": { "name": "Narita Terminal 1", "lat": 35.7719, "lng": 140.3928, "time": "10:20" },
+  "plans": { "balanced": ["pensta-ueno"] }
+}
+```
+
+| Key | Value |
+|---|---|
+| `name` | up to 80 characters |
+| `lat`, `lng` | numbers, both or neither. Without them the first leg cannot be estimated |
+| `time` | `"HH:MM"` — when they set off, or want to be back |
+
+`"end": null` means an open-ended day with no time back.
+
+A day nobody has timed stores no times of its own and simply runs 08:30 to 21:00, so telling it
+where it starts lands quietly. A start they set themselves is a question.
+
+On a day a stay **does** anchor, the place you send is ignored — the hotel wins — and only the time
+is used. That is how you say "we leave at 07:00 for the Fuji Excursion" without claiming to know
+better than their booking. `make_package.py` warns when you send a place that will be ignored.
 
 ## Stays
 
@@ -171,7 +205,7 @@ Never invent a booking. A base they have not chosen is a placeholder and must re
 |---|---|
 | `legs` | travel times are the planner's own measurements, from OSRM, Transitous and its stop snapshot. Yours would be guesses overwriting facts |
 | `title`, `tz`, `tzLabel`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose — except `title` on a package that creates the trip, where there is nothing of theirs to overwrite |
-| a day's `start`, `end`, `shown`, `centre`, `note` | when they leave the hotel, which version they are looking at, where the map is pointed |
+| a day's `shown`, `centre`, `note`, `city` | which version they are looking at, where the map is pointed, what they call the day |
 | `added`, `createdAt`, `updatedAt` | the planner's own bookkeeping |
 | `backlog` | worked out from which places have no day |
 | a deletion | there is no way to express one. Say it in prose |
@@ -248,7 +282,7 @@ All of it arrives in the owner's issues list. A quiet repair is still a failure 
 - [ ] every `id` already in their trip is spelled exactly as they have it
 - [ ] every place named in an order is in `places`
 - [ ] every day carries its own `id`
-- [ ] no `legs`, no trip settings, no day `start`/`end`/`shown`/`note`
+- [ ] no `legs`, no trip settings, no day `shown`/`centre`/`note`/`city`
 - [ ] every stay is one they told you about, or a placeholder whose name says it is not booked
 - [ ] no field restated that you did not actually learn something about
 - [ ] no `null` or `""` that you did not mean as "there is none"
