@@ -1035,7 +1035,9 @@ function pathLooksRight(points, from, to) {
 // directed and looked up exactly — a leg checked one way says nothing about the other, since one-way
 // streets and timetables both care. A place that is a stop twice needs no second key: the journey
 // between two places is the same whichever visit it is.
-const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+// Who said how long a leg takes. The first three measured it; `chat` is a time the chat looked up
+// and must say where it read, which is the only kind a package may carry (decision 36).
+const LEG_SOURCES = ['osrm', 'transitous', 'stops', 'chat'];
 // Of those, the ones that measured something. 'stops' is the planner's own arithmetic over map data.
 const MEASURED = ['osrm', 'transitous'];
 const LEG_MODES = ['walk', 'transit', 'car'];
@@ -1059,6 +1061,7 @@ function normLegMode(raw) {
     precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
     detail: str(r.detail, 300) || null,
+    link: /^https?:\/\//i.test(str(r.link, 500)) ? str(r.link, 500) : null,
   };
   return slot.minutes == null && !slot.asked ? null : slot;
 }
@@ -2418,6 +2421,33 @@ function writeFields(onto, value) {
   return out;
 }
 
+// Travel times are the planner's own measurements, so a package can only fill a gap in them. It
+// may carry a leg it looked up, marked `chat` and carrying the link it read — and that lands only
+// where no service has answered and you have entered nothing yourself. A measurement is never
+// written over by something somebody read on a website, and `mine` is never touched at all. A leg
+// of any other source in a package is not a measurement it made; it is dropped.
+function takeLegs(mineLegs, theirLegs) {
+  const out = clone(obj(mineLegs));
+  for (const [key, raw] of Object.entries(obj(theirLegs))) {
+    const ends = legEnds(key);
+    if (!ends) continue;
+    const t = obj(raw), mine = obj(out[key]);
+    const next = { pick: mine.pick || null, mine: mine.mine || null };
+    let any = false;
+    for (const mode of LEG_MODES) {
+      const slot = obj(t[mode]);
+      const take = slot.source === 'chat' && slot.minutes != null && slot.link
+        && (!mine[mode] || obj(mine[mode]).source === 'chat');
+      const kept = take ? clone(slot) : (mine[mode] ? clone(mine[mode]) : null);
+      if (kept) { next[mode] = kept; any = true; }
+      if (take) any = true;
+    }
+    const leg = any || next.mine ? normLeg(next) : null;
+    if (leg) out[key] = leg; else delete out[key];
+  }
+  return normLegs(out);
+}
+
 // Merge a package into the trip that is open. Call it once with no choices to find out what it
 // would ask, show the sheet, then call it again with the answers: it is the same function both
 // times, so what you were shown is what you get. An unanswered conflict keeps yours.
@@ -2470,7 +2500,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
   for (const id of Object.keys(theirDays)) {
     const t = theirDays[id], b = baseDays[id], mine = out.days[id];
     if (!mine) {
-      if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
+      if (!b) { out.days[id] = clone(t); out.days[id].legs = takeLegs(null, t.legs); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
     // A version the package never mentioned is one it has nothing to say about, so yours stands
@@ -2485,6 +2515,11 @@ function mergePackage(current, incoming, base, choices, now, said) {
     const m = mergeFields(dayFields(mine), tf, b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
     if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, tf);
     out.days[id] = writeFields(mine, m.value);
+    const legs = takeLegs(mine.legs, t.legs);
+    if (JSON.stringify(legs) !== JSON.stringify(mine.legs)) {
+      out.days[id].legs = legs;
+      report.updated.push(fmtDateUK(id) + ': travel times the chat looked up');
+    }
     if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
   }
 
@@ -2586,7 +2621,7 @@ function travelReport(trip) {
         if (!slot) continue;
         if (slot.minutes == null && !slot.asked) continue;
         ways[mode] = { minutes: slot.minutes, km: slot.km, source: slot.source, at: slot.at,
-          departs: slot.departs, name: slot.name, detail: slot.detail };
+          departs: slot.departs, name: slot.name, detail: slot.detail, link: slot.link };
       }
       if (!Object.keys(ways).length && !leg.mine) continue;
       out.push({ date: dayId, leg: key, from: nameOf(ends[0]), to: nameOf(ends[1]),
@@ -2655,6 +2690,7 @@ const Core = {
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan,
   reorderPlan, placeInPlan, removeStop, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
+  takeLegs,
   findPayload, readBlock, summarise, importNote,
 };
 root.DayPlannerCore = Core;

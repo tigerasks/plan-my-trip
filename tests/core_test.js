@@ -1144,6 +1144,34 @@ merged = C.mergePackage(base0, { id: 'example-kyoto', days: { '2026-11-21': land
 ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Where the day starts',
   'a start of their own is still defended');
 
+// A leg the chat looked up. Travel times are the planner's own measurements, so one of these can
+// only fill a gap — and it has to say where it was read.
+const withOsrm = clone(base0);
+C.setLeg(withOsrm, '2026-11-21', 'start', 'example-temple',
+  { walk: { minutes: 52, km: 4.1, source: 'osrm', at: '2026-10-23T00:00:00Z' } }, '2026-10-23T00:00:00Z');
+const looked = C.readBlock(JSON.stringify({
+  schema: 'day-planner/2', kind: 'package', tripId: 'example-kyoto',
+  trip: { id: 'example-kyoto', days: { '2026-11-21': { id: '2026-11-21', legs: {
+    'start>example-temple': { mode: 'walk', minutes: 20, source: 'chat', link: 'https://example.org/' },
+    'example-temple>made-up-market': { mode: 'transit', minutes: 150, source: 'chat', name: 'TEST express', link: 'https://example.org/' },
+    'made-up-market>example-temple': { mode: 'transit', minutes: 5, source: 'transitous' },
+    'example-temple>pretend-noodle-bar': { mode: 'transit', minutes: 9, source: 'chat' },
+  } } } },
+}));
+merged = C.mergePackage(withOsrm, looked.trip, null, {}, '2026-10-23T00:00:00Z', looked.said);
+const theirLegs = merged.trip.days['2026-11-21'].legs;
+ok(theirLegs['start>example-temple'].walk.minutes === 52 && theirLegs['start>example-temple'].walk.source === 'osrm',
+  'a measured leg is never written over by one somebody read');
+ok(theirLegs['example-temple>made-up-market'].transit.minutes === 150
+  && theirLegs['example-temple>made-up-market'].transit.link === 'https://example.org/',
+  'but a gap takes the one the chat looked up, with its link');
+ok(!theirLegs['made-up-market>example-temple'], 'a package claiming to be a service is not one, so it is dropped');
+ok(!theirLegs['example-temple>pretend-noodle-bar'], 'and a time with nowhere it was read is dropped too');
+ok(merged.conflicts.length === 0, 'none of which is a question for anybody');
+const reported = C.travelReport(merged.trip).find((l) => l.leg === 'example-temple>made-up-market');
+ok(reported.ways.transit.source === 'chat' && reported.ways.transit.link === 'https://example.org/',
+  'and the hand-back says where it came from, so it can be checked');
+
 // Empty, missing and unset are the same answer.
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');
 ok(C.same({ less: [], balanced: [], packed: [] }, null) && C.same({ lat: null, lng: null }, undefined),
