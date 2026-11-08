@@ -237,9 +237,19 @@ the app can ask OSRM or Transitous. A leg you have actually checked may go on it
 | `link` | required. A leg with nowhere it was read is dropped |
 | `name`, `detail`, `departs` | what to call it and when it goes |
 
-It lands **only** where no service has answered and the owner has entered no time of their own. A
-measurement is never written over, and `mine` is never touched. The hand-back reports the source
-and the link beside every time, so yours can never be mistaken for a measured one.
+It lands wherever the leg holds **no measurement**:
+
+| What the planner already has for that leg | Your looked-up time |
+|---|---|
+| nothing tried yet | lands |
+| a service asked, nothing found | lands |
+| the planner's own guess from nearby stops | lands |
+| a real OSRM or Transitous time | **does not land**, and the merge report says so |
+| the owner's own entered time | lands in the slot, but theirs still wins the day |
+
+Asking a service afterwards will not undo it: an empty answer or a stop pairing leaves your time
+standing, and only a real measurement replaces it. The hand-back reports the source and the link
+beside every time, so yours can never be mistaken for a measured one.
 
 ## What the planner repairs without asking
 

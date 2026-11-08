@@ -217,9 +217,10 @@ the way — but not getting it wrong beats catching it.
 Ask for hand-backs as files too, for the same reason: the app has "Save it as a file" beside
 "Copy the hand-back".
 
-Reply with the block, then a short plain summary underneath: what you planned, what needs booking
-and by when, what you could not verify. Three or four sentences. They are about to paste the block
-and look at the timeline — the prose is so they know what to expect, not a second copy of it.
+Attach `package.json`; paste the block only when a file will not do. Underneath, a short plain
+summary: what you planned, what needs booking and by when, what you could not verify. Three or four
+sentences. They are about to load it and look at the timeline — the prose is so they know what to
+expect, not a second copy of it.
 
 ## Reading what comes back
 
@@ -257,9 +258,11 @@ The script checks every one of these. They are here because breaking them does r
   builder refuses one unless you add `"restore": true` on purpose.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
-- **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, a day's `shown`,
-  `centre`, `note` or `city`, or anybody's `legs`. Which version they are looking at and where
-  their map is pointed is not yours to propose. Put the suggestion in prose instead.
+- **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, or a day's `shown`,
+  `centre`, `note` or `city`. Which version they are looking at and where their map is pointed is
+  not yours to propose. Put the suggestion in prose instead.
+- **Never send a travel time you have not checked**, and never one marked as a service. A leg is
+  `source: "chat"` with the link you read it from, or it is not in the package at all.
 - **A version you do not send keeps whatever they have.** Sending only `balanced` changes only
   `balanced`, even if they take everything else in the package.
 - **Stays you may send, but never invent one.** Where they sleep drives every day's start and end,
@@ -268,7 +271,8 @@ The script checks every one of these. They are here because breaking them does r
   an approximate position for the district, because a stay with no position costs every day it
   anchors all of its travel times. Ids are permanent, as for places, so the booking refines in
   place later. Never write a hotel name they have not chosen.
-- **Prices stay in their own currency.** Never convert.
+- **Prices in the package stay in their own currency.** Never convert one into `price`. Your prose
+  is a different matter: there, follow the owner's own conventions for what to show beside it.
 
 ## Going deeper
 

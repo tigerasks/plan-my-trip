@@ -82,11 +82,13 @@ function weigh(current, incoming, dry, said) {
       if (q) out.asks.push({ scope: spec.scope, id, label, fields: q.fields });
       // What landed is the planner's own account, in its own words. What did *not* land it has no
       // reason to mention, so those two are worked out by comparing before with after.
+      // Strictly what the package said: a day carrying only a looked-up travel time said nothing
+      // about its city or its running order, and must not be reported as if it had.
       const spoke = told(said, kind, id);
       const was = spec.of(mine[id]), now = spec.of(after[id] || mine[id]), sent = spec.of(theirs[id]);
       const ignored = [], already = [];
       for (const k of spec.fields) {
-        if (spoke.length && !spoke.includes(k)) continue;
+        if (!spoke.includes(k)) continue;
         if (q && q.fields.some((f) => f.key === k)) continue;
         if (!C.same(was[k], now[k])) continue;
         (C.same(was[k], sent[k]) ? already : ignored).push(C.FIELD_LABEL[k] || k);
