@@ -77,6 +77,29 @@ def load(source):
     die('No such file: %s' % source)
 
 
+def canon(v):
+    """The shape a checksum is taken over: keys in order, nothing else changed."""
+    if isinstance(v, list):
+        return [canon(x) for x in v]
+    if isinstance(v, dict):
+        return {k: canon(v[k]) for k in sorted(v)}
+    return v
+
+
+def checksum(env):
+    """The planner's own hash, so a block that was changed on the way can be spotted here too."""
+    body = {k: v for k, v in env.items() if k != 'sum'}
+    text = json.dumps(canon(body), ensure_ascii=False, separators=(',', ':'))
+    # JavaScript walks a string as UTF-16 code units, so anything outside the basic plane — an
+    # emoji in a note — counts as two. Reading the same units here is what makes the two agree.
+    units = text.encode('utf-16-le')
+    h = 2166136261
+    for i in range(0, len(units), 2):
+        h ^= units[i] | (units[i + 1] << 8)
+        h = (h * 16777619) & 0xFFFFFFFF
+    return '%08x' % h
+
+
 def die(message):
     print('Cannot read it: ' + message, file=sys.stderr)
     raise SystemExit(2)
@@ -401,9 +424,13 @@ def show_handback(hb, trip):
                     piece += ', %s' % slot['name']
                 if slot.get('departs'):
                     piece += ', departs %s' % slot['departs']
+                if slot.get('link'):
+                    piece += ', %s' % slot['link']
                 bits.append(piece + ')')
-            if leg.get('mine'):
-                bits.append('theirs %s min (mine)' % leg['mine'])
+            mine = leg.get('mine') or {}
+            if mine.get('minutes') is not None:
+                bits.append('%s %d min (their own time, which beats the rest)'
+                            % (mine.get('mode') or 'somehow', mine['minutes']))
             if not bits:
                 continue
             print('  %s  %s -> %s' % (fmt_date(leg.get('date')), leg.get('from'), leg.get('to')))
@@ -491,6 +518,14 @@ def main():
     print('Read %s, written by %s at %s' % (label, env.get('app') or '?', env.get('at') or '?'))
     if env.get('title'):
         print('Labelled: %s' % env['title'])
+    if env.get('sum'):
+        print('Checksum: %s' % ('matches' if checksum(env) == env['sum']
+                                else 'DOES NOT MATCH — this was changed on the way. Ask for it '
+                                     'again, as a file if you can.'))
+    if kind == 'handback':
+        print('Baseline: %s' % ('carried, so a prediction can be exact'
+                                if (env.get('handback') or {}).get('base')
+                                else 'none, so the planner had no package to compare against'))
     print()
     lost = settle_days(trip)
     for pid in sorted(lost):

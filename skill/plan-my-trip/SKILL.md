@@ -33,17 +33,29 @@ You can, however, see what a package would do to their days **before** you hand 
 this skill carries the planner's own code. That is `scripts/check_day.js`, and it is what makes
 planning iteratively possible without making them paste anything.
 
+## Before you ask them anything
+
+If they already keep an itinerary, a booking tracker or research files for this trip, **read those
+first**. They hold the party, the dates, the bases and what is booked, and asking for any of it
+again wastes a round.
+
+Where their own instructions say how decisions get made, follow those rather than this file. The
+three versions cover how hard a day pushes; when the *anchor* of a day is still open — which temple,
+which district, whether to go at all — put two or three to them in prose before you build anything.
+
 ## Start from what they gave you
 
-Every command below is run from this skill's own folder, so `scripts/…` finds the scripts.
+Work in a folder of your own and call the scripts by their full path — a skill folder is often
+read-only, and `plan.json` and the package have to land somewhere you can write. Below, `$SKILL`
+stands for this skill's folder.
 
 | What arrived | Do this |
 |---|---|
-| A file, or a block pasted into the chat | `python3 scripts/read_trip.py <file, or - for stdin>` and start from the worklist it prints |
+| A file, or a block pasted into the chat | `python3 $SKILL/scripts/read_trip.py <file, or - for stdin>` and start from the worklist it prints |
 | A hand-back | the same, then work the order under **Reading what comes back** |
 | Nothing — just "plan my trip" | They have no trip yet. See **Starting from nothing** |
 | A question about one day | Answer it, and still send a package if you changed anything |
-| You have drafted a day and want to know whether it works | `node scripts/check_day.js --trip <file> --package package.txt` |
+| You have drafted a day and want to know whether it works | `node $SKILL/scripts/check_day.js --trip <file> --package package.txt` |
 
 Read the worklist rather than the JSON. It is the shortest path to what actually needs doing, and
 the JSON is long.
@@ -97,9 +109,21 @@ your reply that cannot wait for the next round.
 **Leave the exact sequence open.** The app has "Optimise order", which re-sequences a day using the
 real measured legs. Decide *what* they do and *what is fixed*; let the app settle the order.
 
-**You cannot measure travel.** Never send `legs`, and never state a journey time as fact in prose.
-After the first round the hand-back gives you real measured times, and that is when a day gets
-tightened.
+**Travel you may look up, but not invent.** The planner estimates from the straight line, which is
+sensible within a city and rough between them, and only the app can ask OSRM or Transitous. So a
+leg you have actually checked — a Shinkansen timetable, a published airport transfer — may go in
+the package:
+
+```json
+"legs": { "start>kyoto-station": { "mode": "transit", "minutes": 150, "source": "chat",
+                                   "name": "Nozomi", "link": "https://…" } }
+```
+
+It lands only where no service has answered and they have entered nothing themselves: a
+measurement is never written over, and a leg with no link is dropped. Never write `"source":
+"osrm"` or `"transitous"` — a package claiming to be a service is thrown away. For anything you
+have not checked, say nothing: after the first round the hand-back gives you real measured times,
+and that is when a day gets tightened.
 
 ## Checking opening hours is your highest-value job
 
@@ -108,8 +132,9 @@ is built to let you: if you report the times it already has and mark them `verif
 merge reads that as a confirmation rather than a disagreement, so it lands quietly however many
 places you do it for. Correcting times is an ordinary change; confirming them is free.
 
-Say `verified: true` only where you actually checked for the trip's own dates. It is the flag that
-makes the planner stop warning them, so a careless `true` is worse than leaving it unverified.
+Say `verified: true` only where you actually checked for the trip's own dates, and **put the source
+in `links`** — something like `{"url": "…", "label": "Hours (official)"}`. A verified time nobody
+can check is worth less than an unverified one, because it stops the planner asking.
 
 The first running order you propose for a day is free in the same way: a day nobody has planned
 counts as unset, so your order simply arrives. It is only a day they have already ordered
@@ -143,7 +168,7 @@ Write a `plan.json` holding only what you want to send:
 ```
 
 ```bash
-python3 scripts/make_package.py --trip <their file> --plan plan.json --out package.txt
+python3 $SKILL/scripts/make_package.py --trip <their file> --plan plan.json --out package.txt
 ```
 
 Because the script has their trip as well as your plan, it does not merely write the block — it
@@ -154,7 +179,7 @@ questions is usually a package that restated six things it never learned.
 ## Check the day before you send it
 
 ```bash
-node scripts/check_day.js --trip <their file> --package package.txt
+node $SKILL/scripts/check_day.js --trip <their file> --package package.txt
 ```
 
 This runs the planner's actual schedule — the same `core.js` the app runs — over the merged trip
@@ -183,6 +208,15 @@ tell you how it looked.
 
 ## Give it to them
 
+**Attach the file.** `make_package.py` writes `package.txt` and `package.json` side by side; hand
+over the `.json` for "Import from file" whenever you can. Pasting the block means retyping it, and
+a package confirming hours for thirty places is 15 KB of JSON in which one wrong digit merges
+without a murmur. Every block carries a checksum, so the planner refuses one that was changed on
+the way — but not getting it wrong beats catching it.
+
+Ask for hand-backs as files too, for the same reason: the app has "Save it as a file" beside
+"Copy the hand-back".
+
 Reply with the block, then a short plain summary underneath: what you planned, what needs booking
 and by when, what you could not verify. Three or four sentences. They are about to paste the block
 and look at the timeline — the prose is so they know what to expect, not a second copy of it.
@@ -210,14 +244,17 @@ The script checks every one of these. They are here because breaking them does r
 
 - **A field you leave out is silence**, and the owner's value stands. That is what makes a small
   package safe: say what you learned and leave the rest alone.
-- **`null` and `""` are not silence.** They are a statement — "there is none" — which takes back a
+- **`null` and `""` are not silence.** They mean the same thing — "there is none" — and take back a
   value one of your earlier packages put there. Useful deliberately, awful by accident: never send a
   place back with every key filled in just because you have the shape to hand.
 - **Every place named in a running order must appear in `places`.** `{"id": "example-garden"}` on
   its own is enough, and says nothing else about the place.
 - **Naming a place in an order says which day it is on.** Do not also send a `dayId` contradicting
   it.
-- **A package never deletes.** If something should be dropped, say so in prose and let them do it.
+- **A package never deletes** — and never un-deletes. If something should be dropped, say so in
+  prose. If the hand-back lists a place under `changes.deleted`, leave it out: sending it again
+  puts it back in front of them, and where the planner has no baseline it simply returns. The
+  builder refuses one unless you add `"restore": true` on purpose.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
 - **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, a day's `shown`,
@@ -235,9 +272,15 @@ The script checks every one of these. They are here because breaking them does r
 
 ## Going deeper
 
-- `references/package-format.md` — every field with its values and bounds, the envelope, what the
-  planner repairs silently, and a complete worked package.
+- `references/package-format.md` — every field with its values and bounds, the envelope and its
+  checksum, how to send a travel time you looked up, what the planner repairs silently, and a
+  complete worked package.
 - `references/handback.md` — everything a hand-back carries, and what to do with each part.
+
+The scripts: `read_trip.py` reads anything the planner wrote; `make_package.py` checks a plan and
+hands it to `write_package.js`, which writes the block and works the merge out with the planner's
+own code; `check_day.js` shows a day. The planner itself is in `vendor/core.js`, which is where
+every answer about what will happen comes from.
 
 ## Starting from nothing
 

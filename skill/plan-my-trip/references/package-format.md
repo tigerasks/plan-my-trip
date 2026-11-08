@@ -32,6 +32,7 @@ planner disagree, the planner wins — but it has been checked against it field 
 | `at` | ISO timestamp |
 | `app` | `chat` |
 | `trip` | `{ "id": ..., "places": [...], "days": {...}, "stays": [...] }` and nothing else |
+| `sum` | a checksum of the envelope, which `make_package.py` writes. The planner refuses a block whose sum does not match what it holds, because one copied by hand loses digits |
 
 The JSON must be on one line between the two marker lines. Both marker lines are part of the block.
 The planner will cope with a block that was re-wrapped, but not with one that was edited.
@@ -87,7 +88,7 @@ A place with no day, named in no running order, lands in the backlog.
 | `source` | `osm`, `you` or `chat`. Yours is `chat` |
 | `verified` | `true` only where you checked for the trip's own dates |
 | `raw` | the original line you read it from, up to 200 characters |
-| `week` | seven optional keys `mon`–`sun`, each a list of `["open","close"]` pairs. `[]` means **closed that day**; a day you leave out is a day **nobody knows about**, which is not the same thing |
+| `week` | seven optional keys `mon`–`sun`, each a list of `["open","close"]` pairs. `[]` means **closed that day**; a day you leave out is a day **nobody knows about**, which is not the same thing. A place that never shuts is `[["00:00","23:59"]]` — `"24:00"` reads as midnight at the *start* of the day |
 | `lastEntry` | `"HH:MM"` per day, where last entry is before closing. Ignored for a day with no spans |
 
 The merge compares the **times**, not the account of where they came from. So reporting the hours
@@ -203,7 +204,7 @@ Never invent a booking. A base they have not chosen is a placeholder and must re
 
 | Not this | Why |
 |---|---|
-| `legs` | travel times are the planner's own measurements, from OSRM, Transitous and its stop snapshot. Yours would be guesses overwriting facts |
+| a leg you have not checked | travel times are the planner's own measurements. One you looked up may go in (see below); one you guessed may not |
 | `title`, `tz`, `tzLabel`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose — except `title` on a package that creates the trip, where there is nothing of theirs to overwrite |
 | a day's `shown`, `centre`, `note`, `city` | which version they are looking at, where the map is pointed, what they call the day |
 | `added`, `createdAt`, `updatedAt` | the planner's own bookkeeping |
@@ -211,6 +212,34 @@ Never invent a booking. A base they have not chosen is a placeholder and must re
 | a deletion | there is no way to express one. Say it in prose |
 
 Suggestions about any of these belong in your prose reply, not in the block.
+
+## A travel time you looked up
+
+The planner estimates from the straight line — sensible in a city, rough between them — and only
+the app can ask OSRM or Transitous. A leg you have actually checked may go on its day:
+
+```json
+"legs": {
+  "start>kyoto-station": {
+    "mode": "transit", "minutes": 150, "source": "chat",
+    "name": "Nozomi 221", "detail": "Tokyo 09:03 → Kyoto 11:18",
+    "link": "https://www.jreast.co.jp/…"
+  }
+}
+```
+
+| Key | Value |
+|---|---|
+| the key | `fromId>toId`, where an end of the day is `start` or `end` |
+| `mode` | `walk`, `transit` or `car` |
+| `minutes` | whole minutes |
+| `source` | **`chat`**, always. `osrm`, `transitous` and `stops` mean a service measured it, and a package claiming one of those is dropped |
+| `link` | required. A leg with nowhere it was read is dropped |
+| `name`, `detail`, `departs` | what to call it and when it goes |
+
+It lands **only** where no service has answered and the owner has entered no time of their own. A
+measurement is never written over, and `mine` is never touched. The hand-back reports the source
+and the link beside every time, so yours can never be mistaken for a measured one.
 
 ## What the planner repairs without asking
 
@@ -286,6 +315,8 @@ All of it arrives in the owner's issues list. A quiet repair is still a failure 
 - [ ] every stay is one they told you about, or a placeholder whose name says it is not booked
 - [ ] no field restated that you did not actually learn something about
 - [ ] no `null` or `""` that you did not mean as "there is none"
-- [ ] `hours.verified` is `true` only where you really checked, for these dates
+- [ ] `hours.verified` is `true` only where you really checked, for these dates, with the source in `links`
+- [ ] nothing the hand-back listed under `changes.deleted` has crept back in
+- [ ] every leg is `source: "chat"` with a link, or is not there
 - [ ] prices in their own currency
 - [ ] `make_package.py` ran, and you have read its report

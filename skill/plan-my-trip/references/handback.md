@@ -20,6 +20,13 @@ It can only be read. Pasting one back into the planner is refused on purpose.
 }
 ```
 
+## `base`
+
+The package the planner will merge the next one against. Pass the hand-back to
+`make_package.py --trip` and it is used automatically, which is what makes its prediction exact
+rather than a worst case. `null` means the planner had no package stored — a fresh browser — and
+then anything the owner has set and you disagree with has to be asked about.
+
 ## `note`
 
 What the owner typed before copying. It is the only part of the hand-back a person wrote, and the
@@ -73,7 +80,7 @@ or a hand-back was taken. Both sides of that comparison are whole trips, so ever
 |---|---|
 | `baseline` | `false` means the planner has nothing to compare against, and `why` says so. Then the rest is absent and the trip is simply how it stands |
 | `added` | `{id, name, dayId, how}` — places they added themselves. `how` is `search`, `map`, `pin` or `package` |
-| `deleted` | `{id, name}` — places they removed. **Do not send them back.** |
+| `deleted` | `{id, name}` — places they removed. **Do not send them back.** The builder refuses one unless you add `"restore": true` deliberately |
 | `moved` | `{id, name, from, to}` — a place that changed day |
 | `edited` | `{id, name, fields}` — fields they changed, in words: "How long", "Opening hours", "Note" |
 | `orders` | `{date, version, now}` — a running order they re-sequenced, with the order as it now is. `{date, added: true}` is a new day |
@@ -104,6 +111,7 @@ Every leg the planner measured, which is the part you cannot do at all:
 | `osrm` | a real walking or driving route | a measurement |
 | `transitous` | a real timetabled journey, with the service named and a departure time | a measurement, for that departure |
 | `stops` | two stops that share a line in OpenStreetMap, with **no timetable behind it** | a plausible connection and nothing more. Never promise a particular bus from one |
+| `chat` | a time you looked up in an earlier package, with the link you read it from | as good as the source beside it. Check the link before leaning on it again |
 | `mine` | a time the owner entered themselves | beats everything else |
 
 `pick` is the mode they chose for that leg. A slot with `asked` but no minutes is a service that
