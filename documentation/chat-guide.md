@@ -188,6 +188,8 @@ has now, and what you have just sent.
 | anything | hours of their own | **different** times | the ordinary rules above |
 | anything | a day with no running order | an order | your order lands, no question |
 | anything | a day they have ordered | a different order | **it asks**, and keeps theirs |
+| anything | a leg a service measured | a leg of your own | theirs stands, no question |
+| anything | a leg nobody has | a `chat` leg with a link | yours lands, no question |
 
 So the way to avoid pestering the owner is to **change only what you have actually learned
 something about**. Re-sending an unchanged place costs nothing; re-sending it with a field quietly
@@ -231,6 +233,21 @@ Fuji Excursion" without claiming to know better than their own booking.
 The three running orders are one field, but a package proposes one at a time, and a version it
 never mentions keeps whatever the owner has. So sending only `balanced` changes only `balanced`;
 `less` and `packed` stay exactly as they were, even if they take everything else you sent.
+
+## A travel time you looked up
+
+The planner estimates from the straight line, and only the app can ask OSRM or Transitous. A leg
+you have actually checked may go on its day, marked `source: "chat"` and carrying the link you read
+it from:
+
+```json
+"legs": { "start>kyoto-station": { "mode": "transit", "minutes": 150, "source": "chat",
+                                   "name": "Nozomi 221", "link": "https://…" } }
+```
+
+It lands only where no service has answered and the owner has entered nothing themselves. A
+measurement is never written over, a leg with no link is dropped, and a package claiming to be
+`osrm` or `transitous` is dropped outright.
 
 ## Stays
 
