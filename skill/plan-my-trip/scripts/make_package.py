@@ -69,7 +69,6 @@ FIELD_LABEL = {
     'plans': 'Running order', 'start': 'Where the day starts', 'end': 'Where the day ends',
 }
 NOT_YOURS = {
-    'legs': 'travel times are the planner\'s own measurements; yours would be guesses over facts',
     'added': 'the planner\'s own bookkeeping',
     'createdAt': 'the planner\'s own bookkeeping',
     'updatedAt': 'the planner\'s own bookkeeping',
@@ -528,7 +527,53 @@ def anchored(date, which, stays):
     return best
 
 
-def check_days(raw, places_by_id, their_days, all_stays):
+LEG_MODES = ['walk', 'transit', 'car']
+
+
+def check_legs(where, value, known):
+    """Travel times the chat looked up. Only `chat` with a link, because a measurement is the
+    planner's own and a time with nowhere it was read cannot be checked by anybody."""
+    if not isinstance(value, dict):
+        problem('%s: legs must be an object keyed "fromId>toId"' % where)
+        return None
+    out = {}
+    for key, raw in value.items():
+        ends = str(key).split('>')
+        if len(ends) != 2 or not all(ends):
+            problem('%s: "%s" is not a leg — the key is "fromId>toId", where an end of the day is '
+                    '"start" or "end"' % (where, key))
+            continue
+        for end in ends:
+            if end not in known:
+                problem('%s: the leg "%s" names "%s", which is not a place of this trip'
+                        % (where, key, end))
+        if not isinstance(raw, dict):
+            problem('%s: the leg "%s" must be an object' % (where, key))
+            continue
+        extra = set(raw) - {'mode', 'minutes', 'source', 'link', 'name', 'detail', 'departs', 'km'}
+        if extra:
+            problem('%s: the leg "%s" has no %s' % (where, key, ', '.join(sorted(extra))))
+        if raw.get('source') != 'chat':
+            problem('%s: the leg "%s" must say "source": "chat". A package claiming to be osrm, '
+                    'transitous or stops is thrown away — those mean a service measured it'
+                    % (where, key))
+        link = raw.get('link')
+        if not isinstance(link, str) or not re.match(r'^https?://', link, re.I):
+            problem('%s: the leg "%s" needs "link", the page you read the time from. One with '
+                    'nowhere it came from is dropped' % (where, key))
+        if raw.get('mode') not in LEG_MODES:
+            problem('%s: the leg "%s" needs a mode: %s' % (where, key, ', '.join(LEG_MODES)))
+        minutes = raw.get('minutes')
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes < 0 or minutes > 1440:
+            problem('%s: the leg "%s" needs "minutes", a whole number up to 1440' % (where, key))
+        for word in ('name', 'detail', 'departs'):
+            if word in raw:
+                want_str('%s leg "%s"' % (where, key), word, raw[word], 300)
+        out[key] = {k: v for k, v in raw.items() if k != 'km' or isinstance(v, (int, float))}
+    return out or None
+
+
+def check_days(raw, places_by_id, their_days, all_stays, known_places):
     if not isinstance(raw, dict):
         problem('days must be an object keyed by date')
         return {}
@@ -544,7 +589,7 @@ def check_days(raw, places_by_id, their_days, all_stays):
         for field in day:
             if field in DAY_NOT_YOURS:
                 problem('%s: never send %s — %s' % (where, field, DAY_NOT_YOURS[field]))
-            elif field not in ('id', 'date', 'plans', 'start', 'end'):
+            elif field not in ('id', 'date', 'plans', 'start', 'end', 'legs'):
                 problem('%s: there is no day field called %s that you may send' % (where, field))
         entry = {'id': date}
         for which in ('start', 'end'):
@@ -558,6 +603,10 @@ def check_days(raw, places_by_id, their_days, all_stays):
             if holder and point and (point.get('name') or point.get('lat') is not None):
                 warn('%s: its %s is anchored by the stay "%s", so the place you sent is ignored — '
                      'only the time is used. Send just the time here' % (where, which, holder['id']))
+        if 'legs' in day:
+            legs = check_legs(where, day['legs'], known_places | {'start', 'end'})
+            if legs:
+                entry['legs'] = legs
         plans = day.get('plans')
         if plans is None and len(entry) > 1:
             out[date] = entry
@@ -684,7 +733,8 @@ def main():
     for s in stays:
         anchors[s['id']] = dict(anchors.get(s['id']) or {}, **s)
 
-    days = check_days(plan.get('days') or {}, seen, their_days, list(anchors.values()))
+    days = check_days(plan.get('days') or {}, seen, their_days, list(anchors.values()),
+                      set(seen) | set(their_places))
     # A stay does not bring its days with it: the planner only creates those when the owner adds a
     # stay by hand. Nights with no day are nights nothing can be planned on.
     for stay in stays:

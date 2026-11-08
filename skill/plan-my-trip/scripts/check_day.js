@@ -59,6 +59,13 @@ function readTrip(file) {
   let env;
   try { env = JSON.parse(found.body); } catch (e) { die(file + ' is damaged: ' + e.message); }
   if (!env || !env.trip) die(file + ' has no trip in it.');
+  const by = /day-planner (\d+)\.(\d+)\.(\d+)/.exec(String(env.app || ''));
+  const mine = C.VERSION.split('.').map(Number);
+  if (by && by.slice(1).map(Number).some((n, i) => n > mine[i] && by.slice(1, i + 1).every((m, j) => Number(m) === mine[j]))) {
+    console.log('! ' + file + ' was written by planner ' + by[0].replace('day-planner ', '')
+      + ', and this skill carries ' + C.VERSION + '. Check anything surprising against the app.');
+    console.log();
+  }
   if (env.sum && C.sumOf(env) !== env.sum) {
     console.log('! ' + file + ' fails its own checksum: it was changed somewhere on the way.');
     console.log('  Ask for it again before trusting any of this.');
@@ -178,8 +185,8 @@ function main() {
       showDay(trip, id, key, key === trip.days[id].shown ? '(the one they are looking at)' : '');
     }
   }
-  console.log('\nTravel times here are the planner\'s own estimates. Real routes come back in the'
-    + '\nhand-back, once they have pasted the package in.');
+  console.log('\nA leg marked (estimate) is the planner\'s own guess from the straight line. Real'
+    + '\nroutes come back in the hand-back, once they have pasted the package in.');
   return 0;
 }
 
