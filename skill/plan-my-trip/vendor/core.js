@@ -2158,6 +2158,25 @@ const END_LINE = '--- END ' + SCHEMA + ' ---';
 const KIND_LABELS = { save: 'a saved trip', package: 'a package from the chat', handback: 'a hand-back for the chat' };
 const KINDS_INOUT = Object.keys(KIND_LABELS);
 
+// A block is copied by hand, and often retyped on the way: a mistyped digit in a coordinate or an
+// opening time would merge without a murmur. So the envelope carries a checksum of itself, taken
+// over a canonical form — keys in order, nothing else changed — so that re-wrapping the lines, or
+// writing the JSON out differently, never alters it. Reading one that fails says so rather than
+// quietly loading something nobody wrote.
+function canon(v) {
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = canon(v[k]);
+    return out;
+  }
+  return v;
+}
+function sumOf(env) {
+  const body = Object.assign({}, obj(env));
+  delete body.sum;
+  return hashStr(JSON.stringify(canon(body))).toString(16).padStart(8, '0');
+}
 function envelope(trip, kind, now) {
   const env = {
     schema: SCHEMA,
@@ -2168,6 +2187,7 @@ function envelope(trip, kind, now) {
     app: APP,
     trip: clone(trip),
   };
+  env.sum = sumOf(env);
   return env;
 }
 const writeJson = (trip, kind, now) => JSON.stringify(envelope(trip, kind, now), null, 2) + '\n';
@@ -2227,6 +2247,7 @@ function readBlock(text, now) {
     if (!m) return fail('not-ours', found, env);
     return fail(m[1] === '1' ? 'old-version' : 'newer-version', found, env);
   }
+  if (env.sum && sumOf(env) !== str(env.sum)) return fail('changed', found, env);
   const kind = str(env.kind);
   if (kind === 'handback') return fail('handback', found, env);
   if (!KINDS_INOUT.includes(kind)) return fail('unknown-kind', found, env);
@@ -2253,6 +2274,10 @@ function fail(problem, found, env, err) {
       message = size || (found && found.form === 'block')
         ? 'I can\'t find a day-planner block in that text. Copy everything from the "' + BEGIN_LINE + '" line to the "' + END_LINE + '" line, including both lines.'
         : 'There is nothing to import yet. Paste a block from the chat, or open a trip you saved to a file.';
+      break;
+    case 'changed':
+      message = 'This block was changed somewhere between the chat and here: its checksum does not '
+        + 'match what it holds. Ask for it again, as a file rather than as text if you can.';
       break;
     case 'cut-off':
       message = 'This block is cut off: the closing "' + END_LINE + '" line is missing. Copy it again from the chat, from its first line to its last.';
@@ -2641,6 +2666,9 @@ function handback(trip, seen, opts, now) {
   const alts = arr(o.alternatives).filter((k) => PLAN_KEYS.includes(k));
   const env = envelope(trip, 'handback', now);
   env.handback = {
+    // The package the planner will merge the next one against. Without it the chat can only guess
+    // at what its package will do, and a chat that did not send the last one cannot even guess.
+    base: o.base ? clone(o.base) : null,
     note: str(o.note, 4000),
     days: dayIds(trip).map((id) => {
       const day = trip.days[id];
@@ -2651,6 +2679,7 @@ function handback(trip, seen, opts, now) {
     changes: changesSince(trip, seen),
     travel: travelReport(trip),
   };
+  env.sum = sumOf(env);
   return env;
 }
 const writeHandbackJson = (trip, seen, opts, now) => JSON.stringify(handback(trip, seen, opts, now), null, 2) + '\n';
@@ -2690,7 +2719,7 @@ const Core = {
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan,
   reorderPlan, placeInPlan, removeStop, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
-  takeLegs,
+  canon, sumOf, takeLegs,
   findPayload, readBlock, summarise, importNote,
 };
 root.DayPlannerCore = Core;

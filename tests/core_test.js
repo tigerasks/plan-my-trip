@@ -220,10 +220,23 @@ bad = C.readBlock('{"some":"other json"}');
 ok(bad.problem === 'not-ours' && /not the planner/.test(bad.message), 'somebody else\'s JSON: ' + bad.message);
 bad = C.readBlock(C.writeBlock(demoTrip, 'handback'));
 ok(bad.problem === 'handback' && /sends to the chat/.test(bad.message), 'a hand-back: ' + bad.message);
-bad = C.readBlock(block.replace('"kind":"save"', '"kind":"leftovers"'));
+// Written by somebody else, so no checksum to go by: the envelope itself is what is wrong.
+const theirs = (env) => C.BEGIN_LINE + '\n' + JSON.stringify(env) + '\n' + C.END_LINE + '\n';
+bad = C.readBlock(theirs({ schema: 'day-planner/2', kind: 'leftovers', trip: {} }));
 ok(bad.problem === 'unknown-kind' && /leftovers/.test(bad.message), 'an unknown kind, quoted back: ' + bad.message);
-bad = C.readBlock(block.replace(/"trip":\{.*\}\}$/m, '"trip":null}'));
+bad = C.readBlock(theirs({ schema: 'day-planner/2', kind: 'package', trip: null }));
 ok(bad.problem === 'no-trip', 'no trip inside: ' + bad.message);
+
+// A block that was changed on the way, which is what copying one by hand risks.
+bad = C.readBlock(block.replace('"kind":"save"', '"kind":"leftovers"'));
+ok(bad.problem === 'changed' && /changed somewhere/.test(bad.message),
+  'a block the planner wrote and somebody edited: ' + bad.message);
+ok(C.readBlock(block).ok, 'while the one it wrote reads back');
+const indented = C.BEGIN_LINE + '\n'
+  + JSON.stringify(JSON.parse(block.split('\n')[1]), null, 2) + '\n' + C.END_LINE + '\n';
+ok(C.readBlock(indented).ok, 'and re-writing the JSON differently does not count as changing it');
+ok(C.sumOf({ b: 1, a: [2, { d: 4, c: 3 }] }) === C.sumOf({ a: [2, { c: 3, d: 4 }] , b: 1 }),
+  'because the checksum is taken in a settled order');
 
 console.log('\n== What an import would do ==');
 let note = C.importNote(C.readBlock(block), null);
@@ -1171,6 +1184,15 @@ ok(merged.conflicts.length === 0, 'none of which is a question for anybody');
 const reported = C.travelReport(merged.trip).find((l) => l.leg === 'example-temple>made-up-market');
 ok(reported.ways.transit.source === 'chat' && reported.ways.transit.link === 'https://example.org/',
   'and the hand-back says where it came from, so it can be checked');
+
+// The hand-back carries the baseline, so a chat that did not send the last package can still tell
+// what its own one will do.
+const handed = C.handback(base0, base0, { note: 'x', base: mineT }, '2026-10-23T00:00:00Z');
+ok(handed.handback.base && handed.handback.base.places['example-temple'].duration === 120,
+  'a hand-back carries the package the next merge will compare against');
+ok(C.handback(base0, base0, { note: 'x' }, '2026-10-23T00:00:00Z').handback.base === null,
+  'and says so plainly when there is none');
+ok(C.sumOf(handed) === handed.sum, 'its checksum covers what it carries');
 
 // Empty, missing and unset are the same answer.
 ok(C.same('', null) && C.same([], undefined) && C.same({}, null), 'nothing-in-particular compares equal however it is written');

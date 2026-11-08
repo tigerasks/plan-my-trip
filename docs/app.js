@@ -1868,7 +1868,9 @@ function keepNote() {
 function handbackOpts() {
   keepNote();
   const s = App.ui.sheet || {};
-  return { note: s.hbNote || '', alternatives: s.alts || [] };
+  // The package the next merge will compare against travels with the hand-back, so a chat that
+  // never sent the last one can still work out what its own package will do.
+  return { note: s.hbNote || '', alternatives: s.alts || [], base: readBase() };
 }
 function takeIn(text) {
   const s = dataSheet();
