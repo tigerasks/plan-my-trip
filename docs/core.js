@@ -425,7 +425,7 @@ function normTrip(raw, now) {
   const r = obj(raw);
   const issues = [];
   now = now || new Date().toISOString();
-  const said = { trip: mentioned(r, TRIP_FIELDS), places: {}, days: {}, stays: {} };
+  const said = { trip: mentioned(r, TRIP_FIELDS), places: {}, days: {}, orders: {}, stays: {} };
   const t = {};
   t.title = str(r.title, 80) || 'Untitled trip';
   t.id = cleanId(r.id) || slug(t.title) || 'trip';
@@ -477,6 +477,10 @@ function normTrip(raw, now) {
     }
     if (t.days[d.id]) { issues.push(fmtDateUK(d.id) + ' appeared twice; the second one was left out'); continue; }
     said.days[d.id] = mentioned(rawDay, DAY_FIELDS);
+    // The three versions are one field in the merge, but a package proposes one at a time. Which
+    // of them it actually spoke about has to be noted too, or the two it left out arrive as two
+    // empty orders and "take all theirs" empties them.
+    said.orders[d.id] = mentioned(obj(rawDay).plans, PLAN_KEYS);
     t.days[d.id] = d;
   }
 
@@ -2458,8 +2462,17 @@ function mergePackage(current, incoming, base, choices, now, said) {
       if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
-    const m = mergeFields(dayFields(mine), dayFields(t), b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
-    if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, dayFields(t));
+    // A version the package never mentioned is one it has nothing to say about, so yours stands
+    // there and only the orders it really proposed are weighed.
+    const tf = dayFields(t);
+    const told = said ? arr(obj(obj(said).orders)[id]) : null;
+    if (told) {
+      const orders = {};
+      for (const k of PLAN_KEYS) orders[k] = told.includes(k) ? tf.plans[k] : mine.plans[k];
+      tf.plans = orders;
+    }
+    const m = mergeFields(dayFields(mine), tf, b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
+    if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, tf);
     out.days[id] = writeFields(mine, m.value);
     if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
   }

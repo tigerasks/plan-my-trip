@@ -1095,6 +1095,23 @@ merged = C.mergePackage(base0, proposed, null, {}, '2026-10-23T00:00:00Z');
 ok(merged.conflicts.length === 1 && merged.conflicts[0].fields[0].label === 'Running order',
   'but a day they have already ordered is still a question');
 
+// A package proposes one version at a time. The three are one field in the merge, so the two it
+// left out used to arrive as two empty orders — and "take all theirs" emptied them.
+const oneVersion = C.readBlock(JSON.stringify({
+  schema: 'day-planner/2', kind: 'package', tripId: 'example-kyoto',
+  trip: { id: 'example-kyoto', places: [{ id: 'made-up-market' }, { id: 'example-temple' }],
+    days: { '2026-11-21': { id: '2026-11-21', plans: { balanced: ['made-up-market', 'example-temple'] } } } },
+}));
+ok(JSON.stringify(oneVersion.said.orders['2026-11-21']) === '["balanced"]',
+  'reading a package notes which versions its running order spoke about');
+merged = C.mergePackage(base0, oneVersion.trip, null, { 'day:2026-11-21': 'theirs' },
+  '2026-10-23T00:00:00Z', oneVersion.said);
+const stood = merged.trip.days['2026-11-21'].plans;
+ok(JSON.stringify(stood.balanced) === '["made-up-market","example-temple"]', 'the one it proposed is taken');
+ok(JSON.stringify(stood.less) === JSON.stringify(base0.days['2026-11-21'].plans.less)
+  && JSON.stringify(stood.packed) === JSON.stringify(base0.days['2026-11-21'].plans.packed),
+  'and the two it never mentioned are still there');
+
 // Where the day starts. On the day you arrive there is no night before it, so no stay anchors it
 // and the chat is the only one who knows you land at Kansai at 10:20.
 const landed = { id: '2026-11-21',

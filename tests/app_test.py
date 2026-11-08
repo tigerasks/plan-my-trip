@@ -1555,6 +1555,32 @@ with sync_playwright() as pw:
        'and the order simply arrives')
     ctx.close()
 
+    # ---- a package that proposes one version of a day
+    # The three versions are one field in the merge, so the two it leaves out used to arrive as two
+    # empty orders, and "take all theirs" emptied them.
+    ctx, pg = open_page(held=DEMO)
+    one = {'schema': 'day-planner/2', 'kind': 'package', 'tripId': 'example-kyoto',
+           'title': 'A tighter Saturday', 'app': 'chat',
+           'trip': {'id': 'example-kyoto',
+                    'places': [{'id': 'made-up-market'}, {'id': 'example-temple'}],
+                    'days': {'2026-11-21': {'id': '2026-11-21', 'plans': {
+                        'balanced': ['made-up-market', 'example-temple']}}}}}
+    pg.click('#dataBtn')
+    pg.wait_for_timeout(150)
+    pg.fill('#inBox', C_block(one))
+    pg.click('[data-act="paste-in"]')
+    pg.wait_for_timeout(500)
+    pg.click('[data-act="merge-all"][data-side="theirs"]')
+    pg.wait_for_timeout(150)
+    pg.click('[data-act="merge-go"]')
+    pg.wait_for_timeout(400)
+    plans = pg.evaluate("window.DayPlannerApp.trip.days['2026-11-21'].plans")
+    ck(plans['balanced'] == ['made-up-market', 'example-temple'], 'the version it proposed is taken')
+    ck(plans['less'] == DEMO['trip']['days']['2026-11-21']['plans']['less']
+       and plans['packed'] == DEMO['trip']['days']['2026-11-21']['plans']['packed'],
+       'and taking all theirs leaves the two it never mentioned alone: %s' % json.dumps(plans))
+    ctx.close()
+
     # ---- when you and the chat have both changed the same thing
     mine = json.loads(json.dumps(DEMO))
     mine['trip']['places']['example-temple']['duration'] = 120          # you made it longer
