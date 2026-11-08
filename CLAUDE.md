@@ -171,6 +171,8 @@ These are proposed; confirm each with the owner before starting it.
    - priority labels only when imported.
 4. **Travel times — built:**
    - estimates first, then real routes: OSRM for walking (with real paths) and taxi (with a pickup allowance), Transitous for public transport;
+   - an intercity term in the estimate, so a leg between cities is measured against rail rather
+     than against city traffic (design doc, decision 37);
    - handling of how far ahead timetables reach;
    - when Transitous finds nothing, a check whether it knows any stops nearby, to tell "no timetables" from "no connection";
    - the stop-based fallback: every stop within 10 minutes' walk of each end, widening to 20 minutes where an end has none, and no public transport estimate if there are still none; lines from OpenStreetMap where mapped; the quickest combination; used only when it clearly beats walking;
@@ -191,7 +193,8 @@ These are proposed; confirm each with the owner before starting it.
      about, and a running order it never proposed is one the owner's own stands for (decision 35);
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
-   - the hand-back carries the note, the chosen version plus any alternatives ticked, the computed
+   - the hand-back carries the baseline the next merge will compare against (decision 39), the
+     note, the chosen version plus any alternatives ticked, the computed
      plan with its issues and checks, what was added, moved, deleted or edited since the last
      package, and every travel time with its source — so the chat can tell a measured 43 minutes
      from an estimate, and a stop-based guess from a timetable;

@@ -1035,7 +1035,9 @@ function pathLooksRight(points, from, to) {
 // directed and looked up exactly — a leg checked one way says nothing about the other, since one-way
 // streets and timetables both care. A place that is a stop twice needs no second key: the journey
 // between two places is the same whichever visit it is.
-const LEG_SOURCES = ['osrm', 'transitous', 'stops'];
+// Who said how long a leg takes. The first three measured it; `chat` is a time the chat looked up
+// and must say where it read, which is the only kind a package may carry (decision 36).
+const LEG_SOURCES = ['osrm', 'transitous', 'stops', 'chat'];
 // Of those, the ones that measured something. 'stops' is the planner's own arithmetic over map data.
 const MEASURED = ['osrm', 'transitous'];
 const LEG_MODES = ['walk', 'transit', 'car'];
@@ -1059,6 +1061,7 @@ function normLegMode(raw) {
     precision: toNum(r.precision) == null ? 5 : clamp(Math.round(toNum(r.precision)), 1, 9),
     name: str(r.name, 120) || null,
     detail: str(r.detail, 300) || null,
+    link: /^https?:\/\//i.test(str(r.link, 500)) ? str(r.link, 500) : null,
   };
   return slot.minutes == null && !slot.asked ? null : slot;
 }
@@ -1542,11 +1545,21 @@ const TRANSIT_MODEL = {
   sparse: { overhead: 20, near: 22, far: 45, detour: 1.35 },
 };
 const CAR_MODEL = { overhead: 6, near: 20, far: 60, detour: 1.35 };
+// Beyond a city the trains are different trains. Left to the city curve alone, speed settles at
+// about 38 km/h however far you go, so Tokyo to Kyoto came out at nearly ten hours against two and
+// a quarter on the Shinkansen — not a rounding error but an answer that would wreck a transfer
+// day. This second term lets the speed keep climbing with distance, towards intercity rail, and it
+// is slow enough to arrive that a city hop is barely touched by it.
+const INTERCITY_SPEED = 180;   // km/h, the speed a long leg tends towards
+const INTERCITY_FROM = 50;     // km, below which nothing changes at all
+const INTERCITY_REACH = 120;   // km beyond that, how quickly it gets there
 const MAX_WALK = 20;      // minutes: beyond this, riding wins even if it is no quicker
 const WALK_BIAS = 5;      // and below it, walking wins unless riding saves more than this
 const MODE_WORD = { walk: 'walk', transit: 'train or bus', car: 'taxi' };
 function rideMinutes(km, model) {
-  const speed = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  const city = model.near + (model.far - model.near) * (1 - Math.exp(-km / 8));
+  const far = Math.max(0, km - INTERCITY_FROM);
+  const speed = city + (INTERCITY_SPEED - model.far) * (1 - Math.exp(-far / INTERCITY_REACH));
   return model.overhead + (km * model.detour / speed) * 60;
 }
 // A taxi has to reach you before it can take you anywhere, and OSRM knows nothing of that.
@@ -2145,8 +2158,27 @@ const END_LINE = '--- END ' + SCHEMA + ' ---';
 const KIND_LABELS = { save: 'a saved trip', package: 'a package from the chat', handback: 'a hand-back for the chat' };
 const KINDS_INOUT = Object.keys(KIND_LABELS);
 
+// A block is copied by hand, and often retyped on the way: a mistyped digit in a coordinate or an
+// opening time would merge without a murmur. So the envelope carries a checksum of itself, taken
+// over a canonical form — keys in order, nothing else changed — so that re-wrapping the lines, or
+// writing the JSON out differently, never alters it. Reading one that fails says so rather than
+// quietly loading something nobody wrote.
+function canon(v) {
+  if (Array.isArray(v)) return v.map(canon);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = canon(v[k]);
+    return out;
+  }
+  return v;
+}
+function sumOf(env) {
+  const body = Object.assign({}, obj(env));
+  delete body.sum;
+  return hashStr(JSON.stringify(canon(body))).toString(16).padStart(8, '0');
+}
 function envelope(trip, kind, now) {
-  return {
+  const env = {
     schema: SCHEMA,
     kind: KINDS_INOUT.includes(kind) ? kind : 'save',
     tripId: trip.id,
@@ -2155,6 +2187,8 @@ function envelope(trip, kind, now) {
     app: APP,
     trip: clone(trip),
   };
+  env.sum = sumOf(env);
+  return env;
 }
 const writeJson = (trip, kind, now) => JSON.stringify(envelope(trip, kind, now), null, 2) + '\n';
 const writeBlock = (trip, kind, now) => BEGIN_LINE + '\n' + JSON.stringify(envelope(trip, kind, now)) + '\n' + END_LINE + '\n';
@@ -2213,6 +2247,7 @@ function readBlock(text, now) {
     if (!m) return fail('not-ours', found, env);
     return fail(m[1] === '1' ? 'old-version' : 'newer-version', found, env);
   }
+  if (env.sum && sumOf(env) !== str(env.sum)) return fail('changed', found, env);
   const kind = str(env.kind);
   if (kind === 'handback') return fail('handback', found, env);
   if (!KINDS_INOUT.includes(kind)) return fail('unknown-kind', found, env);
@@ -2239,6 +2274,10 @@ function fail(problem, found, env, err) {
       message = size || (found && found.form === 'block')
         ? 'I can\'t find a day-planner block in that text. Copy everything from the "' + BEGIN_LINE + '" line to the "' + END_LINE + '" line, including both lines.'
         : 'There is nothing to import yet. Paste a block from the chat, or open a trip you saved to a file.';
+      break;
+    case 'changed':
+      message = 'This block was changed somewhere between the chat and here: its checksum does not '
+        + 'match what it holds. Ask for it again, as a file rather than as text if you can.';
       break;
     case 'cut-off':
       message = 'This block is cut off: the closing "' + END_LINE + '" line is missing. Copy it again from the chat, from its first line to its last.';
@@ -2407,6 +2446,33 @@ function writeFields(onto, value) {
   return out;
 }
 
+// Travel times are the planner's own measurements, so a package can only fill a gap in them. It
+// may carry a leg it looked up, marked `chat` and carrying the link it read — and that lands only
+// where no service has answered and you have entered nothing yourself. A measurement is never
+// written over by something somebody read on a website, and `mine` is never touched at all. A leg
+// of any other source in a package is not a measurement it made; it is dropped.
+function takeLegs(mineLegs, theirLegs) {
+  const out = clone(obj(mineLegs));
+  for (const [key, raw] of Object.entries(obj(theirLegs))) {
+    const ends = legEnds(key);
+    if (!ends) continue;
+    const t = obj(raw), mine = obj(out[key]);
+    const next = { pick: mine.pick || null, mine: mine.mine || null };
+    let any = false;
+    for (const mode of LEG_MODES) {
+      const slot = obj(t[mode]);
+      const take = slot.source === 'chat' && slot.minutes != null && slot.link
+        && (!mine[mode] || obj(mine[mode]).source === 'chat');
+      const kept = take ? clone(slot) : (mine[mode] ? clone(mine[mode]) : null);
+      if (kept) { next[mode] = kept; any = true; }
+      if (take) any = true;
+    }
+    const leg = any || next.mine ? normLeg(next) : null;
+    if (leg) out[key] = leg; else delete out[key];
+  }
+  return normLegs(out);
+}
+
 // Merge a package into the trip that is open. Call it once with no choices to find out what it
 // would ask, show the sheet, then call it again with the answers: it is the same function both
 // times, so what you were shown is what you get. An unanswered conflict keeps yours.
@@ -2459,7 +2525,7 @@ function mergePackage(current, incoming, base, choices, now, said) {
   for (const id of Object.keys(theirDays)) {
     const t = theirDays[id], b = baseDays[id], mine = out.days[id];
     if (!mine) {
-      if (!b) { out.days[id] = clone(t); report.newDays.push(id); }
+      if (!b) { out.days[id] = clone(t); out.days[id].legs = takeLegs(null, t.legs); report.newDays.push(id); }
       continue;                                       // a day you deleted stays deleted
     }
     // A version the package never mentioned is one it has nothing to say about, so yours stands
@@ -2474,6 +2540,11 @@ function mergePackage(current, incoming, base, choices, now, said) {
     const m = mergeFields(dayFields(mine), tf, b ? dayFields(b) : null, DAY_FIELDS, spoke('days', id));
     if (m.fields.length) settle(ask('day', id, fmtDateUK(id), m.fields), m, tf);
     out.days[id] = writeFields(mine, m.value);
+    const legs = takeLegs(mine.legs, t.legs);
+    if (JSON.stringify(legs) !== JSON.stringify(mine.legs)) {
+      out.days[id].legs = legs;
+      report.updated.push(fmtDateUK(id) + ': travel times the chat looked up');
+    }
     if (m.took.length) report.updated.push(fmtDateUK(id) + ': ' + joinList(m.took));
   }
 
@@ -2575,7 +2646,7 @@ function travelReport(trip) {
         if (!slot) continue;
         if (slot.minutes == null && !slot.asked) continue;
         ways[mode] = { minutes: slot.minutes, km: slot.km, source: slot.source, at: slot.at,
-          departs: slot.departs, name: slot.name, detail: slot.detail };
+          departs: slot.departs, name: slot.name, detail: slot.detail, link: slot.link };
       }
       if (!Object.keys(ways).length && !leg.mine) continue;
       out.push({ date: dayId, leg: key, from: nameOf(ends[0]), to: nameOf(ends[1]),
@@ -2595,6 +2666,9 @@ function handback(trip, seen, opts, now) {
   const alts = arr(o.alternatives).filter((k) => PLAN_KEYS.includes(k));
   const env = envelope(trip, 'handback', now);
   env.handback = {
+    // The package the planner will merge the next one against. Without it the chat can only guess
+    // at what its package will do, and a chat that did not send the last one cannot even guess.
+    base: o.base ? clone(o.base) : null,
     note: str(o.note, 4000),
     days: dayIds(trip).map((id) => {
       const day = trip.days[id];
@@ -2605,6 +2679,7 @@ function handback(trip, seen, opts, now) {
     changes: changesSince(trip, seen),
     travel: travelReport(trip),
   };
+  env.sum = sumOf(env);
   return env;
 }
 const writeHandbackJson = (trip, seen, opts, now) => JSON.stringify(handback(trip, seen, opts, now), null, 2) + '\n';
@@ -2625,7 +2700,7 @@ const Core = {
   STOP_REACH, STOP_REACH_WIDE, sharedLine, lineWords, stopPlan, stopSlot, legGuess, legBetween, calibration, rideMinutes, TAXI_PICKUP,
   STOPS_HOME, TILE_DEGREES, TILE_FORMAT, tileName, tileUrl, manifestUrl, tilesNear, parseManifest,
   STOP_KINDS, parseTile, stopsWithin,
-  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK,
+  TRANSIT_MODEL, CAR_MODEL, MODE_WORD, MAX_WALK, INTERCITY_SPEED, INTERCITY_FROM, INTERCITY_REACH,
   LEG_SOURCES, LEG_MODES, legKey, legEnds, normLeg, normLegMode, normLegs, legFor, setLeg, clearLeg,
   legChoice, pointOf, tidyLegs,
   decodePath, pathLooksRight, PATH_SLACK, OSRM_PROFILE, osrmUrl, parseOsrm,
@@ -2644,6 +2719,7 @@ const Core = {
   clone, touch, nameOf, joinList, freeId, addPlace, moveToDay, moveToBacklog, addToPlan,
   reorderPlan, placeInPlan, removeStop, moveInBacklog, copyVersion, optimiseOrder, planCost, deletePlace, addDay, addDays, deleteDay, setDayDate, bestSlot,
   BEGIN_LINE, END_LINE, KIND_LABELS, KINDS_INOUT, envelope, writeJson, writeBlock, fileName, sizeText,
+  canon, sumOf, takeLegs,
   findPayload, readBlock, summarise, importNote,
 };
 root.DayPlannerCore = Core;

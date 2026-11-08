@@ -1505,9 +1505,14 @@ with sync_playwright() as pw:
     pg.fill('#hbNote', 'Nothing to report')
     pg.click('[data-act="hand-back"][data-how="text"]')
     pg.wait_for_timeout(400)
-    hb0 = json.loads(pg.input_value('#outBox').strip().split(chr(10))[1])['handback']['changes']
+    written = json.loads(pg.input_value('#outBox').strip().split(chr(10))[1])
+    hb0 = written['handback']['changes']
     ck(hb0['baseline'] is True and not hb0['added'] and not hb0['moved'] and not hb0['edited'],
        'a hand-back straight after a merge reports no changes of yours: ' + json.dumps(hb0))
+    base = written['handback']['base']
+    ck(base is not None and base['id'] == 'example-kyoto',
+       'and carries the package the next merge will compare against')
+    ck(len(written['sum']) == 8, 'with a checksum over the whole thing: ' + str(written.get('sum')))
     ctx.close()
 
     # ---- the chat checking hours it already had
