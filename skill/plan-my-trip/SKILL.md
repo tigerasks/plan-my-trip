@@ -287,6 +287,13 @@ hands it to `write_package.js`, which writes the block and works the merge out w
 own code; `check_day.js` shows a day. The planner itself is in `vendor/core.js`, which is where
 every answer about what will happen comes from.
 
+**Do not try to fetch the live planner to compare against `vendor/core.js`.** The copy is pinned on
+purpose, and the planner's own test suite fails if it differs from the published file by a single
+byte, so they cannot drift apart unnoticed. Nothing here needs the network. The only thing worth
+watching is the other direction: if a file the owner sends was saved by a *newer* planner than this
+copy, `make_package.py` and `check_day.js` both say so, and then something they have learned since
+may be missing here.
+
 ## Starting from nothing
 
 A package is also how a trip is born: one with `days` for the dates, `stays` for the bases and
