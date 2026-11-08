@@ -190,7 +190,12 @@ These are proposed; confirm each with the owner before starting it.
      place — what it must never do is invent a booking (decision 33). It may also say where a day
      begins and ends, which is the only way the arrival and departure days can be timed at all
      (decision 34). A package never deletes: a place it leaves out is one it had nothing to say
-     about, and a running order it never proposed is one the owner's own stands for (decision 35);
+     about, and a running order it never proposed is one the owner's own stands for (decision 35).
+     It may carry a travel time it looked up, marked `chat` with the link it read, which lands
+     wherever the leg holds no measurement (decision 36). A package that creates a trip may set its
+     `title` and `transit`, and must set its `tz`, because a timetable asked about the wrong
+     instant answers wrongly and silently (decision 40). Every block carries a checksum of itself
+     and one that fails it is refused, because a block copied by hand loses digits (decision 38);
    - the questions come as one list, a choice per place, with "keep all mine" and "take all theirs"
      at the top. Nothing changes until Apply, and the whole merge undoes in one go;
    - the hand-back carries the baseline the next merge will compare against (decision 39), the

@@ -1793,6 +1793,16 @@ function planDay(trip, dayId, key, order) {
     }
   }
   const legs = items.filter((i) => i.type === 'travel');
+  // A timetable is asked about an instant, and an instant needs a zone. With none set the planner
+  // uses the one this device happens to be in, so somebody planning Japan from Zurich has every
+  // train looked up eight hours late — 09:00 asked as 17:00, 18:00 asked as 02:00 the next
+  // morning, when nothing runs. It is invisible once it has happened, because the answer that
+  // comes back looks like any other answer. So it is said before it happens, on the days it would
+  // happen to.
+  if (!goodZone(obj(trip).tz) && legs.some((l) => l.mode === 'transit')) {
+    flag('warn', 'This trip has no time zone, so public transport is looked up in this device\'s '
+      + 'own. Set it in the trip settings before trusting any train or bus time.', 'start');
+  }
   return {
     dayId, date, key: shown, items, issues, checks,
     start, end, startTime, endBy, finish,

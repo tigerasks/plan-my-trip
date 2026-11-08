@@ -95,7 +95,7 @@ often close on Mondays, and `lastEntry` is routinely an hour before closing.
 **Anchor the day.** Every day starts at the stay of the night before and ends at that night's
 stay, so once the bases are in, the middle of a trip looks after itself. Two days do not: the one
 they arrive on and the one they fly home on, which need a `start` and an `end` of their own. On a
-day a stay does anchor you can still set the time — "out at 07:00 for the Fuji Excursion" — and the
+day a stay does anchor you can still set the time — "out at 07:00 for the early train" — and the
 hotel supplies the place.
 
 **Pin what is pinned.** A booked slot or timed entry goes in `fixed` as `"HH:MM"`. Something that
@@ -115,8 +115,8 @@ leg you have actually checked — a Shinkansen timetable, a published airport tr
 the package:
 
 ```json
-"legs": { "start>kyoto-station": { "mode": "transit", "minutes": 150, "source": "chat",
-                                   "name": "Nozomi", "link": "https://…" } }
+"legs": { "start>example-station": { "mode": "transit", "minutes": 150, "source": "chat",
+                                   "name": "the express", "link": "https://…" } }
 ```
 
 It lands only where no service has answered and they have entered nothing themselves: a
@@ -154,15 +154,15 @@ Write a `plan.json` holding only what you want to send:
       "hours": { "source": "chat", "verified": true, "raw": "06:00-18:00",
                  "week": { "mon": [["06:00","18:00"]], "sat": [["06:00","21:00"]] },
                  "lastEntry": { "sat": "20:30" } } },
-    { "id": "nishiki-market", "name": "Nishiki Market", "lat": 35.0050, "lng": 135.7649,
+    { "id": "example-market", "name": "Example Market", "lat": 35.0050, "lng": 135.7650,
       "kind": "food", "duration": 60, "dayId": "2026-11-21" },
     { "id": "example-garden" }
   ],
   "days": {
     "2026-11-21": { "plans": {
       "less": ["example-temple"],
-      "balanced": ["example-temple", "nishiki-market"],
-      "packed": ["example-temple", "nishiki-market", "example-garden"] } }
+      "balanced": ["example-temple", "example-market"],
+      "packed": ["example-temple", "example-market", "example-garden"] } }
   }
 }
 ```
@@ -186,13 +186,13 @@ This runs the planner's actual schedule — the same `core.js` the app runs — 
 and prints each day you touched:
 
 ```
-Mon 23 Nov — Shimokitazawa — Balanced
-  08:30          leave Kagurazaka base
+Mon 23 Nov — the second day — Balanced
+  08:30          leave Example base
                  ↓ 22 min train or bus (estimate)
-  08:52 – 10:22  Kitazawa Hachiman Shrine        1h 30
+  08:52 – 10:22  Example Shrine        1h 30
   ...
   2 stops · 4h visiting · 1h 12 travelling · 25 min waiting · 1h 48 spare
-  [ERROR] ZEN NIGHT TOKYO: you would arrive 18:45, after the 18:30 you have booked
+  [ERROR] the evening booking: you would arrive 18:45, after the 18:30 you have booked
 ```
 
 So you can fix the order, the durations and the fixed times yourself, iterating until the day
@@ -258,8 +258,9 @@ The script checks every one of these. They are here because breaking them does r
   builder refuses one unless you add `"restore": true` on purpose.
 - **Ids are forever.** A place's `id` is how the merge finds it again. Never rename one; a new place
   gets a new slug, like `fushimi-inari`.
-- **The trip is theirs.** Never send `title`, `tz`, `currency`, `lookups`, or a day's `shown`,
-  `centre`, `note` or `city`. Which version they are looking at and where their map is pointed is
+- **The trip is theirs**, once it exists. Never send `title`, `tz`, `transit`, `currency`,
+  `lookups`, or a day's `shown`, `centre`, `note` or `city`. The one exception is a package that
+  *creates* the trip, where there is nothing of theirs to overwrite — see below. Which version they are looking at and where their map is pointed is
   not yours to propose. Put the suggestion in prose instead.
 - **Never send a travel time you have not checked**, and never one marked as a service. A leg is
   `source: "chat"` with the link you read it from, or it is not in the package at all.
@@ -267,7 +268,7 @@ The script checks every one of these. They are here because breaking them does r
   `balanced`, even if they take everything else in the package.
 - **Stays you may send, but never invent one.** Where they sleep drives every day's start and end,
   so carrying what they have already told you is worth doing. A place they have booked gets its
-  real name. A base that is not settled gets a name that says so — "Osaka — not booked yet" — and
+  real name. A base that is not settled gets a name that says so — "Second city — not booked yet" — and
   an approximate position for the district, because a stay with no position costs every day it
   anchors all of its travel times. Ids are permanent, as for places, so the booking refines in
   place later. Never write a hotel name they have not chosen.
@@ -289,11 +290,28 @@ every answer about what will happen comes from.
 ## Starting from nothing
 
 A package is also how a trip is born: one with `days` for the dates, `stays` for the bases and
-places in the backlog opens as a new trip. Ask for the dates, the cities and where they are staying
+places in the backlog opens as a new trip. Only then may it set the trip's own settings, and one of
+them it **must**:
+
+```json
+{ "tripId": "example-trip", "title": "Example trip", "tz": "Asia/Tokyo", "transit": "metro", … }
+```
+
+- **`tz` is not optional.** A timetable is asked about an instant, and without a zone the planner
+  uses whatever one the owner's browser is in. Planning a trip to Japan from Europe, a 09:00 leg
+  gets looked up at 17:00 and an 18:00 leg at 02:00 the next morning, when nothing runs — and the
+  answer that comes back looks like any other answer. The builder refuses a creating package
+  without it.
+- **`transit`** is `metro`, `city` or `sparse`: how much public transport there is where they are
+  going. It only shapes the first rough estimates, but it costs nothing to get right. Ask for the dates, the cities and where they are staying
 first; send a placeholder stay where a base is not booked, so the days can still be timed.
 
 Two things to get right, because nothing else will:
 
+- **a day with no stops is still a day.** On the one they fly home, give the day an `end` at the
+  airport with the time they must be there, and the planner will tell you whether leaving the
+  hotel that morning gets them there. Putting the check-in in as a fixed stop works too, and shows
+  up on the timeline;
 - **the day they arrive and the day they fly home are not anchored by a stay** — one has no night
   before it, the other ends at an airport. Send those days a `start` and an `end` of their own, or
   the first and last legs of the trip cannot be timed at all;

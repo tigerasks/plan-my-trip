@@ -51,7 +51,7 @@ date, closures, whether a ticket must be bought ahead, how long a visit really t
 the detour. Put it on the place, not only in the chat around the block.
 
 Keep ids stable. A place's `id` is how the merge finds it again, so once a place has one it keeps
-it for the life of the trip. New places get a new slug-like id (`fushimi-inari`, `nishiki-market`).
+it for the life of the trip. New places get a new slug-like id (`fushimi-inari`, `example-market`).
 
 ### The place shape
 
@@ -136,8 +136,8 @@ and asks about it.
     "id": "2026-11-21", "date": "2026-11-21",
     "plans": {
       "less":     ["fushimi-inari"],
-      "balanced": ["fushimi-inari", "nishiki-market"],
-      "packed":   ["fushimi-inari", "tofuku-ji", "nishiki-market"]
+      "balanced": ["fushimi-inari", "example-market"],
+      "packed":   ["fushimi-inari", "tofuku-ji", "example-market"]
     }
   }
 }
@@ -155,7 +155,7 @@ Three rules hold at all times, and the planner repairs anything that breaks them
 - the backlog is exactly the places with no day.
 
 **Every place your order names must be in `places`.** Its id on its own is enough — `{"id":
-"nishiki-market"}` carries it into the order and says nothing about it, so everything the owner has
+"example-market"}` carries it into the order and says nothing about it, so everything the owner has
 on that place is left exactly as it was. An id that comes with no place at all is dropped from the
 order, and the planner says so.
 
@@ -219,7 +219,7 @@ So a package may send a day's `start` and `end`:
 ```json
 "2026-11-21": {
   "id": "2026-11-21",
-  "start": { "name": "Narita Terminal 1", "lat": 35.7719, "lng": 140.3928, "time": "10:20" }
+  "start": { "name": "Example Airport T1", "lat": 35.0000, "lng": 136.0000, "time": "10:20" }
 }
 ```
 
@@ -228,7 +228,7 @@ where it starts lands quietly. A start they have set themselves is put to them a
 
 On a day a stay **does** anchor, the place you send is ignored and the hotel wins; only the time is
 used. That is worth knowing rather than a problem: it is how you say "we leave at 07:00 for the
-Fuji Excursion" without claiming to know better than their own booking.
+early train" without claiming to know better than their own booking.
 
 ## The versions you do not send
 
@@ -243,8 +243,8 @@ you have actually checked may go on its day, marked `source: "chat"` and carryin
 it from:
 
 ```json
-"legs": { "start>kyoto-station": { "mode": "transit", "minutes": 150, "source": "chat",
-                                   "name": "Nozomi 221", "link": "https://…" } }
+"legs": { "start>example-station": { "mode": "transit", "minutes": 150, "source": "chat",
+                                   "name": "the 09:03 express", "link": "https://…" } }
 ```
 
 It lands wherever the leg holds no measurement: nothing tried yet, a service asked that had
@@ -255,11 +255,25 @@ link is dropped, and a package claiming to be `osrm` or `transitous` is dropped 
 Asking a service afterwards will not undo it either: an empty answer or a stop pairing leaves your
 time standing, and only a real timetabled measurement replaces it.
 
+## A package that creates the trip
+
+With no trip open, a package is loaded whole rather than merged, so it may set the trip's own
+settings — and must set one:
+
+```json
+{ "id": "example-trip", "title": "Example trip", "tz": "Asia/Tokyo", "transit": "metro", … }
+```
+
+`tz` is required. The planner asks a timetable about an instant, and an instant needs a zone; with
+none set it uses the browser's own, so a trip to Japan planned from Europe has 09:00 looked up at
+17:00 and 18:00 at 02:00 the next morning. `transit` is `metro`, `city` or `sparse`. Once the trip
+exists, all of these are the owner's and a package may not touch them.
+
 ## Stays
 
 A package may carry `stays`, and they merge by `id` field by field like places. Send what the owner
 has told you; where a base is not settled, send a placeholder whose **name says it is not booked**
-("Osaka — not booked yet") with an approximate position for the district. Never write a hotel name
+("Second city — not booked yet") with an approximate position for the district. Never write a hotel name
 they have not chosen.
 
 The position matters more than it looks: a day starts at the stay of the night before and ends at
@@ -285,14 +299,14 @@ A hand-back is the whole trip plus a `handback` section:
       "date": "2026-11-21", "city": "Kyoto", "note": "", "chosen": "balanced",
       "versions": [{
         "key": "balanced", "label": "Balanced",
-        "order": ["fushimi-inari", "nishiki-market"],
+        "order": ["fushimi-inari", "example-market"],
         "starts": "08:30", "finishes": "17:40",
         "summary": { "stops": 2, "travel": 58, "wait": 0, "visit": 150, "spare": 200,
                      "estimated": 1, "checked": 2, "errors": 0 },
         "stops": [{ "id": "fushimi-inari", "name": "Fushimi Inari Taisha",
                     "arrive": "08:50", "at": "08:50", "until": "10:50", "waited": 0, "minutes": 120 }],
         "issues": [{ "severity": "warn", "text": "…" }],
-        "checks": [{ "name": "Nishiki Market", "text": "Hours not checked yet" }]
+        "checks": [{ "name": "Example Market", "text": "Hours not checked yet" }]
       }]
     }],
     "changes": { "baseline": true, "added": [], "deleted": [], "moved": [], "edited": [], "orders": [] },

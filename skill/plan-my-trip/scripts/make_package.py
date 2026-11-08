@@ -29,6 +29,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import zoneinfo
 
 # The scripts sit beside each other, and a script's own folder is not on the path under `python -I`.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -528,6 +529,7 @@ def anchored(date, which, stays):
 
 
 LEG_MODES = ['walk', 'transit', 'car']
+TRANSIT_TYPES = ['metro', 'city', 'sparse']
 
 
 def check_legs(where, value, known):
@@ -674,15 +676,38 @@ def main():
     if not isinstance(plan, dict):
         die('%s must be an object.' % args.plan)
 
+    # A trip that does not exist yet has no settings of theirs to overwrite, and one of them has to
+    # be right from the start: without a time zone the planner looks up timetables in whatever zone
+    # the browser is in, so a trip to Japan planned from Europe asks about 17:00 when it means
+    # 09:00, and nothing afterwards says so.
+    SETTINGS = ('title', 'tz', 'transit')
     for key in plan:
-        if key == 'title' and not fresh:
-            problem('The plan has "title". A trip\'s title belongs to the owner; call it "label" '
-                    'if you mean the name of this block.')
-        elif key == 'title':
-            continue          # a trip that does not exist yet has no name of theirs to overwrite
+        if key in SETTINGS and not fresh:
+            problem('The plan has "%s", which is a setting of theirs. Only a package that creates '
+                    'the trip may set one%s.'
+                    % (key, '; call it "label" if you mean the name of this block' if key == 'title' else ''))
+        elif key in SETTINGS:
+            continue
         elif key not in ('tripId', 'label', 'places', 'days', 'stays'):
-            problem('The plan has no field called "%s" — it takes tripId, label, places, days and '
-                    'stays.' % key)
+            problem('The plan has no field called "%s" — it takes tripId, label, places, days, '
+                    'stays, and on a package that creates the trip, title, tz and transit.' % key)
+
+    if fresh:
+        zone = plan.get('tz')
+        if zone is None:
+            problem('A package that creates the trip must set "tz", the destination\'s time zone, '
+                    'as an IANA name like "Asia/Tokyo". Without one the planner asks for timetables '
+                    'in whatever zone their browser is in, and every train time it brings back is '
+                    'for the wrong hour.')
+        else:
+            try:
+                zoneinfo.ZoneInfo(str(zone))
+            except Exception:
+                problem('"%s" is not a time zone the planner will accept. It wants an IANA name '
+                        'like "Asia/Tokyo" or "Europe/Zurich".' % zone)
+        if 'transit' in plan and plan['transit'] not in TRANSIT_TYPES:
+            problem('transit must be one of %s — how much public transport there is where they '
+                    'are going.' % ', '.join(TRANSIT_TYPES))
 
     their_places = as_map(their_trip.get('places'))
     their_days = as_map(their_trip.get('days'))
@@ -748,6 +773,12 @@ def main():
     if not places and not days and not stays:
         problem('The plan says nothing: no places, no days and no stays.')
 
+    # The block is written with a .json companion beside it, and that must not land on the plan.
+    companion = re.sub(r'\.(txt|block)$', '', args.out, flags=re.I) + '.json'
+    if os.path.abspath(companion) == os.path.abspath(args.plan):
+        problem('--out would write "%s" beside the block, which is the plan itself. Name the '
+                'package something else.' % companion)
+
     if PROBLEMS:
         print('REFUSED — nothing was written')
         print('=' * 72)
@@ -757,8 +788,10 @@ def main():
         return 1
 
     fragment = {'id': trip_id}
-    if fresh and plan.get('title'):
-        fragment['title'] = plan['title']
+    if fresh:
+        for key in ('title', 'tz', 'transit'):
+            if plan.get(key):
+                fragment[key] = plan[key]
     if places:
         fragment['places'] = places
     if days:

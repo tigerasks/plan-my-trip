@@ -357,6 +357,26 @@ ok(C.gmapsUrl({ name: 'Pizza Little Party', localName: 'ピザリトルパーテ
   === 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ピザリトルパーティ Kyoto'),
   'Google Maps is asked for the local name plus the city, as the service test did');
 
+console.log('\n== A trip with no time zone ==');
+// A timetable is asked about an instant, and an instant needs a zone. With none, the planner uses
+// whichever one the device is in, so Japan planned from Europe asks about 17:00 when it means
+// 09:00 — and the answer that comes back looks like any other answer.
+const zoned = (tz, far) => C.normalise({
+  id: 'z', title: 'Z', tz,
+  stays: [{ id: 'h', name: 'Base', lat: 34.98, lng: 135.75, from: '2026-11-20', nights: 2 }],
+  days: { '2026-11-21': { id: '2026-11-21', plans: { balanced: ['p'] } } },
+  places: [{ id: 'p', name: 'Somewhere', lat: far ? 35.03 : 34.981, lng: far ? 135.80 : 135.751,
+    duration: 60, dayId: '2026-11-21' }],
+}).trip;
+const saidAbout = (tz, far) => C.planDay(zoned(tz, far), '2026-11-21', 'balanced')
+  .issues.filter((i) => /time zone/.test(i.text));
+ok(saidAbout(null, true).length === 1 && saidAbout(null, true)[0].severity === 'warn',
+  'a day that would take a train says the trip has no time zone');
+ok(saidAbout('Asia/Tokyo', true).length === 0, 'and says nothing once it has one');
+ok(saidAbout(null, false).length === 0, 'nor on a day you would only walk');
+ok(C.instantOf('2026-11-21', 9 * 60, 'Asia/Tokyo') === '2026-11-21T00:00:00.000Z',
+  'with a zone, 09:00 in Japan is the right instant');
+
 console.log('\n== Estimating a long leg ==');
 // Left to the city curve alone the speed settled at about 38 km/h however far you went, so a
 // transfer day came out four times too long and the planner showed it without a flicker.

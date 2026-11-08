@@ -87,9 +87,14 @@ function showDay(trip, dayId, key, note) {
   const head = [C.fmtDateUK(dayId), day.city || null, C.PLAN_LABEL[key]].filter(Boolean).join(' — ');
   console.log('\n' + head + (note ? '   ' + note : ''));
   console.log('-'.repeat(Math.max(head.length, 40)));
-  if (!P.summary.stops) {
-    console.log('  nothing planned in this version');
+  if (!P.summary.stops && P.items.length < 2) {
+    console.log('  nothing planned in this version, and nowhere for it to end');
     return true;
+  }
+  if (!P.summary.stops) {
+    // A day with no stops is still a day: on the one they fly home, the only thing that matters is
+    // whether leaving the hotel at that hour gets them to the airport in time.
+    console.log('  no stops, so this is just getting from one end of the day to the other');
   }
   for (const item of P.items) {
     if (item.type === 'start') {

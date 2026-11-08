@@ -10,6 +10,7 @@ planner disagree, the planner wins — but it has been checked against it field 
 - [Opening hours](#opening-hours)
 - [Days and running orders](#days-and-running-orders)
 - [Where a day begins and ends](#where-a-day-begins-and-ends)
+- [A package that creates the trip](#a-package-that-creates-the-trip)
 - [Stays](#stays)
 - [What never goes in a package](#what-never-goes-in-a-package)
 - [What the planner repairs without asking](#what-the-planner-repairs-without-asking)
@@ -106,8 +107,8 @@ Split days are a list of two pairs: `"wed": [["11:00","14:00"],["17:00","22:00"]
     "id": "2026-11-21",
     "plans": {
       "less": ["example-temple"],
-      "balanced": ["example-temple", "nishiki-market"],
-      "packed": ["example-temple", "nishiki-market", "example-garden"]
+      "balanced": ["example-temple", "example-market"],
+      "packed": ["example-temple", "example-market", "example-garden"]
     }
   }
 }
@@ -142,8 +143,8 @@ no night before it, and the day they fly home.
 ```json
 "2026-11-21": {
   "id": "2026-11-21",
-  "start": { "name": "Narita Terminal 1", "lat": 35.7719, "lng": 140.3928, "time": "10:20" },
-  "plans": { "balanced": ["pensta-ueno"] }
+  "start": { "name": "Example Airport T1", "lat": 35.0000, "lng": 136.0000, "time": "10:20" },
+  "plans": { "balanced": ["example-shop"] }
 }
 ```
 
@@ -159,7 +160,7 @@ A day nobody has timed stores no times of its own and simply runs 08:30 to 21:00
 where it starts lands quietly. A start they set themselves is a question.
 
 On a day a stay **does** anchor, the place you send is ignored — the hotel wins — and only the time
-is used. That is how you say "we leave at 07:00 for the Fuji Excursion" without claiming to know
+is used. That is how you say "we leave at 07:00 for the early train" without claiming to know
 better than their booking. `make_package.py` warns when you send a place that will be ignored.
 
 ## Stays
@@ -169,10 +170,10 @@ placeholder refines into the real booking later without destroying anything.
 
 ```json
 "stays": [
-  { "id": "kagurazaka-base", "name": "Kagurazaka base", "area": "Kagurazaka, Shinjuku",
-    "lat": 35.7020, "lng": 139.7400, "from": "2026-11-21", "nights": 6 },
-  { "id": "osaka-tbd", "name": "Osaka — not booked yet", "area": "near Namba",
-    "lat": 34.6660, "lng": 135.5010, "from": "2026-12-03", "nights": 2 }
+  { "id": "example-base", "name": "Example base", "area": "Example district",
+    "lat": 35.0100, "lng": 135.7700, "from": "2026-11-21", "nights": 6 },
+  { "id": "second-base-tbd", "name": "Second city — not booked yet", "area": "near the station",
+    "lat": 34.7000, "lng": 135.5000, "from": "2026-11-28", "nights": 2 }
 ]
 ```
 
@@ -205,7 +206,7 @@ Never invent a booking. A base they have not chosen is a placeholder and must re
 | Not this | Why |
 |---|---|
 | a leg you have not checked | travel times are the planner's own measurements. One you looked up may go in (see below); one you guessed may not |
-| `title`, `tz`, `tzLabel`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose — except `title` on a package that creates the trip, where there is nothing of theirs to overwrite |
+| `title`, `tz`, `transit`, `currency`, `lookups`, `fx` | trip settings, theirs to choose — except `title`, `tz` and `transit` on a package that **creates** the trip, where there is nothing of theirs to overwrite. `tz` is required there: see below |
 | a day's `shown`, `centre`, `note`, `city` | which version they are looking at, where the map is pointed, what they call the day |
 | `added`, `createdAt`, `updatedAt` | the planner's own bookkeeping |
 | `backlog` | worked out from which places have no day |
@@ -220,10 +221,10 @@ the app can ask OSRM or Transitous. A leg you have actually checked may go on it
 
 ```json
 "legs": {
-  "start>kyoto-station": {
+  "start>example-station": {
     "mode": "transit", "minutes": 150, "source": "chat",
-    "name": "Nozomi 221", "detail": "Tokyo 09:03 → Kyoto 11:18",
-    "link": "https://www.jreast.co.jp/…"
+    "name": "the 09:03 express", "detail": "leaves 09:03, arrives 11:18",
+    "link": "https://example.org/timetable"
   }
 }
 ```
@@ -250,6 +251,25 @@ It lands wherever the leg holds **no measurement**:
 Asking a service afterwards will not undo it: an empty answer or a stop pairing leaves your time
 standing, and only a real measurement replaces it. The hand-back reports the source and the link
 beside every time, so yours can never be mistaken for a measured one.
+
+## A package that creates the trip
+
+With no trip open, a package is loaded whole rather than merged, so it may — and for one field,
+must — set the trip's own settings:
+
+| Key | Value |
+|---|---|
+| `title` | what to call the trip. They can rename it |
+| `tz` | **required.** The destination's IANA time zone, like `"Asia/Tokyo"` |
+| `transit` | `metro`, `city` or `sparse` |
+
+**Why `tz` is required.** The planner asks a timetable about an instant, and an instant needs a
+zone. With none set it uses whatever zone the browser is in: planning Japan from Europe, a 09:00
+leg is looked up at 17:00 and an 18:00 leg at 02:00 the next morning. Nothing downstream can tell,
+because the answer looks like any other answer. The planner now warns on any day whose plan uses
+public transport, and the builder refuses a creating package without a zone.
+
+None of the three may be sent once the trip exists.
 
 ## What the planner repairs without asking
 
@@ -289,15 +309,15 @@ All of it arrives in the owner's issues list. A quiet repair is still a failure 
         "note": "Go for opening: the main hall is empty before 08:00 and queues from 09:30."
       },
       {
-        "id": "nishiki-market",
-        "name": "Nishiki Market",
-        "localName": "錦市場",
-        "lat": 35.0050, "lng": 135.7649,
-        "kind": "food", "area": "Nakagyo", "duration": 60,
+        "id": "example-market",
+        "name": "Example Market",
+        "localName": "例の市場",
+        "lat": 35.0050, "lng": 135.7650,
+        "kind": "food", "area": "Example ward", "duration": 60,
         "window": {"from": "09:30", "to": "17:00"},
         "price": {"text": "free to walk, snacks 200–600 JPY"},
         "check": "Several stalls shut on Wednesdays — confirm nearer the time",
-        "links": [{"url": "https://www.kyoto-nishiki.or.jp/", "label": "Official"}]
+        "links": [{"url": "https://example.org/market", "label": "Official"}]
       },
       { "id": "example-garden" }
     ],
@@ -306,8 +326,8 @@ All of it arrives in the owner's issues list. A quiet repair is still a failure 
         "id": "2026-11-21",
         "plans": {
           "less": ["example-temple"],
-          "balanced": ["example-temple", "nishiki-market"],
-          "packed": ["example-temple", "nishiki-market", "example-garden"]
+          "balanced": ["example-temple", "example-market"],
+          "packed": ["example-temple", "example-market", "example-garden"]
         }
       }
     }
